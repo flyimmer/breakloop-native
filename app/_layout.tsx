@@ -1,5 +1,5 @@
-import ReflectionScreen from './screens/ReflectionScreen';
+import ScreenT from './screens/QuickTaskDialogScreen';
 
 export default function Layout() {
-  return <ReflectionScreen />;
+  return <ScreenT />;
 }
