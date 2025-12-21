@@ -1,11 +1,11 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { AppState, AppStateStatus, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 /**
  * ActivityTimerScreen
  * 
- * Phase D: Step 7A - Activity Timer (static UI)
+ * Phase D: Step 7 - Activity Timer
  * 
  * Gravity: Execution with Minimal Presence
  * - Quieter than all previous screens
@@ -18,16 +18,22 @@ import { SafeAreaView } from 'react-native-safe-area-context';
  * - Supports absence
  * - Provides minimal control without temptation
  * 
+ * Timer behavior:
+ * - Starts automatically on mount
+ * - Counts down to 0
+ * - Continues running even if app goes to background
+ * - Uses timestamp-based calculation for accuracy
+ * 
  * Design authority:
  * - design/principles/interaction-gravity.md (Execution with Minimal Presence)
  * - design/ui/tokens.md (colors, typography, spacing)
  * - design/ui/screens.md (Activity Timer Screen spec)
  */
 
-// Placeholder data for static implementation
+// Placeholder data (TODO: accept as route params)
 const PLACEHOLDER_ACTIVITY = {
   title: 'Short walk',
-  duration: '15 min',
+  durationSeconds: 10, // Duration in seconds (for testing; use durationMinutes for production)
   steps: [
     'Put on shoes',
     'Step outside',
@@ -35,32 +41,111 @@ const PLACEHOLDER_ACTIVITY = {
   ],
 };
 
-const PLACEHOLDER_TIMER = '15:00';
-const TIMER_ACTIVE = true; // Toggle this to test both button states
-
 // Mock settings value (TODO: connect to actual settings)
 const SHARE_CURRENT_ACTIVITY_ENABLED = false;
 
 // Visibility options
 type VisibilityOption = 'Private' | 'Friends can ask to join' | 'Anyone can ask to join';
 
+/**
+ * Formats seconds into MM:SS format
+ */
+function formatTime(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
 export default function ActivityTimerScreen() {
+  // Timer state
+  const [remainingSeconds, setRemainingSeconds] = useState<number>(
+    PLACEHOLDER_ACTIVITY.durationSeconds
+  );
+  
+  // Store start time for accurate calculation across app lifecycle
+  const startTimeRef = useRef<number>(Date.now());
+  const totalDurationRef = useRef<number>(PLACEHOLDER_ACTIVITY.durationSeconds);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  
   // Visibility state (defaults based on settings)
-  const [visibility, setVisibility] = React.useState<VisibilityOption>(
+  const [visibility, setVisibility] = useState<VisibilityOption>(
     SHARE_CURRENT_ACTIVITY_ENABLED ? 'Anyone can ask to join' : 'Private'
   );
+  // Timer logic
+  useEffect(() => {
+    // Start countdown timer
+    intervalRef.current = setInterval(() => {
+      // Calculate elapsed time since start
+      const elapsedSeconds = Math.floor((Date.now() - startTimeRef.current) / 1000);
+      const newRemainingSeconds = Math.max(0, totalDurationRef.current - elapsedSeconds);
+      
+      setRemainingSeconds(newRemainingSeconds);
+      
+      // Stop timer when it reaches 0
+      if (newRemainingSeconds === 0 && intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    }, 1000);
+    
+    // Cleanup on unmount
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, []);
+  
+  // Handle app state changes (background/foreground)
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'active') {
+        // Recalculate remaining time when app returns to foreground
+        const elapsedSeconds = Math.floor((Date.now() - startTimeRef.current) / 1000);
+        const newRemainingSeconds = Math.max(0, totalDurationRef.current - elapsedSeconds);
+        setRemainingSeconds(newRemainingSeconds);
+        
+        // If timer completed while in background, ensure interval is stopped
+        if (newRemainingSeconds === 0 && intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+      }
+    });
+    
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+  
+  // Derived state
+  const isTimerActive = remainingSeconds > 0;
+  const timerDisplay = formatTime(remainingSeconds);
+  
   // Navigation handlers (stubbed for now)
   const handleEndActivity = () => {
-    console.log('End activity');
-    // TODO: Navigate to completion or back to alternatives
+    // Stop timer
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    
+    console.log('End activity early');
+    // TODO: Navigate to reflection screen
   };
 
-  const handleContinue = () => {
-    console.log('Continue');
-    // TODO: Navigate to next step or close
+  const handleFinishAndReflect = () => {
+    console.log('Finish and reflect');
+    // TODO: Navigate to reflection screen
   };
 
   const handleClose = () => {
+    // Stop timer
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    
     console.log('Close');
     // TODO: Navigate back (with confirmation?)
   };
@@ -94,9 +179,9 @@ export default function ActivityTimerScreen() {
         {/* Activity context (very quiet) */}
         <View style={styles.activityContext}>
           <Text style={styles.activityTitle}>{PLACEHOLDER_ACTIVITY.title}</Text>
-          {PLACEHOLDER_ACTIVITY.duration && (
-            <Text style={styles.activityDuration}>{PLACEHOLDER_ACTIVITY.duration}</Text>
-          )}
+          <Text style={styles.activityDuration}>
+            {PLACEHOLDER_ACTIVITY.durationSeconds}s
+          </Text>
         </View>
 
         {/* Action steps (quiet reminder) */}
@@ -113,7 +198,7 @@ export default function ActivityTimerScreen() {
 
         {/* Timer (primary element) */}
         <View style={styles.timerContainer}>
-          <Text style={styles.timerDisplay}>{PLACEHOLDER_TIMER}</Text>
+          <Text style={styles.timerDisplay}>{timerDisplay}</Text>
         </View>
       </View>
 
@@ -134,14 +219,14 @@ export default function ActivityTimerScreen() {
 
         {/* Single primary control - label changes based on timer state */}
         <Pressable
-          onPress={TIMER_ACTIVE ? handleEndActivity : handleContinue}
+          onPress={isTimerActive ? handleEndActivity : handleFinishAndReflect}
           style={({ pressed }) => [
             styles.primaryButton,
             pressed && styles.primaryButtonPressed,
           ]}
         >
           <Text style={styles.primaryButtonText}>
-            {TIMER_ACTIVE ? 'End activity' : 'Continue'}
+            {isTimerActive ? 'End activity' : 'Finish & reflect'}
           </Text>
         </Pressable>
       </View>
