@@ -38,7 +38,17 @@ const PLACEHOLDER_ACTIVITY = {
 const PLACEHOLDER_TIMER = '15:00';
 const TIMER_ACTIVE = true; // Toggle this to test both button states
 
+// Mock settings value (TODO: connect to actual settings)
+const SHARE_CURRENT_ACTIVITY_ENABLED = false;
+
+// Visibility options
+type VisibilityOption = 'Private' | 'Friends can ask to join' | 'Anyone can ask to join';
+
 export default function ActivityTimerScreen() {
+  // Visibility state (defaults based on settings)
+  const [visibility, setVisibility] = React.useState<VisibilityOption>(
+    SHARE_CURRENT_ACTIVITY_ENABLED ? 'Anyone can ask to join' : 'Private'
+  );
   // Navigation handlers (stubbed for now)
   const handleEndActivity = () => {
     console.log('End activity');
@@ -53,6 +63,14 @@ export default function ActivityTimerScreen() {
   const handleClose = () => {
     console.log('Close');
     // TODO: Navigate back (with confirmation?)
+  };
+
+  const handleVisibilityPress = () => {
+    console.log('Open visibility selector');
+    // TODO: Open bottom sheet or inline selector with options:
+    // - Private
+    // - Friends can ask to join
+    // - Anyone can ask to join
   };
 
   return (
@@ -101,6 +119,19 @@ export default function ActivityTimerScreen() {
 
       {/* Bottom control area */}
       <View style={styles.bottomActions}>
+        {/* Visibility control (quiet metadata) */}
+        <Pressable
+          onPress={handleVisibilityPress}
+          style={({ pressed }) => [
+            styles.visibilityControl,
+            pressed && styles.visibilityControlPressed,
+          ]}
+          hitSlop={8}
+        >
+          <Text style={styles.visibilityLabel}>Visibility · </Text>
+          <Text style={styles.visibilityValue}>{visibility}</Text>
+        </Pressable>
+
         {/* Single primary control - label changes based on timer state */}
         <Pressable
           onPress={TIMER_ACTIVE ? handleEndActivity : handleContinue}
@@ -213,6 +244,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 16,
     paddingBottom: 24,
+  },
+  visibilityControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    marginBottom: 12,
+  },
+  visibilityControlPressed: {
+    opacity: 0.6,
+  },
+  visibilityLabel: {
+    fontSize: 13, // Smaller than bodySmall
+    lineHeight: 18,
+    fontWeight: '400',
+    color: '#71717A', // textMuted - very quiet
+  },
+  visibilityValue: {
+    fontSize: 13, // Smaller than bodySmall
+    lineHeight: 18,
+    fontWeight: '400',
+    color: '#A1A1AA', // textSecondary - slightly more visible than label
   },
   primaryButton: {
     paddingVertical: 16,
