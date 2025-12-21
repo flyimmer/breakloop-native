@@ -1,5 +1,5 @@
-import ActivityTimerScreen from './screens/ActivityTimerScreen';
+import ReflectionScreen from './screens/ReflectionScreen';
 
 export default function Layout() {
-  return <ActivityTimerScreen />;
+  return <ReflectionScreen />;
 }
