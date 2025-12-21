@@ -1,198 +1,216 @@
-# Main App Interaction Posture  
-**BreakLoop — Phase C-2**
+# BreakLoop — Main App Posture  
+**Phase E-1**
+
+**Status:** Authoritative  
+**Scope:** Main App (non-intervention)  
+**Applies to:** Insights, Community, Settings, and all future main-app features  
+**Does NOT apply to:** Intervention / Conscious Process flows
 
 ---
 
 ## 0. Purpose
 
-This document defines the **interaction posture** for the BreakLoop
-Main App experience.
+This document defines the **behavioral posture** of BreakLoop when the user is **not** in an intervention.
 
-The Main App includes:
-- Insights
-- Community
-- Planning
-- Settings
-- Retrospective views
+It exists to:
+- Preserve ethical interruption principles outside vulnerable moments
+- Prevent the main app from becoming another engagement-driven surface
+- Constrain future features (e.g. messaging, profiles) before they exist
 
-This posture is intentionally **lighter** than interaction gravity.
-
-The Main App is not an interruption.
-It is an intentional, voluntary space.
+If a future feature conflicts with this document, **the feature is invalid**.
 
 ---
 
-## 1. Core Principle
+## 1. Core Posture (One-Sentence Law)
 
-> **The Main App must feel supportive, not directive.**
+> **BreakLoop’s main app is a calm, reflective place that helps users notice patterns and coordinate real-world action — without pulling them back into the phone.**
 
-The app may inform, summarize, and offer options,
-but it must never:
-- pressure
-- score
-- reward
-- shame
-- compare
+This sentence is the primary design law for the main app.
 
 ---
 
-## 2. How the Main App Differs from the Conscious Process
+## 2. Two Interaction Regimes (Boundary Reminder)
 
-| Conscious Process | Main App |
-|------------------|---------|
-| Vulnerable | Intentional |
-| Time-sensitive | Self-paced |
-| Ethically constrained | Informational |
-| Gravity-driven | Navigation-driven |
-| Minimal choice | Multiple paths allowed |
+BreakLoop intentionally operates in two regimes:
 
-**Interaction gravity does NOT apply in the Main App.**
+### A. Intervention Regime (already locked)
+- Vulnerable
+- Time-pressured
+- Ethically constrained
+- Governed by `interaction-gravity.md`
 
-However, the Main App must still avoid manipulation.
+### B. Main App Regime (this document)
+- Non-urgent
+- Retrospective or coordinative
+- Low emotional pressure
+- Never attention-seeking
 
----
-
-## 3. General Posture Rules
-
-The Main App should be:
-
-- Calm
-- Neutral
-- Non-judgmental
-- Non-gamified
-- Non-competitive
-- Optional
-
-It should feel like:
-> “A place to understand and organize,”  
-not  
-> “A place to perform or improve.”
+**Rules from the intervention regime must not leak into the main app.**  
+Likewise, main app richness must never appear inside intervention flows.
 
 ---
 
-## 4. Metrics & Insights Rules
+## 3. Emotional Temperature of the Main App
 
-Insights are retrospective, not evaluative.
+The main app must feel:
 
-Rules:
-- No streak pressure
-- No success/failure framing
-- No red/green moral signaling
-- No leaderboard or ranking language
-- No time-based urgency
+- Quiet  
+- Unhurried  
+- Non-evaluative  
+- Ambiently supportive  
 
-Metrics should answer:
-- “What happened?”
-- “What patterns exist?”
+The user should feel:
 
-Not:
-- “How good am I?”
-- “Am I winning or losing?”
+> “I can come here when I want. Nothing bad happens if I don’t.”
 
----
+If the app ever feels like:
+- something to “check”
+- something to “keep up with”
+- something that might judge absence
 
-## 5. Community Rules
-
-Community exists for:
-- presence
-- coordination
-- mutual support
-
-Not for:
-- comparison
-- competition
-- status
-
-Rules:
-- No public performance metrics
-- No social ranking
-- No implicit pressure to join or host
-- Participation is always optional and reversible
-
-The Community should feel ambient, not demanding.
+→ this posture has been violated.
 
 ---
 
-## 6. Planning & Creation (Plan Activity)
+## 4. Legitimate User Intents
 
-Planning and creation screens (e.g. “Plan an Activity”) are
-**instrumental by nature**.
+The main app exists to support **only three user intents**:
 
-They are explicitly entered by the user and are not part of
-self-regulation or interruption.
+### 1. Reflection (Insights)
+- Looking back over time
+- Noticing patterns
+- Understanding oneself without judgment
 
-Posture:
-- Clear
-- Efficient
-- Task-oriented
-- Non-emotional
+### 2. Coordination (Community)
+- Planning activities
+- Discovering activities happening nearby
+- Joining or hosting real-world action
 
-Rules:
-- Strong affordances are allowed
-- Forms may be dense if clarity improves
-- Primary actions (“Save”, “Create”) should be obvious
-- Validation and guidance are acceptable
+### 3. Configuration (Settings)
+- Adjusting boundaries
+- Expressing values
+- Managing preferences and privacy
 
-However:
-- No motivational language
-- No moral framing (“good”, “bad”, “productive”)
-- No emotional pressure
-- No time urgency metaphors
-
-Planning is logistics, not self-improvement.
-
+No fourth hidden intent (e.g. engagement, retention, habit reinforcement) is allowed.
 
 ---
 
-## 7. Separation from the Conscious Process
+## 5. What the Main App Must Never Do
 
-Main App UI must not reuse:
-- Intervention layouts
-- Countdown metaphors
-- Regulation language
-- Gravity-based affordances
+The main app must never:
 
-Likewise, intervention screens must not introduce:
-- Metrics
-- Community feeds
-- Planning complexity
+- Create urgency (“Don’t miss”, “Happening now”, countdown pressure)
+- Evaluate behavior (“You failed”, “You improved”, grades, scores)
+- Rank or compare users
+- Reward frequency of app usage
+- Replace boredom with scrolling
+- Encourage “just checking”
+- Penalize absence or inactivity
 
-The handoff between regimes is explicit and intentional.
-
----
-
-## 8. Non-Goals
-
-The Main App does NOT aim to:
-- Maximize engagement
-- Increase daily usage
-- Create habits inside the app
-- Encourage frequent checking
-
-BreakLoop exists to reduce compulsive behavior,
-not replace it.
+If a feature requires these dynamics to function, it does not belong in BreakLoop.
 
 ---
 
-## 9. Review Requirement
+## 6. Insights Posture (Authoritative)
 
-Any new Main App screen should be answerable with:
+Insights are **descriptive, not prescriptive**.
 
-- Is this informational or instrumental?
-- Does this introduce pressure?
-- Does this introduce comparison?
-- Does this assume performance?
+They answer:
+> “What patterns do I notice over time?”
 
-If yes to the last two, the screen needs revision.
+They must not answer:
+> “How well am I doing?”
+
+### Allowed
+- Aggregates and summaries
+- Long-term trends
+- Distributions and proportions
+- Reflective language
+- AI-assisted pattern interpretation
+
+### Forbidden
+- Scores, grades, streaks
+- Success / failure framing
+- Rankings or leaderboards
+- Visual emphasis implying moral weight
+- Language that implies obligation or judgment
+
+Numbers may exist, but they must **describe**, not **evaluate**.
 
 ---
 
-## 10. Relationship to Native Work
+## 7. Community Posture (Authoritative)
 
-This posture exists to:
-- guide native translation
-- prevent accidental gamification
-- constrain AI-driven optimization
+Community is **coordination infrastructure**, not a social feed.
 
-Native UI may be beautiful,
-but posture must remain calm and neutral.
+Its purpose is to:
+- Make real-world action easier
+- Surface opportunities for participation
+- Support planning and presence
+
+### Critical Rule
+> **Community must not function as an emotional coping surface.**
+
+This means:
+- No infinite feeds
+- No dopamine-driven discovery
+- No social validation loops
+- No pressure to browse when bored
+
+Browsing may exist, but it must feel **finite**, not consumptive.
+
+---
+
+## 8. Absence Is Always Allowed (Non-Negotiable)
+
+> **Nothing bad ever happens if the user does not open BreakLoop.**
+
+There must be:
+- No decay
+- No loss
+- No guilt
+- No social penalty
+- No “missed opportunity” framing
+
+BreakLoop must be **safe to forget**.
+
+---
+
+## 9. Relationship to Future Features
+
+This document intentionally precedes features such as:
+- Messaging
+- User profiles
+- Social graphs
+- Notifications
+
+If added later, those features must:
+- Remain ambient
+- Avoid notification pressure by default
+- Avoid performance or comparison displays
+- Respect user absence
+- Comply fully with this posture
+
+This document is the constraint that prevents future scope from corrupting the product.
+
+---
+
+## 10. Relationship to Other Principles
+
+- Intervention behavior is governed by `interaction-gravity.md`
+- Transition boundaries are governed by `handoff-rules.md`
+- This document governs **all non-intervention main app behavior**
+
+---
+
+## 11. Phase E-1 Completion Statement
+
+With this posture defined:
+
+- Phase D remains locked
+- Main app behavior is ethically constrained
+- Future feature work has clear boundaries
+
+**Phase E-1 (Main App Posture) is complete.**
+
+All main app screens must comply with `design/principles/main-app-posture.md`.
