@@ -82,6 +82,217 @@ Root contexts define the primary screen/view the user sees. Only one root contex
 
 ---
 
+## User Account States
+
+User account states determine authentication and registration status. These states gate certain social features.
+
+### State: Anonymous (Local-Only)
+
+**State ID:** `userAccount.loggedIn: false`
+
+**Description:** User has not registered/created an account
+
+**Characteristics:**
+- All data stored locally only
+- Can use full intervention system
+- Can use community features (planning, viewing activities)
+- **Cannot** send friend requests
+- **Cannot** generate invite links
+- **Cannot** accept invite links
+
+**Gating Triggers:**
+- Attempting to add friend from participants → Shows registration modal
+- Attempting to generate invite link → Shows registration modal
+- Attempting to accept invite link → Shows registration modal
+
+**Transitions:**
+- → `userAccount.loggedIn: true` - Complete registration
+
+### State: Registered (Identified)
+
+**State ID:** `userAccount.loggedIn: true`
+
+**Description:** User has created an account with name and email
+
+**Characteristics:**
+- All local data remains accessible
+- Can send and receive friend requests
+- Can generate and accept invite links
+- Profile synced (in future implementation)
+
+**State Variables:**
+- `userAccount.name: string` - User's display name
+- `userAccount.email: string` - User's email
+- `userAccount.streak: number` - Current streak count
+- `userAccount.isPremium: boolean` - Premium subscription status
+
+**Transitions:**
+- → `userAccount.loggedIn: false` - Log out (Settings → Account → Log out)
+
+---
+
+## Profile States
+
+Profile states determine how user profile information is displayed and edited.
+
+### State: My Profile (View Mode)
+
+**State ID:** `isEditingProfile: false`
+
+**Description:** User viewing their own profile
+
+**Location:** Settings → My Profile section
+
+**Display:**
+- Profile photo (or placeholder)
+- Display name (or empty state hint)
+- About Me (or empty state hint)
+- Interests (or empty state hint)
+- "Edit profile" button
+
+**Empty State:**
+- Shows hint: "Your profile is empty. Tap 'Edit profile' to add information."
+
+**Transitions:**
+- → `isEditingProfile: true` - Tap "Edit profile" button
+
+### State: My Profile (Edit Mode)
+
+**State ID:** `isEditingProfile: true`
+
+**Description:** User editing their own profile
+
+**State Variables:**
+- `profileDraft: object` - Temporary profile data during editing
+
+**Editable Fields:**
+- Primary photo (upload/remove)
+- Display name (text input)
+- About Me (textarea)
+- Interests (textarea)
+
+**Actions:**
+- Save changes → Updates `userProfile` → Returns to view mode
+- Cancel → Discards `profileDraft` → Returns to view mode
+
+**Transitions:**
+- → `isEditingProfile: false` - Save or Cancel
+
+### State: Friend Profile (Summary View)
+
+**State ID:** `viewingFriend !== null` + `viewingFriendFullProfile: false`
+
+**Description:** Viewing friend's profile summary
+
+**Location:** Community → Friends → Tap friend card
+
+**Display:**
+- Profile photo (or avatar with initial)
+- Display name (or fallback to name)
+- "Tap to view full profile" hint
+- "Chat with [Name]" button (primary action)
+- "Things [Name] is up to" section (if friend has activities)
+
+**Transitions:**
+- → `viewingFriendFullProfile: true` - Tap profile card
+- → `messagingBuddy: friendObject` - Tap "Chat" button
+- → `viewingFriend: null` - Back button or close
+
+### State: Friend Profile (Full View)
+
+**State ID:** `viewingFriend !== null` + `viewingFriendFullProfile: true`
+
+**Description:** Viewing friend's complete profile (read-only)
+
+**Display:**
+- Profile photo (or avatar with initial)
+- Display name (or fallback to name)
+- About Me (only if friend has shared)
+- Interests (only if friend has shared)
+- Menu button (⋮) with actions:
+  - Star/Unstar friend
+  - Remove friend
+
+**Privacy:**
+- Only shows fields that friend has populated
+- Respects friend's privacy settings (future)
+
+**Transitions:**
+- → `viewingFriendFullProfile: false` - Back button
+- → `viewingFriend: null` - Close or navigate away
+
+---
+
+## Social Connection States
+
+Social states define relationships between users.
+
+### State: Friend (Confirmed)
+
+**State ID:** Friend exists in `friendsList` with `status: "confirmed"` or no status field
+
+**Description:** Confirmed friend connection
+
+**Characteristics:**
+- Appears in Friends list
+- Can send/receive private messages
+- Can see friend's shared activities (based on privacy settings)
+- Can see friend's mood (if friend shares mood)
+- Can add notes about friend (local only)
+- Can mark as favorite
+
+**Available Actions:**
+- View profile (summary or full)
+- Send message
+- Star/unstar
+- Remove friend
+
+### State: Friend Request Sent (Pending)
+
+**State ID:** Friend exists in `friendsList` with `status: "pending"` + request was sent by current user
+
+**Description:** Outgoing friend request awaiting response
+
+**Display:**
+- Shows "Pending" badge next to name in Friends list
+- Cannot message until confirmed
+- Cannot see shared activities until confirmed
+
+**Transitions:**
+- → Confirmed friend - Other user accepts request
+- → Removed - Other user declines or current user cancels request
+
+### State: Friend Request Received (Pending)
+
+**State ID:** Incoming request exists in `friendRequestsReceived` array
+
+**Description:** Incoming friend request awaiting current user's response
+
+**Display:**
+- Shows in Friends list or dedicated requests section (implementation-specific)
+- Shows "Accept" and "Decline" buttons
+
+**Transitions:**
+- → Confirmed friend - Current user accepts
+- → Removed - Current user declines
+
+### State: Not Connected
+
+**State ID:** User not in `friendsList` and no pending requests
+
+**Description:** No connection between users
+
+**Characteristics:**
+- May appear in activity participants lists
+- Can send friend request from participants list
+- Cannot message
+- Cannot see private activities
+
+**Transitions:**
+- → Friend Request Sent - Send friend request
+
+---
+
 ## Intervention Flow States
 
 Intervention overlay renders on top of launcher when `interventionState !== "idle"`. States form a linear flow with branching options.
@@ -451,8 +662,16 @@ Nested within `activeContext: "app-mindful"`. Multiple sub-states can be active 
 2. **Community** (`activeTab: "community"`)
    - Social features and activities
    - Sub-menu navigation (see [Community Sub-states](#community-sub-states))
+   - **Never badged** (per communication model)
 
-3. **Settings** (`activeTab: "settings"`)
+3. **Inbox** (`activeTab: "inbox"`)
+   - Coordination surface for messages and updates
+   - Sub-tabs: Messages / Updates
+   - State: `inboxSubTab: "messages" | "updates"` (defaults to last used, or "updates" on first open)
+   - **Only tab that shows badge** (unread messages + unresolved updates count)
+   - See [Inbox Sub-states](#inbox-sub-states)
+
+4. **Settings** (`activeTab: "settings"`)
    - App configuration
    - Privacy settings
    - Friends management
@@ -531,6 +750,92 @@ Nested within `activeTab: "community"`.
 
 **Transitions:**
 - → `showPlanModal: true` - Opens `PlanActivityModal`
+
+---
+
+### Inbox Sub-states
+
+Nested within `activeTab: "inbox"`.
+
+#### Sub-tab: Messages
+
+**State ID:** `inboxSubTab: "messages"`
+
+**Description:** Private friend-to-friend conversations
+
+**Visual:** List of conversations ordered by most recent activity
+
+**State Variables:**
+- `privateConversations: object` - Conversation data by conversation ID
+- `unreadConversationCount: number` - Count of unread conversations
+
+**List Item Display:**
+- Friend name
+- Last message preview (1 line, truncated)
+- Timestamp (relative, e.g., "2h ago")
+- Unread indicator (dot or count)
+
+**Empty State:**
+- "No messages yet" text
+
+**Transitions:**
+- → Opens conversation thread - Tap conversation item
+- → `messagingBuddy: friendObject` - Opens full chat interface
+
+**Unread Logic:**
+- Conversation is unread if latest message sent by other user AND conversation not opened since
+- Opening conversation marks all messages as read
+- Inbox badge decrements accordingly
+- No read receipts sent to sender
+
+#### Sub-tab: Updates
+
+**State ID:** `inboxSubTab: "updates"`
+
+**Description:** Event-related update notifications
+
+**Visual:** List of unresolved updates ordered by most recent first
+
+**State Variables:**
+- `unresolvedUpdates: array` - Array of EventUpdate objects
+- `unresolvedCount: number` - Count of unresolved updates
+
+**Update Types:**
+1. `event_chat` - New message in event group chat
+2. `join_request` - User requested to join your event
+3. `join_approved` - Host approved your join request
+4. `join_declined` - Host declined your join request
+5. `event_updated` - Event details were edited
+6. `event_cancelled` - Host cancelled the event
+7. `participant_left` - Participant quit the event
+
+**List Item Display:**
+- Type-specific icon
+- Generated text (e.g., "New message in [Event Title]")
+- Optional message preview (for event_chat)
+- Timestamp (relative, e.g., "2m ago")
+- Chevron right indicator
+
+**Empty State:**
+- "All caught up!" text
+- "No pending updates" subtext
+
+**Transitions:**
+- → Opens Activity Details Modal - Tap update item
+- → Resolves update (type-specific logic) - See resolution rules below
+
+**Resolution Logic:**
+- `event_chat` → Resolved when Chat tab opened in Activity Details
+- `join_request` → Resolved when host accepts/declines
+- `join_approved` / `join_declined` → Resolved immediately when activity opened
+- `event_updated` / `event_cancelled` / `participant_left` → Resolved immediately when activity opened
+- Resolved updates removed from list
+- Badge count automatically decrements
+
+**Edge Cases:**
+- Opening Inbox does NOT auto-resolve updates
+- Must open specific context or take action to resolve
+- Updates remain unresolved until explicit user action
 
 ---
 
@@ -939,8 +1244,9 @@ launcher ↔ app-{id}
 - `activeContext: "launcher" | "app-mindful" | "app-{id}"`
 - `interventionState: "idle" | "breathing" | "root-cause" | "alternatives" | "action" | "action_timer" | "timer" | "reflection"`
 - `hasOnboarded: boolean`
-- `activeTab: "insights" | "community" | "settings"`
+- `activeTab: "insights" | "community" | "inbox" | "settings"`
 - `communityMenu: "friends" | "my-upcoming" | "discover" | "plan"`
+- `inboxSubTab: "messages" | "updates"`
 
 ### Intervention State Variables
 - `targetApp: object | null`
@@ -1001,6 +1307,45 @@ launcher ↔ app-{id}
   - `allowedApps: string[]`
 - `leavingSession: boolean`
 - `leaveCountdown: number`
+
+### User Account State Variables
+- `userAccount: object`
+  - `loggedIn: boolean`
+  - `name: string`
+  - `email: string`
+  - `streak: number`
+  - `isPremium: boolean`
+
+### Profile State Variables
+- `userProfile: object`
+  - `displayName: string`
+  - `primaryPhoto: string | null`
+  - `aboutMe: string`
+  - `interests: string`
+- `isEditingProfile: boolean`
+- `profileDraft: object | null` - Temporary profile data during editing
+
+### Friend/Social State Variables
+- `friendsList: array` - Array of friend objects
+- `viewingFriend: object | null` - Currently viewing friend
+- `viewingFriendFullProfile: boolean` - true = full profile, false = summary
+- `isAddingFriend: boolean` - Add friend modal open
+- `addFriendTab: "phone" | "whatsapp"` - Active tab in add friend modal
+- `messagingBuddy: object | null` - Currently messaging friend
+
+### Inbox State Variables
+- `inboxSubTab: "messages" | "updates"` - Active inbox sub-tab
+- `unresolvedUpdates: array` - Array of unresolved EventUpdate objects
+- `unresolvedCount: number` - Badge count for unresolved updates
+- `privateConversations: object` - Conversation data by conversation ID
+- `unreadConversationCount: number` - Count of unread conversations
+
+### Registration/Invite State Variables
+- `showRegistrationModal: boolean` - Registration modal open
+- `pendingFriendRequest: object | null` - Friend request pending registration
+- `pendingInviteToken: string | null` - Invite link pending registration
+- `showInviteModal: boolean` - Invite generation modal open
+- `generatedInviteLink: string | null` - Generated invite link
 
 ---
 

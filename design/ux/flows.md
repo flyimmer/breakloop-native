@@ -1421,6 +1421,778 @@ formData: {
 
 ---
 
+## Flow 15: Inbox → Messages (Private Conversations)
+
+**Entry Point:** User wants to view or send private messages
+
+**Prerequisites:** `hasOnboarded: true`
+
+**Steps:**
+
+1. **Navigate to Inbox**
+   - User Action: Tap Inbox tab from main navigation
+   - State: `activeTab: "inbox"`
+   - Default Sub-tab: Last used, or "updates" if first time
+   - Badge: Shows combined count (unread messages + unresolved updates)
+
+2. **Switch to Messages Sub-tab**
+   - User Action: Tap "Messages" sub-tab
+   - State Update: `inboxSubTab: "messages"`
+   - Display: List of conversations ordered by most recent activity
+
+3. **View Conversations List**
+   - Display: Each conversation shows:
+     - Friend name
+     - Last message preview (1 line, truncated)
+     - Timestamp (relative, e.g., "2h ago")
+     - Unread indicator (dot or count) if conversation is unread
+   - Empty State: "No messages yet"
+
+4. **Receiving New Message (Background)**
+   - Trigger: Friend sends private message
+   - State Updates:
+     - Message added to conversation
+     - Conversation marked unread (if not currently open)
+     - `unreadConversationCount` increments
+     - Inbox badge increments
+   - Optional: Push notification "Message from [Friend Name]"
+
+5. **Open Conversation**
+   - User Action: Tap conversation in list
+   - State Update: `messagingBuddy: friendObject`
+   - Transition: → Opens full chat interface
+   - State Updates:
+     - All messages in conversation marked as read
+     - `unreadConversationCount` decrements
+     - Inbox badge decrements
+   - Display: Full message thread with input field
+
+6. **Send Message**
+   - User Action: Type message and tap send
+   - State Updates:
+     - Message added to conversation
+     - Conversation timestamp updated
+     - Conversation moves to top of list
+   - Display: Message appears in thread
+
+7. **Close Conversation**
+   - User Action: Tap back button
+   - State Update: `messagingBuddy: null`
+   - Transition: → Returns to Messages list
+
+**Alternative Entry Points:**
+- Community → Friends → Tap friend → "Chat" button
+- Community → Friends → Tap chat icon on friend card
+- Friend Profile → "Chat with [Name]" button
+
+**Exit Points:**
+- Conversation closed → returns to Messages list
+- Navigate to other tab → conversation state preserved
+
+**Mobile Considerations:**
+- Android: Back button closes conversation
+- iOS: Swipe-back gesture closes conversation
+- Messages persist across app restarts
+- No read receipts sent to sender
+- No typing indicators
+
+**Privacy & Stability:**
+- Unread state remains until user opens conversation
+- No escalation or reminders
+- Unread indicates STATE, not OBLIGATION
+
+---
+
+## Flow 16: Inbox → Updates (Event Notifications)
+
+**Entry Point:** User wants to view event-related updates
+
+**Prerequisites:** `hasOnboarded: true`
+
+**Steps:**
+
+1. **Navigate to Inbox**
+   - User Action: Tap Inbox tab from main navigation
+   - State: `activeTab: "inbox"`
+   - Default Sub-tab: "updates" (if first time) or last used
+   - Badge: Shows combined count (unread messages + unresolved updates)
+
+2. **View Updates Sub-tab**
+   - State: `inboxSubTab: "updates"` (default on first open)
+   - Display: List of unresolved updates ordered by most recent first
+   - Empty State: "All caught up!" with "No pending updates" subtext
+
+3. **View Updates List**
+   - Display: Each update shows:
+     - Type-specific icon
+     - Generated text based on type:
+       - `event_chat`: "New message in [Event Title]"
+       - `join_request`: "[User] wants to join [Event Title]"
+       - `join_approved`: "Your request to join [Event Title] was accepted"
+       - `join_declined`: "Your request to join [Event Title] was declined"
+       - `event_updated`: "[Event Title] details updated"
+       - `event_cancelled`: "[Event Title] was cancelled"
+       - `participant_left`: "[User] left [Event Title]"
+     - Optional message preview (for event_chat)
+     - Timestamp (relative, e.g., "2m ago")
+     - Chevron right indicator
+
+4. **Receiving New Update (Background)**
+   - Trigger: Event-related action occurs (see Phase E-2c emission points)
+   - State Updates:
+     - EventUpdate object created and stored
+     - `unresolvedUpdates` array updated
+     - `unresolvedCount` increments
+     - Inbox badge increments
+   - Optional: Push notification based on update type
+
+5. **Tap Update Item**
+   - User Action: Tap update in list
+   - Function Call: `handleUpdateClick(update)`
+   - Behavior varies by type:
+
+**Path A: event_chat Update**
+
+6. **Handle Event Chat Update**
+   - Action: Opens Activity Details Modal → Chat tab
+   - State Update: `selectedActivity: eventObject`
+   - Transition: → ActivityDetailsModal with Chat tab active
+   - Resolution: When Chat tab opens, calls `onChatOpened(eventId)`
+   - Function Call: `resolveUpdatesByEventAndType(eventId, "event_chat")`
+   - Result: All event_chat updates for this event marked resolved
+   - State Updates:
+     - Updates removed from `unresolvedUpdates`
+     - `unresolvedCount` decrements
+     - Inbox badge decrements
+
+**Path B: join_request Update**
+
+6. **Handle Join Request Update**
+   - Action: Opens Activity Details Modal → Participants tab
+   - State Update: `selectedActivity: eventObject`
+   - Transition: → ActivityDetailsModal with Participants tab showing
+   - Display: Pending join requests with Accept/Decline buttons
+   - Resolution: When host accepts or declines request
+   - Function Call: `handleAcceptRequest()` or `handleDeclineRequest()`
+   - Inside handler: `resolveUpdatesByEventAndType(eventId, "join_request")`
+   - Result: join_request update marked resolved
+   - State Updates:
+     - Update removed from `unresolvedUpdates`
+     - `unresolvedCount` decrements
+     - Inbox badge decrements
+
+**Path C: Other Update Types**
+
+6. **Handle Other Updates**
+   - Types: join_approved, join_declined, event_updated, event_cancelled, participant_left
+   - Action: Opens Activity Details Modal
+   - State Update: `selectedActivity: eventObject`
+   - Transition: → ActivityDetailsModal
+   - Resolution: Immediate upon opening
+   - Function Call: `resolveUpdate(updateId)`
+   - Result: Update marked resolved immediately
+   - State Updates:
+     - Update removed from `unresolvedUpdates`
+     - `unresolvedCount` decrements
+     - Inbox badge decrements
+
+7. **View Activity Details**
+   - User views activity information
+   - Can take further actions (join, quit, edit, etc.)
+   - Update remains resolved
+
+8. **Close Activity Details**
+   - User Action: Tap back or close button
+   - State Update: `selectedActivity: null`
+   - Transition: → Returns to Updates list
+   - Display: Resolved update no longer appears in list
+
+**Exit Points:**
+- Update resolved → removed from list
+- Navigate to other tab → state preserved
+- All updates resolved → shows empty state
+
+**Mobile Considerations:**
+- Android: Back button closes activity details
+- iOS: Swipe-back gesture closes activity details
+- Updates persist across app restarts
+- Badge updates immediately upon resolution
+- Pull-to-refresh updates list
+
+**Resolution Rules (Summary):**
+- Opening Inbox does NOT auto-resolve updates
+- Must open specific context or take action
+- Type-specific resolution logic ensures proper handling
+- Resolved updates never reappear
+
+**Edge Cases:**
+- Multiple updates for same event: Each resolved independently
+- Event deleted: Updates remain until manually resolved
+- User ignores update: Remains unresolved indefinitely (no escalation)
+
+---
+
+## Flow 17: Registration Gating
+
+**Entry Point:** Anonymous user attempts action requiring registration
+
+**Prerequisites:** `userAccount.loggedIn: false`
+
+**Gating Triggers:**
+1. Attempting to add friend from activity participants
+2. Attempting to generate invite link
+3. Attempting to accept invite link
+
+**Steps:**
+
+1. **User Attempts Gated Action**
+   - State: `userAccount.loggedIn: false`
+   - Examples:
+     - Tap "Add friend" button on participant in Activity Details
+     - Tap "Generate invite" in Friends list
+     - Open invite link from outside app
+
+2. **Store Pending Action**
+   - State Updates (varies by trigger):
+     - Add friend: `pendingFriendRequest: participantObject`
+     - Generate invite: No pending state (just show modal)
+     - Accept invite: `pendingInviteToken: string`
+
+3. **Show Registration Modal**
+   - State Update: `showRegistrationModal: true`
+   - Display: Registration form with:
+     - "Create account to continue" message
+     - Name input field
+     - Email input field
+     - "Create account" button
+     - Close (X) button
+
+4. **User Decision Point**
+
+**Path A: Complete Registration**
+
+5. **Fill Registration Form**
+   - User Action: Enter name and email
+   - Validation: Both fields required
+
+6. **Submit Registration**
+   - User Action: Tap "Create account" button
+   - Function Call: `handleCompleteRegistration(name, email)`
+   - State Updates:
+     - `userAccount.loggedIn: true`
+     - `userAccount.name: name`
+     - `userAccount.email: email`
+     - `showRegistrationModal: false`
+   - Display: Toast notification "Account created!"
+
+7. **Resume Pending Action**
+   - Automatic execution based on trigger:
+
+   **If pending friend request:**
+   - Function Call: `handleAddFriend(pendingFriendRequest)`
+   - State Updates:
+     - Adds friend to `friendsList` with `status: "pending"`
+     - Clears `pendingFriendRequest: null`
+   - Display: Toast "Friend request sent to [Name]"
+
+   **If pending invite acceptance:**
+   - Function Call: `handleOpenInviteLink(pendingInviteToken)`
+   - Processes invite token
+   - Sends friend request to invite sender
+   - Clears `pendingInviteToken: null`
+   - Display: Toast "Friend request sent to [Name]!"
+
+   **If generate invite:**
+   - Returns to invite generation flow
+   - User can now generate invite link
+
+8. **Continue Normal Flow**
+   - User is now registered
+   - Can access all social features
+   - Pending action completed
+
+**Path B: Cancel Registration**
+
+5. **Close Registration Modal**
+   - User Action: Tap X or outside modal
+   - State Updates:
+     - `showRegistrationModal: false`
+     - Pending state cleared (if applicable)
+   - Result: Action not completed
+   - User remains anonymous
+
+**Exit Points:**
+- Registration completed → pending action executed
+- Registration cancelled → returns to previous screen, action not completed
+
+**Mobile Considerations:**
+- Android: Back button closes modal (cancels registration)
+- iOS: Swipe-down gesture closes modal
+- Form validation prevents empty submissions
+- Email format validation (basic)
+
+**Edge Cases:**
+- Multiple gating triggers: Only one pending action stored at a time
+- User already has pending action: New action overwrites previous
+- Registration modal closes other modals first (e.g., invite modal)
+
+---
+
+## Flow 18: Add Friend from Activity Participants
+
+**Entry Point:** User wants to add participant as friend
+
+**Prerequisites:**
+- `hasOnboarded: true`
+- Viewing Activity Details Modal
+- Participant is not already a friend
+
+**Steps:**
+
+1. **View Activity Participants**
+   - State: `selectedActivity !== null`
+   - Location: Activity Details Modal → Participants tab
+   - Display: List of confirmed participants
+
+2. **Identify Non-Friend Participant**
+   - Display: Participant card shows "Add friend" button (if not already friend)
+
+3. **Tap Add Friend**
+   - User Action: Tap "Add friend" button on participant
+   - Trigger: Registration check
+
+**Path A: User is Registered**
+
+4. **Send Friend Request (Registered)**
+   - State Check: `userAccount.loggedIn: true`
+   - Function Call: `handleAddFriend(participant)`
+   - State Updates:
+     - Adds to `friendsList` with `status: "pending"`
+     - Creates friend request object
+   - Display: Toast "Friend request sent to [Name]"
+   - Button Changes: "Add friend" → "Request sent" (disabled)
+
+5. **Wait for Response**
+   - Friend request appears in recipient's inbox/friends list
+   - Status remains "pending"
+
+6. **Friend Accepts Request**
+   - State Update: Friend status changes to "confirmed"
+   - Button disappears (already friends)
+   - Friend now appears in Friends list
+
+**Path B: User is Anonymous**
+
+4. **Trigger Registration Gate**
+   - State Check: `userAccount.loggedIn: false`
+   - State Update: `pendingFriendRequest: participant`
+   - Transition: → Flow 17 (Registration Gating)
+   - Display: Registration modal
+
+5. **After Registration**
+   - Automatic: Friend request sent
+   - Display: Toast "Friend request sent to [Name]"
+   - Returns to Activity Details
+
+**Exit Points:**
+- Friend request sent → participant card updated
+- Registration cancelled → no friend request sent
+- Modal closed → returns to activity details
+
+**Mobile Considerations:**
+- Button state updates immediately
+- Toast confirms action
+- Can send multiple friend requests from same activity
+
+---
+
+## Flow 19: Generate and Share Invite Link
+
+**Entry Point:** User wants to invite someone via link
+
+**Prerequisites:** `hasOnboarded: true`
+
+**Steps:**
+
+1. **Navigate to Friends List**
+   - State: `activeTab: "community"` + `communityMenu: "friends"`
+   - Display: Friends list with "Add friend" button
+
+2. **Open Add Friend Modal**
+   - User Action: Tap "Add friend" button
+   - State Update: `isAddingFriend: true`
+   - Display: Add friend modal with tabs (Phone / WhatsApp)
+
+3. **Open Invite Modal**
+   - User Action: Tap "Generate invite link" button (or similar)
+   - State Update: `showInviteModal: true`
+   - Display: Invite generation interface
+
+4. **Generate Invite**
+   - User Action: Tap "Generate invite" button
+   - Trigger: Registration check
+
+**Path A: User is Registered**
+
+5. **Create Invite Link (Registered)**
+   - State Check: `userAccount.loggedIn: true`
+   - Function Call: `handleGenerateInvite()`
+   - Invite Token Generated: `invite-[userId]-[timestamp]`
+   - Invite Link Format: `breakloop://invite/[token]`
+   - State Update: `generatedInviteLink: inviteLink`
+   - Display: Toast "Invite link generated!"
+   - Display: Link shown with "Share" button
+
+6. **Share Invite Link**
+   - User Action: Tap "Share" button
+   - Function Call: `handleShareInvite()`
+   - Action: Opens native share sheet
+   - Options: Copy to clipboard, share via apps
+
+7. **Close Invite Modal**
+   - User Action: Tap close or back
+   - State Updates:
+     - `showInviteModal: false`
+     - `generatedInviteLink: null` (cleared)
+   - Transition: → Returns to Friends list
+
+**Path B: User is Anonymous**
+
+5. **Trigger Registration Gate**
+   - State Check: `userAccount.loggedIn: false`
+   - State Update: `showInviteModal: false` (close invite modal first)
+   - Transition: → Flow 17 (Registration Gating)
+   - Display: Registration modal
+
+6. **After Registration**
+   - Returns to invite generation flow
+   - User can now generate invite
+   - Continues from step 5 (Path A)
+
+**Exit Points:**
+- Invite shared → modal closed
+- Registration cancelled → returns to friends list
+- Modal closed without sharing → invite link discarded
+
+**Mobile Considerations:**
+- Native share sheet integration
+- Clipboard copy option
+- Link format supports deep linking
+- Invite tokens are unique per generation
+
+---
+
+## Flow 20: Accept Invite Link
+
+**Entry Point:** User opens invite link from outside app
+
+**Prerequisites:** App installed, invite link valid
+
+**Steps:**
+
+1. **Open Invite Link**
+   - Trigger: User taps invite link (e.g., from message, email)
+   - Link Format: `breakloop://invite/[token]`
+   - App Opens: Deep link handler activates
+
+2. **Validate Invite Token**
+   - Function Call: `handleOpenInviteLink(token)`
+   - Validation Checks:
+     - Token format valid
+     - Token not expired
+     - Sender exists
+     - Not already friends with sender
+   - Result: `validation.valid: boolean` + `validation.invite: object`
+
+3. **Validation Failed**
+   - Display: Toast "Invalid or expired invite link"
+   - Transition: → App opens to last screen or launcher
+   - Exit: Flow ends
+
+4. **Validation Passed**
+   - Invite Object Contains:
+     - `fromUserId: string`
+     - `fromUserName: string`
+     - `token: string`
+   - Trigger: Registration check
+
+**Path A: User is Registered**
+
+5. **Send Friend Request (Registered)**
+   - State Check: `userAccount.loggedIn: true`
+   - Function Call: Continues in `handleOpenInviteLink()`
+   - State Updates:
+     - Adds sender to `friendsList` with `status: "pending"`
+     - Creates friend request to sender
+   - Display: Toast "Friend request sent to [Sender Name]!"
+   - Transition: → App opens to Friends list (or Community tab)
+
+6. **Wait for Sender Response**
+   - Friend request appears in sender's inbox
+   - Status remains "pending" in user's friends list
+
+7. **Sender Accepts Request**
+   - State Update: Friend status changes to "confirmed"
+   - Both users now friends
+   - Can message and see shared activities
+
+**Path B: User is Anonymous**
+
+5. **Trigger Registration Gate**
+   - State Check: `userAccount.loggedIn: false`
+   - State Update: `pendingInviteToken: token`
+   - Transition: → Flow 17 (Registration Gating)
+   - Display: Registration modal
+
+6. **After Registration**
+   - Automatic: Friend request sent to invite sender
+   - Function Call: Resumes `handleOpenInviteLink(pendingInviteToken)`
+   - Display: Toast "Friend request sent to [Sender Name]!"
+   - State Update: `pendingInviteToken: null`
+   - Transition: → App opens to Friends list
+
+**Exit Points:**
+- Friend request sent → opens to Friends list
+- Invalid invite → opens to last screen
+- Registration cancelled → opens to last screen, no friend request sent
+
+**Mobile Considerations:**
+- Deep link handling on both Android and iOS
+- App may need to launch from background
+- Invite validation happens before UI updates
+- Toast notifications confirm actions
+
+**Edge Cases:**
+- Already friends with sender: Shows "You're already friends" toast
+- Sender no longer exists: Shows "Invalid invite" toast
+- Multiple invites from same sender: Only one friend request created
+- Invite link opened multiple times: Idempotent (no duplicate requests)
+
+---
+
+## Flow 21: View and Edit My Profile
+
+**Entry Point:** User wants to view or edit their own profile
+
+**Prerequisites:** `hasOnboarded: true`
+
+**Steps:**
+
+1. **Navigate to Settings**
+   - State: `activeTab: "settings"`
+   - Display: Settings screen with sections
+
+2. **View My Profile Section**
+   - Location: Settings → My Profile section
+   - State: `isEditingProfile: false` (view mode)
+   - Display:
+     - Profile photo (or placeholder with camera icon)
+     - Display name (or empty state hint)
+     - About Me (or empty state hint)
+     - Interests (or empty state hint)
+     - "Edit profile" button
+
+3. **Empty State (If Profile Not Filled)**
+   - Display: "Your profile is empty. Tap 'Edit profile' to add information."
+   - Hint text in gray/muted color
+
+4. **Tap Edit Profile**
+   - User Action: Tap "Edit profile" button
+   - State Updates:
+     - `isEditingProfile: true`
+     - `profileDraft: { ...userProfile }` (copy current profile)
+   - Transition: → Edit mode
+
+5. **Edit Mode Display**
+   - State: `isEditingProfile: true`
+   - Display: Editable form with:
+     - Profile photo editor:
+       - Current photo or placeholder
+       - Upload button (camera icon)
+       - Remove button (X) if photo exists
+     - Display name input field
+     - About Me textarea
+     - Interests textarea
+     - "Save changes" button
+     - "Cancel" button
+
+6. **Edit Profile Fields**
+   - User Actions:
+     - Upload photo: Opens file picker → Updates `profileDraft.primaryPhoto`
+     - Remove photo: Clears `profileDraft.primaryPhoto`
+     - Edit display name: Updates `profileDraft.displayName`
+     - Edit about me: Updates `profileDraft.aboutMe`
+     - Edit interests: Updates `profileDraft.interests`
+
+7. **User Decision Point**
+
+**Path A: Save Changes**
+
+8. **Save Profile Changes**
+   - User Action: Tap "Save changes" button
+   - State Updates:
+     - `userProfile: { ...profileDraft }` (apply changes)
+     - `isEditingProfile: false`
+     - `profileDraft: null`
+   - Display: Toast "Profile updated!"
+   - Transition: → View mode
+
+9. **View Updated Profile**
+   - State: `isEditingProfile: false`
+   - Display: Profile shows updated information
+   - Empty state hint removed if fields now filled
+
+**Path B: Cancel Changes**
+
+8. **Cancel Editing**
+   - User Action: Tap "Cancel" button
+   - State Updates:
+     - `isEditingProfile: false`
+     - `profileDraft: null` (discard changes)
+   - Transition: → View mode (no changes applied)
+
+**Exit Points:**
+- Profile saved → returns to view mode with updates
+- Editing cancelled → returns to view mode without changes
+- Navigate away → editing state preserved (or cancelled, implementation-specific)
+
+**Mobile Considerations:**
+- File picker for photo upload (native)
+- Photo preview before saving
+- Textarea auto-expands for long text
+- Form validation (optional, e.g., max lengths)
+- Android: Back button cancels editing
+- iOS: Swipe-back gesture cancels editing
+
+**Privacy Notes:**
+- Profile data stored locally
+- Future: Profile synced after registration
+- Friends can view profile based on privacy settings (future)
+
+---
+
+## Flow 22: View Friend Profile
+
+**Entry Point:** User wants to view friend's profile
+
+**Prerequisites:**
+- `hasOnboarded: true`
+- Friend exists in `friendsList`
+
+**Steps:**
+
+1. **Navigate to Friends List**
+   - State: `activeTab: "community"` + `communityMenu: "friends"`
+   - Display: Scrollable list of friends
+
+2. **Tap Friend Card**
+   - User Action: Tap friend card in list
+   - State Updates:
+     - `viewingFriend: friendObject`
+     - `viewingFriendFullProfile: false` (summary view)
+   - Transition: → Friend Profile Summary View
+
+3. **Friend Profile Summary View**
+   - State: `viewingFriend !== null` + `viewingFriendFullProfile: false`
+   - Display:
+     - Header with back button and friend name
+     - Profile photo (or avatar with initial)
+     - Display name (or fallback to name)
+     - "Tap to view full profile" hint
+     - "Chat with [Name]" button (primary action)
+     - "Things [Name] is up to" section (if friend has activities)
+
+4. **User Decision Point**
+
+**Path A: View Full Profile**
+
+5. **Tap Profile Card**
+   - User Action: Tap profile card area
+   - State Update: `viewingFriendFullProfile: true`
+   - Transition: → Friend Profile Full View
+
+6. **Friend Profile Full View**
+   - State: `viewingFriend !== null` + `viewingFriendFullProfile: true`
+   - Display:
+     - Header with back button and friend name
+     - Menu button (⋮) with actions:
+       - Star/Unstar friend
+       - Remove friend
+     - Profile photo (or avatar)
+     - Display name (or fallback to name)
+     - About Me (only if friend has filled)
+     - Interests (only if friend has filled)
+   - Read-Only: No edit capability
+
+7. **Friend Menu Actions**
+   - User Action: Tap menu button (⋮)
+   - Display: Dropdown menu with options
+
+   **Star/Unstar Friend:**
+   - User Action: Tap "Star friend" or "Unstar friend"
+   - State Update: Toggles `friend.isFavorite`
+   - Display: Toast "[Name] starred" or "[Name] unstarred"
+   - Result: Starred friends appear at top of friends list (future)
+
+   **Remove Friend:**
+   - User Action: Tap "Remove friend"
+   - Display: Confirmation dialog "Remove [Name] from your friends?"
+   - User Confirms: Tap "Remove"
+   - State Updates:
+     - Removes friend from `friendsList`
+     - Adds to `deletedFriends` array
+     - `viewingFriend: null`
+   - Display: Toast "[Name] removed"
+   - Transition: → Returns to Friends list
+
+8. **Back to Summary**
+   - User Action: Tap back button
+   - State Update: `viewingFriendFullProfile: false`
+   - Transition: → Friend Profile Summary View
+
+**Path B: Chat with Friend**
+
+5. **Tap Chat Button**
+   - User Action: Tap "Chat with [Name]" button
+   - State Update: `messagingBuddy: friendObject`
+   - Transition: → Opens chat interface (private messages)
+   - See Flow 15 (Inbox → Messages) for chat details
+
+**Path C: View Friend's Activities**
+
+5. **View Activities Section**
+   - Display: "Things [Name] is up to" section
+   - Shows activities where friend is host
+   - User Action: Tap activity card
+   - State Update: `selectedActivity: activityObject`
+   - Transition: → Opens Activity Details Modal
+
+**Path D: Close Profile**
+
+5. **Close Friend Profile**
+   - User Action: Tap back button (from summary view)
+   - State Update: `viewingFriend: null`
+   - Transition: → Returns to Friends list
+
+**Exit Points:**
+- Profile closed → returns to Friends list
+- Chat opened → opens chat interface
+- Activity opened → opens Activity Details Modal
+- Friend removed → returns to Friends list
+
+**Mobile Considerations:**
+- Android: Back button navigates: Full → Summary → Friends list
+- iOS: Swipe-back gesture navigates: Full → Summary → Friends list
+- Smooth transitions between summary and full views
+- Menu dropdown closes on selection or outside tap
+
+**Privacy:**
+- Only shows profile fields friend has filled
+- Respects friend's privacy settings (future)
+- No edit capability on friend profiles
+
+---
+
 ## Decision Points Summary
 
 ### At App Launch (Monitored)
@@ -1473,6 +2245,40 @@ formData: {
   - BreakLoop → Status: "focused"
 - **Leave session:**
   - 5-second countdown → Can cancel or leave
+
+### At Inbox Tab
+- **Sub-tab selection:**
+  - Messages → View private conversations
+  - Updates → View event notifications
+- **Tap conversation:**
+  - Opens chat interface → Marks messages as read
+- **Tap update:**
+  - Opens Activity Details → Resolves update (type-specific)
+
+### At Registration Gate
+- **User status:**
+  - Anonymous → Show registration modal
+  - Registered → Execute action immediately
+- **User action:**
+  - Complete registration → Resume pending action
+  - Cancel → Action not completed
+
+### At Friend Profile
+- **View mode:**
+  - Summary → View basic info + chat button
+  - Full → View complete profile (read-only)
+- **Actions:**
+  - Chat → Opens private messages
+  - Star/Unstar → Toggles favorite status
+  - Remove → Confirmation dialog → Removes friend
+
+### At My Profile
+- **Mode:**
+  - View → Display profile info + edit button
+  - Edit → Editable form with save/cancel
+- **Actions:**
+  - Save → Updates profile → Returns to view mode
+  - Cancel → Discards changes → Returns to view mode
 
 ---
 
@@ -1670,11 +2476,16 @@ idle → breathing → root-cause → alternatives → action → action_timer �
 - Community Activity Join (Flow 8)
 - Plan Activity with AI (Flow 10)
 - Edit Activity (Flow 12)
+- Inbox → Messages (Flow 15)
+- Inbox → Updates (Flow 16)
+- View/Edit My Profile (Flow 21)
+- View Friend Profile (Flow 22)
 
 **System Initiated (Medium Priority):**
 - Monitored App → Quick Task (Flow 3)
 - Monitored App → Full Intervention (Flow 4)
 - Proactive Prompt (Flow 7)
+- Registration Gating (Flow 17)
 
 **Contextual (Low Priority):**
 - Normal Day (Flow 2)
@@ -1686,6 +2497,11 @@ idle → breathing → root-cause → alternatives → action → action_timer �
 - Alt Scheduler (Flow 11)
 - Host Manages Requests (Flow 13)
 - Cancel Hosted Event (Flow 14)
+
+**Social Features (As Needed):**
+- Add Friend from Participants (Flow 18)
+- Generate and Share Invite Link (Flow 19)
+- Accept Invite Link (Flow 20)
 
 ---
 
@@ -1700,6 +2516,12 @@ idle → breathing → root-cause → alternatives → action → action_timer �
 6. **Session override** → Blocks normal navigation
 7. **Timer unlock** → App accessible for duration
 8. **Edit activity** → Pre-fills form correctly
+9. **Inbox badge updates** → Reflects unread messages + unresolved updates
+10. **Update resolution** → Type-specific logic works correctly
+11. **Registration gating** → Triggers at correct points, resumes pending action
+12. **Friend request flows** → Invite links, participant adds, acceptance
+13. **Profile editing** → Save/cancel behavior, photo upload
+14. **Private messaging** → Unread state, read receipts disabled
 
 ### Edge Cases to Verify
 - Quick task window reset after 15 minutes
@@ -1709,6 +2531,13 @@ idle → breathing → root-cause → alternatives → action → action_timer �
 - Session tracking during app switching
 - Modal cleanup on navigation
 - Form validation prevents incomplete saves
+- Inbox badge never shown on Community tab
+- Updates remain unresolved until explicit action
+- Multiple updates for same event resolve independently
+- Registration modal closes other modals first
+- Invite link idempotency (no duplicate requests)
+- Profile draft discarded on cancel
+- Friend removal confirmation dialog
 
 ### Platform-Specific Testing
 - Android: Back button behavior at each state
