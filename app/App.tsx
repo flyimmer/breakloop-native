@@ -25,9 +25,11 @@ function InterventionNavigationHandler() {
 
     previousStateRef.current = state;
 
-    // Navigate to BreathingScreen when intervention state becomes 'breathing'
+    // Navigate based on intervention state
     if (state === 'breathing') {
       navigationRef.current.navigate('Breathing');
+    } else if (state === 'root-cause') {
+      navigationRef.current.navigate('RootCause');
     } else if (state === 'idle') {
       // Return to main tabs when intervention is idle
       navigationRef.current.navigate('MainTabs');

@@ -8,10 +8,12 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import React from 'react';
 import MainNavigation from './MainNavigation';
 import BreathingScreen from '../screens/conscious_process/BreathingScreen';
+import RootCauseScreen from '../screens/conscious_process/RootCauseScreen';
 
 export type RootStackParamList = {
   MainTabs: undefined;
   Breathing: undefined;
+  RootCause: undefined;
   // Add other intervention screens as needed
 };
 
@@ -27,6 +29,7 @@ export default function RootNavigator() {
     >
       <Stack.Screen name="MainTabs" component={MainNavigation} />
       <Stack.Screen name="Breathing" component={BreathingScreen} />
+      <Stack.Screen name="RootCause" component={RootCauseScreen} />
     </Stack.Navigator>
   );
 }

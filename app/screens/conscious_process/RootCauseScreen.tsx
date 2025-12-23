@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useIntervention } from '@/src/contexts/InterventionProvider';
+import { canProceedToAlternatives } from '@/src/core/intervention';
 
 /**
  * RootCauseScreen
@@ -18,11 +20,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
  * - design/principles/interaction-gravity.md (Reflective Float)
  * - design/ui/tokens.md (colors, typography, spacing, elevation)
  * - design/ui/tone-ambient-hearth.md (calm, soft, depth via elevation)
- * 
- * Scope:
- * - UI only (no navigation, no flow wiring)
- * - Local state for visual selection only
- * - No timers, analytics, or community elements
  */
 
 // Canonical causes (exact wording from requirements)
@@ -36,24 +33,53 @@ const CAUSES = [
 ] as const;
 
 export default function RootCauseScreen() {
-  const [selectedCauses, setSelectedCauses] = useState<Set<string>>(new Set());
+  const { interventionState, dispatchIntervention } = useIntervention();
+  const { selectedCauses } = interventionState;
 
-  const toggleCause = (causeId: string) => {
-    setSelectedCauses((prev) => {
-      const next = new Set(prev);
-      if (next.has(causeId)) {
-        next.delete(causeId);
-      } else {
-        next.add(causeId);
-      }
-      return next;
-    });
+  // Check if cause is selected (from intervention context)
+  const isCauseSelected = (causeId: string) => {
+    return selectedCauses.includes(causeId);
   };
 
-  const hasSelection = selectedCauses.size > 0;
+  // Toggle cause selection using intervention reducer
+  const handleToggleCause = (causeId: string) => {
+    if (isCauseSelected(causeId)) {
+      dispatchIntervention({ type: 'DESELECT_CAUSE', causeId });
+    } else {
+      dispatchIntervention({ type: 'SELECT_CAUSE', causeId });
+    }
+  };
+
+  // Proceed to alternatives (only if causes are selected)
+  const handleContinue = () => {
+    if (canProceedToAlternatives(interventionState)) {
+      dispatchIntervention({ type: 'PROCEED_TO_ALTERNATIVES' });
+    }
+  };
+
+  // Cancel intervention and return to idle
+  const handleCancel = () => {
+    dispatchIntervention({ type: 'RESET_INTERVENTION' });
+  };
+
+  const hasSelection = selectedCauses.length > 0;
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
+      {/* Close/Cancel button */}
+      <View style={styles.header}>
+        <Pressable
+          onPress={handleCancel}
+          style={({ pressed }) => [
+            styles.closeButton,
+            pressed && styles.closeButtonPressed,
+          ]}
+          hitSlop={12}
+        >
+          <Text style={styles.closeButtonText}>✕</Text>
+        </Pressable>
+      </View>
+
       {/* Content vertically centered (upper-mid) */}
       <View style={styles.contentContainer}>
         {/* Prompt text: short, neutral, non-judgmental */}
@@ -62,11 +88,11 @@ export default function RootCauseScreen() {
         {/* Cause cards: multi-select, equal visual weight */}
         <View style={styles.causesGrid}>
           {CAUSES.map((cause, index) => {
-            const isSelected = selectedCauses.has(cause.id);
+            const isSelected = isCauseSelected(cause.id);
             return (
               <Pressable
                 key={cause.id}
-                onPress={() => toggleCause(cause.id)}
+                onPress={() => handleToggleCause(cause.id)}
                 style={({ pressed }) => [
                   styles.causeCard,
                   isSelected && styles.causeCardSelected,
@@ -91,9 +117,7 @@ export default function RootCauseScreen() {
         {/* Continue action: calm, secondary presence, NOT bottom-anchored */}
         <View style={styles.actionContainer}>
           <Pressable
-            onPress={() => {
-              // No-op: UI only, no navigation wiring
-            }}
+            onPress={handleContinue}
             disabled={!hasSelection}
             style={({ pressed }) => [
               styles.continueButton,
@@ -120,6 +144,28 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0A0A0B', // tokens: background (dark mode)
+  },
+  header: {
+    paddingTop: 12,
+    paddingHorizontal: 16,
+    alignItems: 'flex-end',
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(24, 24, 27, 0.7)', // tokens: surfaceGlass
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeButtonPressed: {
+    opacity: 0.7,
+  },
+  closeButtonText: {
+    fontSize: 18,
+    lineHeight: 24,
+    color: '#FAFAFA', // tokens: textPrimary
+    fontWeight: '300',
   },
   contentContainer: {
     flex: 1,
