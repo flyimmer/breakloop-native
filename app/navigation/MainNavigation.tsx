@@ -1,6 +1,7 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { BarChart3, Inbox, Settings, Users } from 'lucide-react-native';
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CommunityScreen from '../screens/mainAPP/CommunityScreen';
 import InboxScreen from '../screens/mainAPP/InboxScreen';
@@ -16,27 +17,31 @@ const AppNavigation = () => {
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#8B7AE8', // primary color - vibrant when active
-        tabBarInactiveTintColor: '#A1A1AA', // textSecondary - softer when inactive
+        tabBarActiveTintColor: '#8B7AE8', // Brand purple for active
+        tabBarInactiveTintColor: '#D4D4D8', // Very light gray for inactive
         tabBarLabelStyle: styles.tabBarLabel,
         tabBarIconStyle: styles.tabBarIcon,
         tabBarStyle: {
           ...styles.tabBar,
-          // Dynamic height based on safe area bottom inset + extra spacing
-          height: 60 + insets.bottom + 12,
-          paddingBottom: insets.bottom > 0 ? insets.bottom + 12 : 16,
+          height: 68 + insets.bottom,
+          paddingBottom: insets.bottom > 0 ? insets.bottom + 4 : 8,
+          paddingTop: 8,
         },
         tabBarItemStyle: styles.tabBarItem,
         tabBarLabelPosition: 'below-icon',
-        tabBarAllowFontScaling: false, // Prevent system font scaling from breaking layout
+        tabBarAllowFontScaling: false,
       }}
     >
       <Tab.Screen 
         name="Insights" 
         component={InsightsScreen}
         options={{
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon icon="📊" color={color} focused={focused} />
+          tabBarIcon: ({ focused, color }) => (
+            <BarChart3 
+              size={24} 
+              color={color}
+              strokeWidth={focused ? 2.5 : 2}
+            />
           ),
         }}
       />
@@ -44,8 +49,12 @@ const AppNavigation = () => {
         name="Community" 
         component={CommunityScreen}
         options={{
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon icon="👥" color={color} focused={focused} />
+          tabBarIcon: ({ focused, color }) => (
+            <Users 
+              size={24} 
+              color={color}
+              strokeWidth={focused ? 2.5 : 2}
+            />
           ),
         }}
       />
@@ -53,8 +62,12 @@ const AppNavigation = () => {
         name="Inbox" 
         component={InboxScreen}
         options={{
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon icon="📬" color={color} focused={focused} />
+          tabBarIcon: ({ focused, color }) => (
+            <Inbox 
+              size={24} 
+              color={color}
+              strokeWidth={focused ? 2.5 : 2}
+            />
           ),
         }}
       />
@@ -62,8 +75,12 @@ const AppNavigation = () => {
         name="Settings" 
         component={SettingsScreen}
         options={{
-          tabBarIcon: ({ color, focused }) => (
-            <TabIcon icon="⚙️" color={color} focused={focused} />
+          tabBarIcon: ({ focused, color }) => (
+            <Settings 
+              size={24} 
+              color={color}
+              strokeWidth={focused ? 2.5 : 2}
+            />
           ),
         }}
       />
@@ -71,62 +88,31 @@ const AppNavigation = () => {
   );
 };
 
-// Custom tab icon component with active state indicator
-const TabIcon = ({ icon, color, focused }: { icon: string; color: string; focused?: boolean }) => {
-  return (
-    <View style={styles.iconContainer}>
-      <Text style={{ 
-        fontSize: 30, 
-        opacity: focused ? 1 : 0.65,
-        transform: [{ scale: focused ? 1.05 : 1 }] // Subtle scale on active
-      }}> 
-        {icon}
-      </Text>
-      {focused && <View style={styles.activeIndicator} />}
-    </View>
-  );
-};
-
 const styles = StyleSheet.create({
   tabBar: {
-    // Base height for tab content (icon + label + padding)
-    // Actual height is dynamically calculated: 60 + insets.bottom
-    paddingTop: 8,
     paddingHorizontal: 8,
-    backgroundColor: '#FFFFFF', // Clean white surface
-    borderTopWidth: 0, // Remove border for cleaner look
-    // Subtle gradient effect via shadow
+    backgroundColor: '#FEFEFE', // Soft off-white background
+    borderTopWidth: 1,
+    borderTopColor: '#F4F4F5', // Very subtle separation
+    // Soft elevation for depth
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 12,
+    shadowOffset: { width: 0, height: -1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 4,
   },
   tabBarItem: {
     paddingVertical: 4,
-    gap: 4, // Space between icon and label
+    gap: 4, // Tight space between icon and label
   },
   tabBarIcon: {
-    marginBottom: 0, // Reset, using gap instead
+    marginBottom: 0,
   },
   tabBarLabel: {
-    fontSize: 11,
-    fontWeight: '600', // Bolder for better readability
+    fontSize: 10,
+    fontWeight: '600', // Slightly bolder weight for better presence
     letterSpacing: 0.2,
-    marginTop: 4,
-  },
-  iconContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-  },
-  activeIndicator: {
-    position: 'absolute',
-    top: -6,
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#8B7AE8', // primary color
+    marginTop: 2,
   },
 });
 

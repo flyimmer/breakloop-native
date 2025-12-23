@@ -5,49 +5,73 @@
 ### Dark Mode (Primary)
 
 ```js
-background: '#0A0A0B'        // Deep neutral black
-surface: '#18181B'           // Elevated surface
-surfaceSecondary: '#27272A'  // Secondary elevated surface
-surfaceGlass: 'rgba(24, 24, 27, 0.7)' // Glass-like overlay for pause moments
-primary: '#8B7AE8'           // Soft purple, calm but present
-primaryMuted: '#6B5FC9'      // Muted primary for subtle states
-textPrimary: '#FAFAFA'       // High contrast for readability
-textSecondary: '#A1A1AA'     // Medium contrast for hierarchy
-textMuted: '#71717A'         // Low contrast for de-emphasized content
-border: '#3F3F46'            // Subtle separation
-danger: '#E87A7A'            // Soft red, non-alarming
-success: '#7AE89D'           // Calm green, non-gamified
-warning: '#E8C77A'           // Soft amber for caution
-overlay: 'rgba(0, 0, 0, 0.7)' // Modal backdrop
-overlaySoft: 'rgba(0, 0, 0, 0.5)' // Lighter backdrop
+background: '#0A0A0B'
+surface: '#18181B'
+surfaceSecondary: '#27272A'
+surfaceGlass: 'rgba(24, 24, 27, 0.7)'
+
+// Primary accent
+primary: '#8B7AE8'
+primaryMuted: '#6B5FC9'
+
+// Text hierarchy
+textPrimary: '#FAFAFA'
+textSecondary: '#A1A1AA'
+textMuted: '#71717A'
+
+// Borders & dividers
+border: '#3F3F46'
+divider: '#3F3F46'
+
+// Status colors
+success: '#7AE89D'
+warning: '#E8C77A'
+danger: '#E87A7A'
+
+// Overlays
+overlay: 'rgba(0, 0, 0, 0.7)'
+overlaySoft: 'rgba(0, 0, 0, 0.5)'
 
 // Semantic aliases
-focus: '#8B7AE8'             // Maps to primary
-divider: '#3F3F46'           // Maps to border
-```
+focus: '#8B7AE8'
+accent: '#8B7AE8'
+
 
 ### Light Mode (Optional)
 
 ```js
-background: '#FAFAFA'
-surface: '#FFFFFF'
-surfaceSecondary: '#F4F4F5'
-surfaceGlass: 'rgba(255, 255, 255, 0.8)'
-primary: '#7C6FD9'
-primaryMuted: '#9B91E8'
-textPrimary: '#18181B'
-textSecondary: '#52525B'
-textMuted: '#A1A1AA'
-border: '#E4E4E7'
-danger: '#DC6B6B'
-success: '#6BDC8C'
-warning: '#DCBD6B'
+// Base surfaces
+background: '#FAFAFB'          // Soft off-white, primary app background
+surface: '#FFFFFF'             // Cards, sheets, primary surfaces
+surfaceSecondary: '#F4F4F6'    // Subtle section separation
+surfaceGlass: 'rgba(255, 255, 255, 0.8)' // Light glass overlays
+
+// Primary accent (system-wide)
+primary: '#7C6FD9'              // Soft purple — system accent
+primaryMuted: '#9B91E8'         // Muted purple for subtle emphasis
+
+// Text hierarchy
+textPrimary: '#18181B'          // Near-black (headlines, key values)
+textSecondary: '#52525B'        // Body text, labels
+textMuted: '#A1A1AA'            // Helper text, metadata
+
+// Borders & dividers
+border: '#E4E4E7'               // Subtle separation
+divider: '#E4E4E7'
+
+// Status colors (restrained, non-gamified)
+success: '#6BDC8C'              // Calm green (e.g. CONFIRMED)
+warning: '#DCBD6B'              // Soft amber
+danger: '#DC6B6B'               // Soft red, non-alarming
+
+// Overlays
 overlay: 'rgba(0, 0, 0, 0.4)'
 overlaySoft: 'rgba(0, 0, 0, 0.2)'
 
 // Semantic aliases
-focus: '#7C6FD9'
-divider: '#E4E4E7'
+focus: '#7C6FD9'                // Maps to primary
+accent: '#7C6FD9'               // Explicit system accent
+
 ```
 
 ## Spacing

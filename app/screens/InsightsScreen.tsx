@@ -278,7 +278,8 @@ export default function InsightsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FAFAFA', // Soft off-white background (consistent with Community)
+    // Subtle gradient background for depth
+    backgroundColor: '#F8F9FA', // Softer, warmer background
   },
   scrollView: {
     flex: 1,
@@ -301,18 +302,18 @@ const styles = StyleSheet.create({
     marginBottom: 20, // Increased from 16
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 18, // Increased from 16 for better hierarchy
     lineHeight: 26,
-    fontWeight: '700',
-    color: '#27272A', // Near-black (consistent color system)
-    marginBottom: 6,
+    fontWeight: '700', // Bolder for clear hierarchy
+    color: '#0F172A', // Darker, higher contrast
+    marginBottom: 6, // Increased from 4
     letterSpacing: -0.3,
   },
   sectionSubtitle: {
-    fontSize: 13,
+    fontSize: 13, // Increased from 12 for readability
     lineHeight: 18,
     fontWeight: '400',
-    color: '#71717A', // Medium gray (consistent with cards)
+    color: '#64748B', // Better contrast than #71717A
   },
   editButton: {
     width: 32,
@@ -343,24 +344,25 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     fontWeight: '400',
-    color: '#A1A1AA', // Light gray for helper text
+    color: '#64748B', // Better contrast
     textAlign: 'center',
   },
   valueCard: {
-    width: 88,
+    width: 88, // Increased from 80 for better tap targets
     height: 88,
-    backgroundColor: '#FFFFFF', // Pure white for cards
-    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16, // Increased from 12 for modern look
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderColor: '#F9FAFB', // Barely visible border
+    gap: 6, // Increased from 4
+    // Enhanced shadow for depth
     shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.02,
-    shadowRadius: 2,
-    elevation: 1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: '#F1F5F9', // Subtle border for definition
   },
   valueIcon: {
     fontSize: 28, // Increased from 24
