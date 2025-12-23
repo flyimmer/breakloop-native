@@ -52,20 +52,29 @@ This project includes comprehensive design documentation that serves as the sour
 ## High-Level Architecture
 
 ### Single-File Application Pattern
-The core application logic resides in `src/App.js` (~6400 lines). This is a deliberate design choice for a prototype/market test. The file orchestrates:
+The core application logic resides in `src/App.js` (~8200 lines). This is a deliberate design choice for a prototype/market test. The file orchestrates:
 - Multiple screen contexts (launcher, BreakLoop config, dummy apps)
 - Intervention flow state machine (breathing → root-cause → alternatives → action → reflection)
 - Community/social features with a mock backend layer
 - Settings, friends management, and activity planning
 
-**Note:** While the app maintains a single-file core, common utilities and constants have been extracted to shared modules for better maintainability.
+**Note:** While the app maintains a single-file core, common utilities, constants, and core business logic have been extracted to shared modules for better maintainability and reusability (especially for React Native).
+
+### Framework-Agnostic Core Logic
+The intervention state machine has been extracted into `src/core/intervention/` as pure JavaScript functions with no React dependencies. This allows the same business logic to be reused in React Native or other frameworks. See [Intervention State Machine](#intervention-state-machine) section below.
 
 ### Code Organization
 
 **Directory Structure:**
 ```
 src/
-├── App.js                      # Main application (6400+ lines)
+├── App.js                      # Main application (8200+ lines)
+├── core/                       # Framework-agnostic business logic
+│   └── intervention/           # Intervention state machine (pure JS)
+│       ├── index.js           # Public API exports
+│       ├── state.js           # State definitions and initial context
+│       ├── transitions.js     # Pure transition functions (reducer)
+│       └── timers.js          # Timer utilities and calculations
 ├── components/                 # Modular UI components
 │   ├── ActivityCard.js
 │   ├── ActivityDetailsModal.js
@@ -150,6 +159,90 @@ src/
   - Quick Task settings (duration options, limits, window duration)
   - Default settings for monitored apps, user account, intervention behavior
 
+### Intervention State Machine
+
+**Location:** `src/core/intervention/` (framework-agnostic)
+
+The intervention flow state machine has been extracted into pure JavaScript functions with no React dependencies. This allows the same business logic to be reused in React Native or other frameworks.
+
+**Architecture:**
+- **State-driven**: Uses a reducer pattern with immutable state updates
+- **Pure functions**: All transitions are predictable and testable
+- **Framework-agnostic**: No React hooks or dependencies
+
+**Files:**
+- `state.js` (68 lines) - State definitions, initial context, helper functions
+- `transitions.js` (237 lines) - Main reducer and transition logic
+- `timers.js` (89 lines) - Timer utilities and calculations
+- `index.js` - Public API exports
+
+**States:**
+```
+idle → breathing → root-cause → alternatives → action → action_timer → reflection → idle
+                                     ↓
+                                   timer (unlock)
+```
+
+**Usage in App.js:**
+```javascript
+import { 
+  createInitialInterventionContext,
+  interventionReducer,
+  beginIntervention,
+  toggleCause,
+  startAlternative,
+  shouldTickBreathing,
+  shouldTickActionTimer
+} from './core/intervention';
+
+// Initialize state
+const [interventionContext, setInterventionContext] = useState(() => 
+  createInitialInterventionContext()
+);
+
+// Dispatch actions
+const dispatchIntervention = useCallback((action) => {
+  setInterventionContext(prev => interventionReducer(prev, action));
+}, []);
+
+// Start intervention
+setInterventionContext(prev => 
+  beginIntervention(prev, app, breathingDuration)
+);
+
+// Timer effects
+useEffect(() => {
+  if (shouldTickBreathing(interventionState, breathingCount)) {
+    const timer = setTimeout(() => {
+      dispatchIntervention({ type: 'BREATHING_TICK' });
+    }, 1000);
+    return () => clearTimeout(timer);
+  }
+}, [interventionState, breathingCount, dispatchIntervention]);
+```
+
+**Action Types:**
+- `BEGIN_INTERVENTION` - Start intervention for an app
+- `BREATHING_TICK` - Decrement breathing countdown
+- `SELECT_CAUSE` / `DESELECT_CAUSE` - Toggle cause selection
+- `PROCEED_TO_ALTERNATIVES` - Move to alternatives screen
+- `PROCEED_TO_TIMER` - User chose "I really need to use it"
+- `SELECT_ALTERNATIVE` - Select an alternative activity
+- `START_ALTERNATIVE` - Start timer for alternative
+- `ACTION_TIMER_TICK` - Decrement action timer
+- `FINISH_ACTION` - User manually finishes action
+- `FINISH_REFLECTION` - Complete reflection
+- `GO_BACK_FROM_ACTION` - Return to alternatives
+- `RESET_INTERVENTION` - Reset to idle
+
+**Benefits:**
+- ✅ Reusable in React Native
+- ✅ Testable (pure functions)
+- ✅ Predictable state transitions
+- ✅ No framework coupling
+- ✅ Single source of truth
+
+**See also:** `INTERVENTION_EXTRACTION_SUMMARY.md` for detailed extraction documentation
 
 ### State Management Strategy
 
@@ -646,12 +739,20 @@ Modals are rendered at the root level to ensure proper z-index stacking:
 - useMemo for expensive computations and JSX elements
 - useCallback for stable function references
 - useRef for DOM references and mutable values
+- Reducer pattern for complex state machines (intervention flow)
 
 **Code Quality:**
 - No debug logging or external fetch calls in production code
 - Shared utilities extracted to avoid duplication
 - Constants centralized in `constants/` directory
+- Core business logic extracted to `core/` directory (framework-agnostic)
 - All components use shared utilities for consistent behavior
+
+**State Machine Pattern:**
+- Intervention flow uses extracted reducer pattern
+- Pure functions for state transitions
+- Framework-agnostic core logic in `src/core/intervention/`
+- React layer only handles UI and side effects (timers, storage)
 
 ## Testing Considerations
 
@@ -713,6 +814,87 @@ The codebase underwent incremental refactoring to improve maintainability while 
 - `src/components/PlanActivityModal.jsx` (904 → 797 lines, -107 lines)
 - `src/utils/time.js` (30 → 158 lines, +128 lines for new parsing functions)
 
+**Phase 3 - Extract Intervention State Machine (December 2025):**
+- Extracted intervention flow logic into framework-agnostic core module
+- Created `src/core/intervention/` directory with pure JavaScript functions
+- Converted 6 separate `useState` calls to single `interventionContext` state
+- Implemented reducer pattern for predictable state transitions
+- All intervention logic now reusable in React Native
+
+**Files Created:**
+- `src/core/intervention/state.js` (68 lines) - State definitions
+- `src/core/intervention/transitions.js` (237 lines) - Transition logic
+- `src/core/intervention/timers.js` (89 lines) - Timer utilities
+- `src/core/intervention/index.js` (11 lines) - Public API
+- `INTERVENTION_EXTRACTION_SUMMARY.md` - Detailed extraction documentation
+
+**Files Modified:**
+- `src/App.js` (8,232 lines) - Updated to use extracted intervention core
+  - Replaced direct state mutations with `dispatchIntervention()` calls
+  - Updated timer effects to use extracted logic
+  - Maintained 100% backward compatibility
+
+**Impact:**
+- **+394 lines** of framework-agnostic core logic
+- **Zero behavior changes** - all functionality preserved
+- **Build verified** - compiles successfully
+- **Ready for React Native** - same logic can be reused
+
+
+## React Native Compatibility
+
+The intervention state machine has been extracted to prepare for React Native app development:
+
+**Framework-Agnostic Core:**
+- `src/core/intervention/` contains pure JavaScript with no React dependencies
+- Can be imported directly into React Native projects
+- Same business logic for web and mobile
+
+**Usage in React Native:**
+```javascript
+// Import the same core logic
+import { 
+  createInitialInterventionContext,
+  interventionReducer,
+  beginIntervention,
+  shouldTickBreathing
+} from './core/intervention';
+
+// Use with React Native state
+const [context, setContext] = useState(createInitialInterventionContext());
+
+// Same dispatch pattern
+const dispatch = (action) => {
+  setContext(prev => interventionReducer(prev, action));
+};
+
+// Same timer logic
+useEffect(() => {
+  if (shouldTickBreathing(context.state, context.breathingCount)) {
+    const timer = setTimeout(() => {
+      dispatch({ type: 'BREATHING_TICK' });
+    }, 1000);
+    return () => clearTimeout(timer);
+  }
+}, [context.state, context.breathingCount]);
+```
+
+**What's Portable:**
+- ✅ Intervention state machine (`core/intervention/`)
+- ✅ Time utilities (`utils/time.js`)
+- ✅ Activity matching logic (`utils/activityMatching.js`)
+- ✅ Configuration constants (`constants/config.js`)
+
+**What Needs Adaptation:**
+- ⚠️ UI components (React Native uses different primitives)
+- ⚠️ Storage layer (use AsyncStorage instead of localStorage)
+- ⚠️ Navigation (use React Navigation instead of context switching)
+
+**Future Extractions:**
+Other state machines can follow the same pattern:
+- Community activity flow
+- Quick Task system
+- Inbox update management
 
 ## Git Workflow
 
@@ -720,6 +902,10 @@ Current branch: `Community_Optimization`
 Main branch: `main`
 
 Recent commit themes:
+- Intervention state machine extraction (December 2025)
+  - Extracted core logic to `src/core/intervention/`
+  - Prepared codebase for React Native reuse
+  - Maintained 100% backward compatibility
 - Code refactoring for maintainability (December 2025)
   - Removed debug logging and external fetch calls
   - Extracted shared utilities and constants

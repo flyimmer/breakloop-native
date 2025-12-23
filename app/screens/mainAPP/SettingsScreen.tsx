@@ -13,8 +13,12 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useIntervention } from '@/src/contexts/InterventionProvider';
 
 const SettingsScreen = () => {
+  // Intervention context (for debug button)
+  const { dispatchIntervention } = useIntervention();
+
   // Mock state - replace with actual state management
   // Profile state (independent of authentication)
   const [userProfile, setUserProfile] = useState<{
@@ -123,6 +127,22 @@ const SettingsScreen = () => {
   const handleEditApps = () => {
     // TODO: Navigate to edit apps screen
     console.log('Edit apps');
+  };
+
+  // DEV-ONLY: Debug button to start intervention flow
+  const handleStartInterventionDebug = () => {
+    // Dispatch BEGIN_INTERVENTION action with mock app
+    // This sets interventionState to "breathing" and starts the countdown
+    dispatchIntervention({
+      type: 'BEGIN_INTERVENTION',
+      app: {
+        id: 'debug-instagram',
+        name: 'Instagram',
+      },
+      breathingDuration: 5, // Default 5 seconds
+    });
+    // Navigation will react to state change automatically
+    // (interventionState changes from 'idle' to 'breathing')
   };
 
   return (
@@ -444,7 +464,26 @@ const SettingsScreen = () => {
 
         {/* Advanced / Development Tools */}
         <View style={styles.section}>
-          <Text style={styles.advancedLink}>Advanced / Development Tools</Text>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionTitleRow}>
+              <Text style={styles.sectionTitle}>Demo / Test / Advanced</Text>
+            </View>
+          </View>
+          <Text style={styles.sectionDescription}>
+            Debug tools for testing intervention state machine. Remove before production.
+          </Text>
+
+          <View style={styles.card}>
+            <TouchableOpacity
+              style={styles.debugButton}
+              onPress={handleStartInterventionDebug}
+            >
+              <Text style={styles.debugButtonText}>Start Intervention (Debug)</Text>
+            </TouchableOpacity>
+            <Text style={styles.debugHint}>
+              This triggers the intervention flow for testing. Navigation will react to state changes.
+            </Text>
+          </View>
         </View>
 
         {/* Version */}
@@ -907,6 +946,29 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     fontWeight: '500',
     color: '#52525B',
+  },
+  debugButton: {
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: '#F4F4F6',
+    borderWidth: 1,
+    borderColor: '#E4E4E7',
+    borderStyle: 'dashed',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  debugButtonText: {
+    fontSize: 16,
+    lineHeight: 24,
+    fontWeight: '500',
+    color: '#52525B',
+  },
+  debugHint: {
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#A1A1AA',
+    fontStyle: 'italic',
   },
 });
 

@@ -1,0 +1,33 @@
+/**
+ * RootNavigator
+ * 
+ * Root navigation that includes both main app tabs and intervention flow screens.
+ */
+
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import React from 'react';
+import MainNavigation from './MainNavigation';
+import BreathingScreen from '../screens/conscious_process/BreathingScreen';
+
+export type RootStackParamList = {
+  MainTabs: undefined;
+  Breathing: undefined;
+  // Add other intervention screens as needed
+};
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
+
+export default function RootNavigator() {
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerShown: false,
+        presentation: 'modal', // Intervention screens appear as modals
+      }}
+    >
+      <Stack.Screen name="MainTabs" component={MainNavigation} />
+      <Stack.Screen name="Breathing" component={BreathingScreen} />
+    </Stack.Navigator>
+  );
+}
+

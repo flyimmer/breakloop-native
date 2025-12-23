@@ -7,11 +7,26 @@
  * This provider is ready but unused - it does not connect to any UI yet.
  */
 
-import React, { createContext, useContext, useReducer } from 'react';
+import React, { createContext, useContext, useReducer, ReactNode } from 'react';
 import {
   interventionReducer,
   createInitialInterventionContext,
 } from '../core/intervention';
+
+/**
+ * Intervention context state shape
+ */
+interface InterventionContextValue {
+  interventionState: {
+    state: 'idle' | 'breathing' | 'root-cause' | 'alternatives' | 'action' | 'action_timer' | 'timer' | 'reflection';
+    targetApp: any | null;
+    breathingCount: number;
+    selectedCauses: string[];
+    selectedAlternative: any | null;
+    actionTimer: number;
+  };
+  dispatchIntervention: (action: any) => void;
+}
 
 /**
  * Intervention Context
@@ -19,14 +34,14 @@ import {
  * - interventionState: Current intervention state object
  * - dispatchIntervention: Dispatch function for intervention actions
  */
-const InterventionContext = createContext(null);
+const InterventionContext = createContext<InterventionContextValue | null>(null);
 
 /**
  * Hook to access intervention context
- * @returns {Object} { interventionState, dispatchIntervention }
+ * @returns {InterventionContextValue} { interventionState, dispatchIntervention }
  * @throws {Error} If used outside InterventionProvider
  */
-export const useIntervention = () => {
+export const useIntervention = (): InterventionContextValue => {
   const context = useContext(InterventionContext);
   if (!context) {
     throw new Error('useIntervention must be used within InterventionProvider');
@@ -41,15 +56,19 @@ export const useIntervention = () => {
  * Initial state is created using createInitialInterventionContext().
  * 
  * @param {Object} props - React props
- * @param {React.ReactNode} props.children - Child components
+ * @param {ReactNode} props.children - Child components
  */
-export const InterventionProvider = ({ children }) => {
+interface InterventionProviderProps {
+  children: ReactNode;
+}
+
+export const InterventionProvider: React.FC<InterventionProviderProps> = ({ children }) => {
   const [interventionState, dispatchIntervention] = useReducer(
     interventionReducer,
     createInitialInterventionContext() // Initial state
   );
 
-  const value = {
+  const value: InterventionContextValue = {
     interventionState,
     dispatchIntervention,
   };

@@ -1,3 +1,5 @@
+import { useIntervention } from '@/src/contexts/InterventionProvider';
+import { shouldTickBreathing } from '@/src/core/intervention';
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,9 +20,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
  * - design/ui/tone-ambient-hearth.md (calm, soft, depth via elevation)
  */
 export default function BreathingScreen() {
+  // Intervention state from context
+  const { interventionState, dispatchIntervention } = useIntervention();
+  const { state, breathingCount } = interventionState;
+
   // Soft breathing animation (opacity-based, organic feel)
   const breatheAnim = useRef(new Animated.Value(1)).current;
 
+  // Continuous breathing rhythm animation
   useEffect(() => {
     // Continuous breathing rhythm using opacity
     // Mimics natural breath: slow inhale, slow exhale, subtle presence shift
@@ -44,6 +51,22 @@ export default function BreathingScreen() {
     ).start();
   }, [breatheAnim]);
 
+  // Breathing countdown timer
+  useEffect(() => {
+    // Only tick if we're in breathing state and count > 0
+    if (!shouldTickBreathing(state, breathingCount)) {
+      return;
+    }
+
+    // Set up 1-second interval to decrement countdown
+    const timer = setInterval(() => {
+      dispatchIntervention({ type: 'BREATHING_TICK' });
+    }, 1000);
+
+    // Cleanup interval on unmount or state change
+    return () => clearInterval(timer);
+  }, [state, breathingCount, dispatchIntervention]);
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       {/* Central breathing visual */}
@@ -56,7 +79,7 @@ export default function BreathingScreen() {
             },
           ]}
         >
-          <Text style={styles.countdownNumber}>5</Text>
+          <Text style={styles.countdownNumber}>{breathingCount}</Text>
         </Animated.View>
       </View>
     </SafeAreaView>
