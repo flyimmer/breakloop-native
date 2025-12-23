@@ -3,7 +3,7 @@ import { BarChart3, Inbox, Settings, Users } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import CommunityScreen from '../screens/mainAPP/CommunityScreen';
+import CommunityStackNavigator from './CommunityStackNavigator';
 import InboxScreen from '../screens/mainAPP/InboxScreen';
 import InsightsScreen from '../screens/mainAPP/InsightsScreen';
 import SettingsScreen from '../screens/mainAPP/SettingsScreen';
@@ -47,7 +47,7 @@ const AppNavigation = () => {
       />
       <Tab.Screen 
         name="Community" 
-        component={CommunityScreen}
+        component={CommunityStackNavigator}
         options={{
           tabBarIcon: ({ focused, color }) => (
             <Users 

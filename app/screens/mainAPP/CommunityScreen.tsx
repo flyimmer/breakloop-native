@@ -93,7 +93,11 @@ const mockFriendsActivities: Activity[] = [
   },
 ];
 
-export default function CommunityScreen() {
+interface CommunityScreenProps {
+  navigation: any;
+}
+
+export default function CommunityScreen({ navigation }: CommunityScreenProps) {
   const [activeTab, setActiveTab] = useState<CommunityTab>('my-upcoming');
 
   const tabs: { id: CommunityTab; label: string }[] = [
@@ -211,8 +215,11 @@ export default function CommunityScreen() {
                     <Pressable
                       key={friend.id}
                       onPress={() => {
-                        // Placeholder: View friend profile
-                        console.log('Friend tapped:', friend.id);
+                        navigation.navigate('FriendOverview', {
+                          friendId: friend.id,
+                          friendName: friend.name,
+                          friendPhoto: friend.profilePhoto,
+                        });
                       }}
                       style={({ pressed }) => [
                         styles.friendItem,
