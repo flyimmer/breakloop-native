@@ -13,6 +13,7 @@ import AlternativesScreen from '../screens/conscious_process/AlternativesScreen'
 import ActionConfirmationScreen from '../screens/conscious_process/ActionConfirmationScreen';
 import ActivityTimerScreen from '../screens/conscious_process/ActivityTimerScreen';
 import ReflectionScreen from '../screens/conscious_process/ReflectionScreen';
+import IntentionTimerScreen from '../screens/conscious_process/IntentionTimerScreen';
 
 export type RootStackParamList = {
   MainTabs: undefined;
@@ -22,7 +23,7 @@ export type RootStackParamList = {
   ActionConfirmation: undefined;
   ActivityTimer: undefined;
   Reflection: undefined;
-  // Add other intervention screens as needed
+  IntentionTimer: undefined; // A2: Exit normalization screen
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -42,6 +43,7 @@ export default function RootNavigator() {
       <Stack.Screen name="ActionConfirmation" component={ActionConfirmationScreen} />
       <Stack.Screen name="ActivityTimer" component={ActivityTimerScreen} />
       <Stack.Screen name="Reflection" component={ReflectionScreen} />
+      <Stack.Screen name="IntentionTimer" component={IntentionTimerScreen} />
     </Stack.Navigator>
   );
 }

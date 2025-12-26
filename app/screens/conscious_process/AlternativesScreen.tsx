@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '@/app/navigation/RootNavigator';
 
 /**
  * AlternativesScreen
@@ -99,6 +102,7 @@ type SavedActivity = {
 export default function AlternativesScreen() {
   const { interventionState, dispatchIntervention } = useIntervention();
   const { selectedCauses, selectedAlternative } = interventionState;
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   // Local state for tabs and saved activities (not in intervention context)
   const [activeTab, setActiveTab] = useState<TabId>('discover');
@@ -149,10 +153,9 @@ export default function AlternativesScreen() {
     // Navigation will react to state change to 'action'
   };
 
-  // Handle cancel/reset - dispatches RESET_INTERVENTION action
+  // Handle "Ignore & Continue" - navigate to IntentionTimer (changed behavior for A2)
   const handleIgnoreAndContinue = () => {
-    dispatchIntervention({ type: 'RESET_INTERVENTION' });
-    // Navigation will react to state change to 'idle'
+    navigation.navigate('IntentionTimer');
   };
 
   // Handle "Add your own idea" - dispatches action to create custom alternative

@@ -130,6 +130,7 @@ const SettingsScreen = () => {
   };
 
   // DEV-ONLY: Debug button to start intervention flow
+  // Wrapped behind __DEV__ flag for easy removal before production
   const handleStartInterventionDebug = () => {
     // Dispatch BEGIN_INTERVENTION action with mock app
     // This sets interventionState to "breathing" and starts the countdown
@@ -463,28 +464,30 @@ const SettingsScreen = () => {
         </View>
 
         {/* Advanced / Development Tools */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <View style={styles.sectionTitleRow}>
-              <Text style={styles.sectionTitle}>Demo / Test / Advanced</Text>
+        {__DEV__ && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionTitleRow}>
+                <Text style={styles.sectionTitle}>Demo / Test / Advanced</Text>
+              </View>
+            </View>
+            <Text style={styles.sectionDescription}>
+              Debug tools for testing intervention state machine. Remove before production.
+            </Text>
+
+            <View style={styles.card}>
+              <TouchableOpacity
+                style={styles.debugButton}
+                onPress={handleStartInterventionDebug}
+              >
+                <Text style={styles.debugButtonText}>Start Intervention (DEV)</Text>
+              </TouchableOpacity>
+              <Text style={styles.debugHint}>
+                Development-only trigger
+              </Text>
             </View>
           </View>
-          <Text style={styles.sectionDescription}>
-            Debug tools for testing intervention state machine. Remove before production.
-          </Text>
-
-          <View style={styles.card}>
-            <TouchableOpacity
-              style={styles.debugButton}
-              onPress={handleStartInterventionDebug}
-            >
-              <Text style={styles.debugButtonText}>Start Intervention (Debug)</Text>
-            </TouchableOpacity>
-            <Text style={styles.debugHint}>
-              This triggers the intervention flow for testing. Navigation will react to state changes.
-            </Text>
-          </View>
-        </View>
+        )}
 
         {/* Version */}
         <View style={styles.versionContainer}>

@@ -3,6 +3,9 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { canProceedToAlternatives } from '@/src/core/intervention';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '@/app/navigation/RootNavigator';
 
 /**
  * RootCauseScreen
@@ -35,6 +38,7 @@ const CAUSES = [
 export default function RootCauseScreen() {
   const { interventionState, dispatchIntervention } = useIntervention();
   const { selectedCauses } = interventionState;
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   // Check if cause is selected (from intervention context)
   const isCauseSelected = (causeId: string) => {
@@ -55,6 +59,11 @@ export default function RootCauseScreen() {
     if (canProceedToAlternatives(interventionState)) {
       dispatchIntervention({ type: 'PROCEED_TO_ALTERNATIVES' });
     }
+  };
+
+  // Navigate to intention timer (user chose "I really need to use it")
+  const handleNeedToUseIt = () => {
+    navigation.navigate('IntentionTimer');
   };
 
   // Cancel intervention and return to idle
@@ -133,6 +142,17 @@ export default function RootCauseScreen() {
             >
               See alternatives
             </Text>
+          </Pressable>
+
+          {/* New option: "I really need to use it" - navigates to IntentionTimer (de-emphasized, secondary) */}
+          <Pressable
+            onPress={handleNeedToUseIt}
+            style={({ pressed }) => [
+              styles.needToUseText,
+              pressed && styles.needToUseTextPressed,
+            ]}
+          >
+            <Text style={styles.needToUseTextLabel}>I really need to use it</Text>
           </Pressable>
         </View>
       </View>
@@ -250,6 +270,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 2,
     elevation: 1,
+    marginBottom: 16, // tokens: space_16 (spacing between buttons)
   },
   continueButtonDisabled: {
     opacity: 0.4, // tokens: opacity_disabled
@@ -266,6 +287,21 @@ const styles = StyleSheet.create({
   },
   continueButtonTextDisabled: {
     color: '#71717A', // tokens: textMuted
+  },
+  needToUseText: {
+    paddingVertical: 4, // Minimal touch target only
+    paddingHorizontal: 8,
+    marginTop: 8, // tokens: space_8 (spacing from main CTA)
+  },
+  needToUseTextPressed: {
+    opacity: 0.5, // Very subtle feedback (lower contrast)
+  },
+  needToUseTextLabel: {
+    fontSize: 13, // Slightly smaller than bodySecondary
+    lineHeight: 18,
+    fontWeight: '400', // Regular weight (not emphasized)
+    letterSpacing: 0,
+    color: '#52525B', // Lower contrast than textMuted (clearly secondary)
   },
 });
 
