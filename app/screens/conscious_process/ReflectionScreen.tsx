@@ -1,3 +1,4 @@
+import { useIntervention } from '@/src/contexts/InterventionProvider';
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -33,26 +34,32 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 type ReflectionOption = 'better' | 'neutral' | 'not-helpful' | null;
 
 export default function ReflectionScreen() {
+  const { interventionState, dispatchIntervention } = useIntervention();
+  const { state, selectedAlternative } = interventionState;
   const [selectedOption, setSelectedOption] = useState<ReflectionOption>(null);
+
+  // Only render when in 'reflection' state
+  if (state !== 'reflection') {
+    return null;
+  }
 
   const handleOptionPress = (option: ReflectionOption) => {
     setSelectedOption(option);
   };
 
-  const handleSkip = () => {
-    console.log('Skip reflection');
-    // TODO: Navigate back to main app
+  const handleFinish = () => {
+    // Dispatch FINISH_REFLECTION to reset intervention to idle
+    dispatchIntervention({ type: 'FINISH_REFLECTION' });
   };
 
-  const handleContinue = () => {
-    console.log('Continue with selection:', selectedOption);
-    // TODO: Store reflection data (if selected)
-    // TODO: Navigate back to main app
+  const handleSkip = () => {
+    // Skip also finishes the reflection and resets to idle
+    dispatchIntervention({ type: 'FINISH_REFLECTION' });
   };
 
   const handleClose = () => {
-    console.log('Close reflection');
-    // TODO: Navigate back to main app
+    // Close also finishes the reflection and resets to idle
+    dispatchIntervention({ type: 'FINISH_REFLECTION' });
   };
 
   return (
@@ -153,7 +160,7 @@ export default function ReflectionScreen() {
 
         {/* Continue - calm, neutral */}
         <Pressable
-          onPress={handleContinue}
+          onPress={handleFinish}
           style={({ pressed }) => [
             styles.continueButton,
             pressed && styles.continueButtonPressed,

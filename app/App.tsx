@@ -40,6 +40,8 @@ function InterventionNavigationHandler() {
       navigationRef.current.navigate('ActionConfirmation');
     } else if (state === 'action_timer') {
       navigationRef.current.navigate('ActivityTimer');
+    } else if (state === 'reflection') {
+      navigationRef.current.navigate('Reflection');
     } else if (state === 'idle') {
       // Return to main tabs when intervention is idle
       // Use reset to clear the navigation stack
