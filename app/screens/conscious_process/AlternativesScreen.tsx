@@ -134,18 +134,17 @@ export default function AlternativesScreen() {
     return selectedCauses.map(id => causeLabels[id] || id).join(', ');
   };
 
-  // Handle alternative selection - dispatches SELECT_ALTERNATIVE action (selection only, no state change)
-  const handleSelectAlternative = (alternative: any) => {
+  // Handle card tap - dispatches actions to transition to 'action' state (details screen)
+  // First selects the alternative, then commits to action state
+  // Note: useReducer processes actions synchronously, so we can dispatch both in sequence
+  const handleCardTap = (alternative: any) => {
+    // First select the alternative (sets selectedAlternative in context)
     dispatchIntervention({
       type: 'SELECT_ALTERNATIVE',
       alternative,
     });
-    // Selection only - stays in 'alternatives' state
-  };
-
-  // Handle commit - dispatches PROCEED_TO_ACTION to transition to 'action' state
-  const handleCommitAlternative = () => {
-    if (!selectedAlternative) return;
+    // Then proceed to action state (details screen)
+    // useReducer processes actions synchronously, so this will see the updated selectedAlternative
     dispatchIntervention({ type: 'PROCEED_TO_ACTION' });
     // Navigation will react to state change to 'action'
   };
@@ -213,29 +212,23 @@ export default function AlternativesScreen() {
           <DiscoverTab 
             saveActivity={saveActivity} 
             isSaved={isSaved}
-            onSelectAlternative={handleSelectAlternative}
-            onCommitAlternative={handleCommitAlternative}
-            selectedAlternativeId={selectedAlternative?.id}
+            onCardTap={handleCardTap}
           />
         )}
         {activeTab === 'ai-for-you' && (
           <AIForYouTab 
             saveActivity={saveActivity} 
             isSaved={isSaved}
-            onSelectAlternative={handleSelectAlternative}
-            onCommitAlternative={handleCommitAlternative}
+            onCardTap={handleCardTap}
             onRegenerateAI={handleRegenerateAI}
-            selectedAlternativeId={selectedAlternative?.id}
           />
         )}
         {activeTab === 'my-list' && (
           <MyListTab 
             savedActivities={savedActivities}
-            onSelectAlternative={handleSelectAlternative}
-            onCommitAlternative={handleCommitAlternative}
+            onCardTap={handleCardTap}
             onAddCustomAlternative={handleAddCustomAlternative}
             onRegenerateAI={handleRegenerateAI}
-            selectedAlternativeId={selectedAlternative?.id}
           />
         )}
       </ScrollView>
@@ -267,15 +260,11 @@ export default function AlternativesScreen() {
 function DiscoverTab({ 
   saveActivity, 
   isSaved,
-  onSelectAlternative,
-  onCommitAlternative,
-  selectedAlternativeId
+  onCardTap,
 }: { 
   saveActivity: (activity: SavedActivity) => void;
   isSaved: (activityId: string) => boolean;
-  onSelectAlternative: (alternative: any) => void;
-  onCommitAlternative: () => void;
-  selectedAlternativeId?: string;
+  onCardTap: (alternative: any) => void;
 }) {
   return (
     <View style={styles.tabContent}>
@@ -284,10 +273,9 @@ function DiscoverTab({
         return (
           <Pressable
             key={alt.id}
-            onPress={() => onSelectAlternative(alt)}
+            onPress={() => onCardTap(alt)}
             style={({ pressed }) => [
               styles.card,
-              selectedAlternativeId === alt.id && styles.cardSelected,
               pressed && styles.cardPressed,
             ]}
           >
@@ -347,25 +335,6 @@ function DiscoverTab({
               <Text style={styles.cardDescription}>{alt.description}</Text>
               <Text style={styles.cardFlexibleTiming}>Flexible timing</Text>
             </View>
-
-            {/* Secondary action: "Plan this activity" (commit) */}
-            <Pressable
-              onPress={(e) => {
-                e.stopPropagation(); // Prevent card tap
-                // First select if not already selected
-                if (selectedAlternativeId !== alt.id) {
-                  onSelectAlternative(alt);
-                }
-                // Then commit (transition to action state)
-                onCommitAlternative();
-              }}
-              style={({ pressed }) => [
-                styles.cardAction,
-                pressed && styles.cardActionPressed,
-              ]}
-            >
-              <Text style={styles.cardActionText}>Plan this activity</Text>
-            </Pressable>
           </Pressable>
         );
       })}
@@ -390,17 +359,13 @@ function DiscoverTab({
 function AIForYouTab({
   saveActivity,
   isSaved,
-  onSelectAlternative,
-  onCommitAlternative,
+  onCardTap,
   onRegenerateAI,
-  selectedAlternativeId
 }: {
   saveActivity: (activity: SavedActivity) => void;
   isSaved: (activityId: string) => boolean;
-  onSelectAlternative: (alternative: any) => void;
-  onCommitAlternative: () => void;
+  onCardTap: (alternative: any) => void;
   onRegenerateAI: () => void;
-  selectedAlternativeId?: string;
 }) {
   return (
     <View style={styles.tabContent}>
@@ -425,10 +390,9 @@ function AIForYouTab({
         return (
           <Pressable
             key={suggestion.id}
-            onPress={() => onSelectAlternative(suggestion)}
+            onPress={() => onCardTap(suggestion)}
             style={({ pressed }) => [
               styles.card,
-              selectedAlternativeId === suggestion.id && styles.cardSelected,
               pressed && styles.cardPressed,
             ]}
           >
@@ -482,25 +446,6 @@ function AIForYouTab({
               <Text style={styles.cardDescription}>{suggestion.description}</Text>
               <Text style={styles.cardFlexibleTiming}>Flexible timing</Text>
             </View>
-
-            {/* Secondary action: "Plan this activity" (commit) */}
-            <Pressable
-              onPress={(e) => {
-                e.stopPropagation(); // Prevent card tap
-                // First select if not already selected
-                if (selectedAlternativeId !== suggestion.id) {
-                  onSelectAlternative(suggestion);
-                }
-                // Then commit (transition to action state)
-                onCommitAlternative();
-              }}
-              style={({ pressed }) => [
-                styles.cardAction,
-                pressed && styles.cardActionPressed,
-              ]}
-            >
-              <Text style={styles.cardActionText}>Plan this activity</Text>
-            </Pressable>
           </Pressable>
         );
       })}
@@ -517,18 +462,14 @@ function AIForYouTab({
  */
 function MyListTab({ 
   savedActivities,
-  onSelectAlternative,
-  onCommitAlternative,
+  onCardTap,
   onAddCustomAlternative,
   onRegenerateAI,
-  selectedAlternativeId
 }: { 
   savedActivities: SavedActivity[];
-  onSelectAlternative: (alternative: any) => void;
-  onCommitAlternative: () => void;
+  onCardTap: (alternative: any) => void;
   onAddCustomAlternative: () => void;
   onRegenerateAI: () => void;
-  selectedAlternativeId?: string;
 }) {
   return (
     <View style={styles.tabContent}>
@@ -569,10 +510,9 @@ function MyListTab({
       {savedActivities.map((alt) => (
         <Pressable
           key={alt.id}
-          onPress={() => onSelectAlternative(alt)}
+          onPress={() => onCardTap(alt)}
           style={({ pressed }) => [
             styles.card,
-            selectedAlternativeId === alt.id && styles.cardSelected,
             pressed && styles.cardPressed,
           ]}
         >
@@ -633,25 +573,6 @@ function MyListTab({
             <Text style={styles.cardDescription}>{alt.description}</Text>
             <Text style={styles.cardFlexibleTiming}>Flexible timing</Text>
           </View>
-
-          {/* Secondary action: "Plan this activity" (commit) */}
-          <Pressable
-            onPress={(e) => {
-              e.stopPropagation(); // Prevent card tap
-              // First select if not already selected
-              if (selectedAlternativeId !== alt.id) {
-                onSelectAlternative(alt);
-              }
-              // Then commit (transition to action state)
-              onCommitAlternative();
-            }}
-            style={({ pressed }) => [
-              styles.cardAction,
-              pressed && styles.cardActionPressed,
-            ]}
-          >
-            <Text style={styles.cardActionText}>Plan this activity</Text>
-          </Pressable>
         </Pressable>
       ))}
     </View>

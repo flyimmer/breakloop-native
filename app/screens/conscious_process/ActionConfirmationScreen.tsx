@@ -1,3 +1,5 @@
+import { useIntervention } from '@/src/contexts/InterventionProvider';
+import { parseDurationToMinutes } from '@/src/core/intervention';
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,33 +27,56 @@ import { SafeAreaView } from 'react-native-safe-area-context';
  * - design/ui/screens.md (Action Confirmation Screen spec)
  */
 
-// Placeholder data for static implementation
-const PLACEHOLDER_ACTIVITY = {
-  title: 'Short walk',
-  duration: '15 min',
-  causes: ['Boredom', 'Fatigue'],
-  steps: [
-    'Put on shoes',
-    'Step outside',
-    'Walk around block',
-  ],
-};
-
 export default function ActionConfirmationScreen() {
-  // Navigation handlers (stubbed for now)
+  const { interventionState, dispatchIntervention } = useIntervention();
+  const { state, selectedAlternative, selectedCauses } = interventionState;
+
+  // Only render when in 'action' state
+  if (state !== 'action' || !selectedAlternative) {
+    return null;
+  }
+
+  // Format selected causes for display
+  const formatSelectedCauses = () => {
+    if (selectedCauses.length === 0) return [];
+    const causeLabels: { [key: string]: string } = {
+      'boredom': 'Boredom',
+      'anxiety': 'Anxiety',
+      'fatigue': 'Fatigue',
+      'loneliness': 'Loneliness',
+      'self-doubt': 'Self-doubt',
+      'no-goal': 'No clear goal',
+    };
+    return selectedCauses.map(id => causeLabels[id] || id);
+  };
+
+  // Extract activity data from selectedAlternative
+  const activityTitle = selectedAlternative.title || 'Activity';
+  const activityDuration = selectedAlternative.duration || '5m';
+  const activityDescription = selectedAlternative.description || '';
+  const activitySteps = selectedAlternative.actions || selectedAlternative.steps || [];
+  const formattedCauses = formatSelectedCauses();
+
+  // Handle start activity - dispatch START_ALTERNATIVE with parsed duration
   const handleStartActivity = () => {
-    console.log('Start activity');
-    // TODO: Navigate to action timer screen
+    const durationMinutes = parseDurationToMinutes(activityDuration);
+    dispatchIntervention({
+      type: 'START_ALTERNATIVE',
+      durationMinutes,
+    });
+    // Navigation will react to state change to 'action_timer'
   };
 
+  // Handle plan for later - exit intervention flow and reset to idle
   const handlePlanForLater = () => {
-    console.log('Plan for later');
-    // TODO: Open scheduler modal
+    dispatchIntervention({ type: 'RESET_INTERVENTION' });
+    // Navigation will react to state change to 'idle'
   };
 
+  // Handle close/back - dispatch GO_BACK_FROM_ACTION to return to alternatives
   const handleClose = () => {
-    console.log('Close');
-    // TODO: Navigate back to alternatives
+    dispatchIntervention({ type: 'GO_BACK_FROM_ACTION' });
+    // Navigation will react to state change to 'alternatives'
   };
 
   return (
@@ -78,33 +103,42 @@ export default function ActionConfirmationScreen() {
       >
         {/* Activity title */}
         <View style={styles.titleSection}>
-          <Text style={styles.activityTitle}>{PLACEHOLDER_ACTIVITY.title}</Text>
-          {PLACEHOLDER_ACTIVITY.duration && (
-            <Text style={styles.activityDuration}>{PLACEHOLDER_ACTIVITY.duration}</Text>
+          <Text style={styles.activityTitle}>{activityTitle}</Text>
+          {activityDuration && (
+            <Text style={styles.activityDuration}>{activityDuration}</Text>
           )}
         </View>
 
+        {/* Activity description (if available) */}
+        {activityDescription && (
+          <View style={styles.descriptionSection}>
+            <Text style={styles.activityDescription}>{activityDescription}</Text>
+          </View>
+        )}
+
         {/* Context reminder (subtle) */}
-        {PLACEHOLDER_ACTIVITY.causes.length > 0 && (
+        {formattedCauses.length > 0 && (
           <View style={styles.contextSection}>
             <Text style={styles.contextLabel}>
-              Chosen because of: {PLACEHOLDER_ACTIVITY.causes.join(', ')}
+              Chosen because of: {formattedCauses.join(', ')}
             </Text>
           </View>
         )}
 
         {/* Action steps */}
-        <View style={styles.stepsSection}>
-          <Text style={styles.stepsHeader}>Action steps</Text>
-          <View style={styles.stepsList}>
-            {PLACEHOLDER_ACTIVITY.steps.map((step, index) => (
-              <View key={index} style={styles.stepItem}>
-                <Text style={styles.stepNumber}>{index + 1}.</Text>
-                <Text style={styles.stepText}>{step}</Text>
-              </View>
-            ))}
+        {activitySteps.length > 0 && (
+          <View style={styles.stepsSection}>
+            <Text style={styles.stepsHeader}>Action steps</Text>
+            <View style={styles.stepsList}>
+              {activitySteps.map((step: string, index: number) => (
+                <View key={index} style={styles.stepItem}>
+                  <Text style={styles.stepNumber}>{index + 1}.</Text>
+                  <Text style={styles.stepText}>{step}</Text>
+                </View>
+              ))}
+            </View>
           </View>
-        </View>
+        )}
       </ScrollView>
 
       {/* Bottom action area */}
@@ -186,6 +220,15 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     fontWeight: '400',
     color: '#71717A', // textMuted - quiet presence
+  },
+  descriptionSection: {
+    marginBottom: 16,
+  },
+  activityDescription: {
+    fontSize: 16, // body
+    lineHeight: 24,
+    fontWeight: '400',
+    color: '#A1A1AA', // textSecondary
   },
   contextSection: {
     marginBottom: 32,

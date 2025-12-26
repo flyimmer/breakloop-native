@@ -36,6 +36,8 @@ function InterventionNavigationHandler() {
       navigationRef.current.navigate('RootCause');
     } else if (state === 'alternatives') {
       navigationRef.current.navigate('Alternatives');
+    } else if (state === 'action') {
+      navigationRef.current.navigate('ActionConfirmation');
     } else if (state === 'idle') {
       // Return to main tabs when intervention is idle
       // Use reset to clear the navigation stack
