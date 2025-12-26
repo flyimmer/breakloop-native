@@ -1,9 +1,9 @@
-import React, { useEffect, useRef } from 'react';
-import { NavigationContainer, NavigationContainerRef, DarkTheme, DefaultTheme } from '@react-navigation/native';
-import { StatusBar } from 'expo-status-bar';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { InterventionProvider, useIntervention } from '@/src/contexts/InterventionProvider';
+import { DarkTheme, DefaultTheme, NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
+import { StatusBar } from 'expo-status-bar';
+import React, { useEffect, useRef } from 'react';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from './navigation/RootNavigator';
 
 /**
@@ -38,6 +38,8 @@ function InterventionNavigationHandler() {
       navigationRef.current.navigate('Alternatives');
     } else if (state === 'action') {
       navigationRef.current.navigate('ActionConfirmation');
+    } else if (state === 'action_timer') {
+      navigationRef.current.navigate('ActivityTimer');
     } else if (state === 'idle') {
       // Return to main tabs when intervention is idle
       // Use reset to clear the navigation stack

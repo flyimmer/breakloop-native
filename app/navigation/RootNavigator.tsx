@@ -11,6 +11,7 @@ import BreathingScreen from '../screens/conscious_process/BreathingScreen';
 import RootCauseScreen from '../screens/conscious_process/RootCauseScreen';
 import AlternativesScreen from '../screens/conscious_process/AlternativesScreen';
 import ActionConfirmationScreen from '../screens/conscious_process/ActionConfirmationScreen';
+import ActivityTimerScreen from '../screens/conscious_process/ActivityTimerScreen';
 
 export type RootStackParamList = {
   MainTabs: undefined;
@@ -18,6 +19,7 @@ export type RootStackParamList = {
   RootCause: undefined;
   Alternatives: undefined;
   ActionConfirmation: undefined;
+  ActivityTimer: undefined;
   // Add other intervention screens as needed
 };
 
@@ -36,6 +38,7 @@ export default function RootNavigator() {
       <Stack.Screen name="RootCause" component={RootCauseScreen} />
       <Stack.Screen name="Alternatives" component={AlternativesScreen} />
       <Stack.Screen name="ActionConfirmation" component={ActionConfirmationScreen} />
+      <Stack.Screen name="ActivityTimer" component={ActivityTimerScreen} />
     </Stack.Navigator>
   );
 }

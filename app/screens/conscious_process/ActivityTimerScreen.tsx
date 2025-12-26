@@ -1,5 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { AppState, AppStateStatus, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useIntervention } from '@/src/contexts/InterventionProvider';
+import {
+  formatTimerDisplay,
+  isActionTimerComplete,
+  shouldTickActionTimer,
+} from '@/src/core/intervention';
+import React, { useEffect, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 /**
@@ -19,10 +25,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
  * - Provides minimal control without temptation
  * 
  * Timer behavior:
- * - Starts automatically on mount
- * - Counts down to 0
- * - Continues running even if app goes to background
- * - Uses timestamp-based calculation for accuracy
+ * - Starts automatically when interventionState transitions to "action_timer"
+ * - Counts down to 0 via reducer/state updates
+ * - Timer ticks once per second via ACTION_TIMER_TICK dispatch
+ * - Automatically transitions to "reflection" when timer reaches 0
  * 
  * Design authority:
  * - design/principles/interaction-gravity.md (Execution with Minimal Presence)
@@ -30,124 +36,75 @@ import { SafeAreaView } from 'react-native-safe-area-context';
  * - design/ui/screens.md (Activity Timer Screen spec)
  */
 
-// Placeholder data (TODO: accept as route params)
-const PLACEHOLDER_ACTIVITY = {
-  title: 'Short walk',
-  durationSeconds: 10, // Duration in seconds (for testing; use durationMinutes for production)
-  steps: [
-    'Put on shoes',
-    'Step outside',
-    'Walk around block',
-  ],
-};
-
 // Mock settings value (TODO: connect to actual settings)
 const SHARE_CURRENT_ACTIVITY_ENABLED = false;
 
 // Visibility options
 type VisibilityOption = 'Private' | 'Friends can ask to join' | 'Anyone can ask to join';
 
-/**
- * Formats seconds into MM:SS format
- */
-function formatTime(totalSeconds: number): string {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-}
-
 export default function ActivityTimerScreen() {
-  // Timer state
-  const [remainingSeconds, setRemainingSeconds] = useState<number>(
-    PLACEHOLDER_ACTIVITY.durationSeconds
-  );
-  
-  // Store start time for accurate calculation across app lifecycle
-  const startTimeRef = useRef<number>(Date.now());
-  const totalDurationRef = useRef<number>(PLACEHOLDER_ACTIVITY.durationSeconds);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  
+  // Intervention state from context
+  const { interventionState, dispatchIntervention } = useIntervention();
+  const { state, selectedAlternative, actionTimer } = interventionState;
+
+  // Only render when in 'action_timer' state
+  if (state !== 'action_timer' || !selectedAlternative) {
+    return null;
+  }
+
   // Visibility state (defaults based on settings)
   const [visibility, setVisibility] = useState<VisibilityOption>(
     SHARE_CURRENT_ACTIVITY_ENABLED ? 'Anyone can ask to join' : 'Private'
   );
-  // Timer logic
+
+  // Action timer countdown - dispatch ACTION_TIMER_TICK every second
   useEffect(() => {
-    // Start countdown timer
-    intervalRef.current = setInterval(() => {
-      // Calculate elapsed time since start
-      const elapsedSeconds = Math.floor((Date.now() - startTimeRef.current) / 1000);
-      const newRemainingSeconds = Math.max(0, totalDurationRef.current - elapsedSeconds);
-      
-      setRemainingSeconds(newRemainingSeconds);
-      
-      // Stop timer when it reaches 0
-      if (newRemainingSeconds === 0 && intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-    }, 1000);
-    
-    // Cleanup on unmount
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, []);
-  
-  // Handle app state changes (background/foreground)
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
-      if (nextAppState === 'active') {
-        // Recalculate remaining time when app returns to foreground
-        const elapsedSeconds = Math.floor((Date.now() - startTimeRef.current) / 1000);
-        const newRemainingSeconds = Math.max(0, totalDurationRef.current - elapsedSeconds);
-        setRemainingSeconds(newRemainingSeconds);
-        
-        // If timer completed while in background, ensure interval is stopped
-        if (newRemainingSeconds === 0 && intervalRef.current) {
-          clearInterval(intervalRef.current);
-          intervalRef.current = null;
-        }
-      }
-    });
-    
-    return () => {
-      subscription.remove();
-    };
-  }, []);
-  
-  // Derived state
-  const isTimerActive = remainingSeconds > 0;
-  const timerDisplay = formatTime(remainingSeconds);
-  
-  // Navigation handlers (stubbed for now)
-  const handleEndActivity = () => {
-    // Stop timer
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+    // Only tick if we're in action_timer state and timer > 0
+    if (!shouldTickActionTimer(state, actionTimer)) {
+      return;
     }
-    
-    console.log('End activity early');
-    // TODO: Navigate to reflection screen
+
+    // Set up 1-second interval to decrement timer
+    const timer = setInterval(() => {
+      dispatchIntervention({ type: 'ACTION_TIMER_TICK' });
+    }, 1000);
+
+    // Cleanup interval on unmount or state change
+    return () => clearInterval(timer);
+  }, [state, actionTimer, dispatchIntervention]);
+
+  // Auto-complete when timer reaches 0
+  useEffect(() => {
+    if (isActionTimerComplete(state, actionTimer)) {
+      // Dispatch FINISH_ACTION to transition to reflection
+      dispatchIntervention({ type: 'FINISH_ACTION' });
+    }
+  }, [state, actionTimer, dispatchIntervention]);
+
+  // Extract activity data from selectedAlternative
+  const activityTitle = selectedAlternative.title || 'Activity';
+  const activityDuration = selectedAlternative.duration || '5m';
+  const activitySteps = selectedAlternative.actions || selectedAlternative.steps || [];
+
+  // Derived state
+  const isTimerActive = actionTimer > 0;
+  const timerDisplay = formatTimerDisplay(actionTimer);
+
+  // Manual completion handler
+  const handleEndActivity = () => {
+    // Dispatch FINISH_ACTION to transition to reflection
+    dispatchIntervention({ type: 'FINISH_ACTION' });
   };
 
   const handleFinishAndReflect = () => {
-    console.log('Finish and reflect');
-    // TODO: Navigate to reflection screen
+    // Same as handleEndActivity - both transition to reflection
+    dispatchIntervention({ type: 'FINISH_ACTION' });
   };
 
   const handleClose = () => {
-    // Stop timer
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    
     console.log('Close');
     // TODO: Navigate back (with confirmation?)
+    // Note: Closing during timer is not recommended per design, but keeping handler for future use
   };
 
   const handleVisibilityPress = () => {
@@ -178,16 +135,14 @@ export default function ActivityTimerScreen() {
       <View style={styles.centerContainer}>
         {/* Activity context (very quiet) */}
         <View style={styles.activityContext}>
-          <Text style={styles.activityTitle}>{PLACEHOLDER_ACTIVITY.title}</Text>
-          <Text style={styles.activityDuration}>
-            {PLACEHOLDER_ACTIVITY.durationSeconds}s
-          </Text>
+          <Text style={styles.activityTitle}>{activityTitle}</Text>
+          <Text style={styles.activityDuration}>{activityDuration}</Text>
         </View>
 
         {/* Action steps (quiet reminder) */}
-        {PLACEHOLDER_ACTIVITY.steps && PLACEHOLDER_ACTIVITY.steps.length > 0 && (
+        {activitySteps && activitySteps.length > 0 && (
           <View style={styles.stepsContainer}>
-            {PLACEHOLDER_ACTIVITY.steps.map((step, index) => (
+            {activitySteps.map((step: string, index: number) => (
               <View key={index} style={styles.stepItem}>
                 <Text style={styles.stepNumber}>{index + 1}.</Text>
                 <Text style={styles.stepText}>{step}</Text>
