@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useIntervention } from '@/src/contexts/InterventionProvider';
 
 /**
  * AlternativesScreen
@@ -20,11 +21,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
  * - design/principles/interaction-gravity.md
  * - design/ui/tokens.md
  * - design/ui/tone-ambient-hearth.md
- * 
- * Scope:
- * - Static UI only (no backend, no pagination, no AI calls)
- * - Local state for tab switching
- * - No navigation wiring
  */
 
 // Tab definitions (authoritative order)
@@ -101,10 +97,14 @@ type SavedActivity = {
 };
 
 export default function AlternativesScreen() {
+  const { interventionState, dispatchIntervention } = useIntervention();
+  const { selectedCauses, selectedAlternative } = interventionState;
+
+  // Local state for tabs and saved activities (not in intervention context)
   const [activeTab, setActiveTab] = useState<TabId>('discover');
   const [savedActivities, setSavedActivities] = useState<SavedActivity[]>([]);
 
-  // Save an activity to My List
+  // Save an activity to My List (local state only)
   const saveActivity = (activity: SavedActivity) => {
     setSavedActivities((prev) => {
       // Prevent duplicates
@@ -115,9 +115,57 @@ export default function AlternativesScreen() {
     });
   };
 
-  // Check if an activity is already saved
+  // Check if an activity is already saved (local state only)
   const isSaved = (activityId: string) => {
     return savedActivities.some((item) => item.id === activityId);
+  };
+
+  // Format selected causes for header display
+  const formatSelectedCauses = () => {
+    if (selectedCauses.length === 0) return '';
+    const causeLabels: { [key: string]: string } = {
+      'boredom': 'Boredom',
+      'anxiety': 'Anxiety',
+      'fatigue': 'Fatigue',
+      'loneliness': 'Loneliness',
+      'self-doubt': 'Self-doubt',
+      'no-goal': 'No clear goal',
+    };
+    return selectedCauses.map(id => causeLabels[id] || id).join(', ');
+  };
+
+  // Handle alternative selection - dispatches SELECT_ALTERNATIVE action (selection only, no state change)
+  const handleSelectAlternative = (alternative: any) => {
+    dispatchIntervention({
+      type: 'SELECT_ALTERNATIVE',
+      alternative,
+    });
+    // Selection only - stays in 'alternatives' state
+  };
+
+  // Handle commit - dispatches PROCEED_TO_ACTION to transition to 'action' state
+  const handleCommitAlternative = () => {
+    if (!selectedAlternative) return;
+    dispatchIntervention({ type: 'PROCEED_TO_ACTION' });
+    // Navigation will react to state change to 'action'
+  };
+
+  // Handle cancel/reset - dispatches RESET_INTERVENTION action
+  const handleIgnoreAndContinue = () => {
+    dispatchIntervention({ type: 'RESET_INTERVENTION' });
+    // Navigation will react to state change to 'idle'
+  };
+
+  // Handle "Add your own idea" - dispatches action to create custom alternative
+  // TODO: This action needs to be properly implemented in the reducer
+  const handleAddCustomAlternative = () => {
+    dispatchIntervention({ type: 'CREATE_CUSTOM_ALTERNATIVE' });
+  };
+
+  // Handle "Get inspired by AI" - dispatches action to regenerate AI suggestions
+  // TODO: This action needs to be properly implemented in the reducer
+  const handleRegenerateAI = () => {
+    dispatchIntervention({ type: 'REGENERATE_AI_SUGGESTIONS' });
   };
 
   return (
@@ -125,7 +173,9 @@ export default function AlternativesScreen() {
       {/* Header: Reflective Float (context framing, non-urgent) */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Alternatives</Text>
-        <Text style={styles.headerSubline}>Feeling: Boredom, Fatigue</Text>
+        <Text style={styles.headerSubline}>
+          {selectedCauses.length > 0 ? `Feeling: ${formatSelectedCauses()}` : 'Feeling: —'}
+        </Text>
       </View>
 
       {/* Tabs: Calm, non-competing */}
@@ -159,17 +209,41 @@ export default function AlternativesScreen() {
         contentContainerStyle={styles.scrollContentContainer}
         showsVerticalScrollIndicator={false}
       >
-        {activeTab === 'discover' && <DiscoverTab saveActivity={saveActivity} isSaved={isSaved} />}
-        {activeTab === 'ai-for-you' && <AIForYouTab saveActivity={saveActivity} isSaved={isSaved} />}
-        {activeTab === 'my-list' && <MyListTab savedActivities={savedActivities} />}
+        {activeTab === 'discover' && (
+          <DiscoverTab 
+            saveActivity={saveActivity} 
+            isSaved={isSaved}
+            onSelectAlternative={handleSelectAlternative}
+            onCommitAlternative={handleCommitAlternative}
+            selectedAlternativeId={selectedAlternative?.id}
+          />
+        )}
+        {activeTab === 'ai-for-you' && (
+          <AIForYouTab 
+            saveActivity={saveActivity} 
+            isSaved={isSaved}
+            onSelectAlternative={handleSelectAlternative}
+            onCommitAlternative={handleCommitAlternative}
+            onRegenerateAI={handleRegenerateAI}
+            selectedAlternativeId={selectedAlternative?.id}
+          />
+        )}
+        {activeTab === 'my-list' && (
+          <MyListTab 
+            savedActivities={savedActivities}
+            onSelectAlternative={handleSelectAlternative}
+            onCommitAlternative={handleCommitAlternative}
+            onAddCustomAlternative={handleAddCustomAlternative}
+            onRegenerateAI={handleRegenerateAI}
+            selectedAlternativeId={selectedAlternative?.id}
+          />
+        )}
       </ScrollView>
 
       {/* Heavy Override: "Ignore & Continue" - visually muted, not bottom-primary */}
       <View style={styles.overrideContainer}>
         <Pressable
-          onPress={() => {
-            // No-op: UI only, no navigation wiring
-          }}
+          onPress={handleIgnoreAndContinue}
           style={({ pressed }) => [
             styles.overrideButton,
             pressed && styles.overrideButtonPressed,
@@ -192,10 +266,16 @@ export default function AlternativesScreen() {
  */
 function DiscoverTab({ 
   saveActivity, 
-  isSaved 
+  isSaved,
+  onSelectAlternative,
+  onCommitAlternative,
+  selectedAlternativeId
 }: { 
   saveActivity: (activity: SavedActivity) => void;
   isSaved: (activityId: string) => boolean;
+  onSelectAlternative: (alternative: any) => void;
+  onCommitAlternative: () => void;
+  selectedAlternativeId?: string;
 }) {
   return (
     <View style={styles.tabContent}>
@@ -204,12 +284,10 @@ function DiscoverTab({
         return (
           <Pressable
             key={alt.id}
-            onPress={() => {
-              // Placeholder: Proceed to Action Confirmation step
-              console.log('Card tapped:', alt.title);
-            }}
+            onPress={() => onSelectAlternative(alt)}
             style={({ pressed }) => [
               styles.card,
+              selectedAlternativeId === alt.id && styles.cardSelected,
               pressed && styles.cardPressed,
             ]}
           >
@@ -270,11 +348,16 @@ function DiscoverTab({
               <Text style={styles.cardFlexibleTiming}>Flexible timing</Text>
             </View>
 
-            {/* Secondary action: "Plan this activity" */}
+            {/* Secondary action: "Plan this activity" (commit) */}
             <Pressable
               onPress={(e) => {
                 e.stopPropagation(); // Prevent card tap
-                // No-op: UI only
+                // First select if not already selected
+                if (selectedAlternativeId !== alt.id) {
+                  onSelectAlternative(alt);
+                }
+                // Then commit (transition to action state)
+                onCommitAlternative();
               }}
               style={({ pressed }) => [
                 styles.cardAction,
@@ -306,10 +389,18 @@ function DiscoverTab({
  */
 function AIForYouTab({
   saveActivity,
-  isSaved
+  isSaved,
+  onSelectAlternative,
+  onCommitAlternative,
+  onRegenerateAI,
+  selectedAlternativeId
 }: {
   saveActivity: (activity: SavedActivity) => void;
   isSaved: (activityId: string) => boolean;
+  onSelectAlternative: (alternative: any) => void;
+  onCommitAlternative: () => void;
+  onRegenerateAI: () => void;
+  selectedAlternativeId?: string;
 }) {
   return (
     <View style={styles.tabContent}>
@@ -317,9 +408,7 @@ function AIForYouTab({
       <View style={styles.aiHeader}>
         <Text style={styles.aiContext}>CONTEXT: MUNICH, SUNNY</Text>
         <Pressable
-          onPress={() => {
-            // No-op: UI only
-          }}
+          onPress={onRegenerateAI}
           style={({ pressed }) => [
             styles.regenerateButton,
             pressed && styles.regenerateButtonPressed,
@@ -336,12 +425,10 @@ function AIForYouTab({
         return (
           <Pressable
             key={suggestion.id}
-            onPress={() => {
-              // Placeholder: Proceed to Action Confirmation step
-              console.log('Card tapped:', suggestion.title);
-            }}
+            onPress={() => onSelectAlternative(suggestion)}
             style={({ pressed }) => [
               styles.card,
+              selectedAlternativeId === suggestion.id && styles.cardSelected,
               pressed && styles.cardPressed,
             ]}
           >
@@ -396,11 +483,16 @@ function AIForYouTab({
               <Text style={styles.cardFlexibleTiming}>Flexible timing</Text>
             </View>
 
-            {/* Secondary action: "Plan this activity" */}
+            {/* Secondary action: "Plan this activity" (commit) */}
             <Pressable
               onPress={(e) => {
                 e.stopPropagation(); // Prevent card tap
-                // No-op: UI only
+                // First select if not already selected
+                if (selectedAlternativeId !== suggestion.id) {
+                  onSelectAlternative(suggestion);
+                }
+                // Then commit (transition to action state)
+                onCommitAlternative();
               }}
               style={({ pressed }) => [
                 styles.cardAction,
@@ -423,15 +515,27 @@ function AIForYouTab({
  * - Management icons (edit/delete) are visually quiet
  * - "Add your own idea" and "Get inspired by AI" are calm invitations
  */
-function MyListTab({ savedActivities }: { savedActivities: SavedActivity[] }) {
+function MyListTab({ 
+  savedActivities,
+  onSelectAlternative,
+  onCommitAlternative,
+  onAddCustomAlternative,
+  onRegenerateAI,
+  selectedAlternativeId
+}: { 
+  savedActivities: SavedActivity[];
+  onSelectAlternative: (alternative: any) => void;
+  onCommitAlternative: () => void;
+  onAddCustomAlternative: () => void;
+  onRegenerateAI: () => void;
+  selectedAlternativeId?: string;
+}) {
   return (
     <View style={styles.tabContent}>
       {/* Add/inspire actions */}
       <View style={styles.myListActions}>
         <Pressable
-          onPress={() => {
-            // No-op: UI only
-          }}
+          onPress={onAddCustomAlternative}
           style={({ pressed }) => [
             styles.myListActionButton,
             pressed && styles.myListActionButtonPressed,
@@ -441,9 +545,7 @@ function MyListTab({ savedActivities }: { savedActivities: SavedActivity[] }) {
           <Text style={styles.myListActionText}>Add your own idea</Text>
         </Pressable>
         <Pressable
-          onPress={() => {
-            // No-op: UI only
-          }}
+          onPress={onRegenerateAI}
           style={({ pressed }) => [
             styles.myListActionButton,
             pressed && styles.myListActionButtonPressed,
@@ -467,12 +569,10 @@ function MyListTab({ savedActivities }: { savedActivities: SavedActivity[] }) {
       {savedActivities.map((alt) => (
         <Pressable
           key={alt.id}
-          onPress={() => {
-            // Placeholder: Proceed to Action Confirmation step
-            console.log('Card tapped:', alt.title);
-          }}
+          onPress={() => onSelectAlternative(alt)}
           style={({ pressed }) => [
             styles.card,
+            selectedAlternativeId === alt.id && styles.cardSelected,
             pressed && styles.cardPressed,
           ]}
         >
@@ -534,11 +634,16 @@ function MyListTab({ savedActivities }: { savedActivities: SavedActivity[] }) {
             <Text style={styles.cardFlexibleTiming}>Flexible timing</Text>
           </View>
 
-          {/* Secondary action: "Plan this activity" */}
+          {/* Secondary action: "Plan this activity" (commit) */}
           <Pressable
             onPress={(e) => {
               e.stopPropagation(); // Prevent card tap
-              // No-op: UI only
+              // First select if not already selected
+              if (selectedAlternativeId !== alt.id) {
+                onSelectAlternative(alt);
+              }
+              // Then commit (transition to action state)
+              onCommitAlternative();
             }}
             style={({ pressed }) => [
               styles.cardAction,
@@ -641,6 +746,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 4,
     elevation: 2,
+  },
+  cardSelected: {
+    backgroundColor: 'rgba(24, 24, 27, 0.7)', // tokens: surfaceGlass (selected state)
+    borderWidth: 1,
+    borderColor: '#8B7AE8', // tokens: primary (subtle selection indicator)
   },
   cardPressed: {
     opacity: 0.85, // Subtle opacity change on press (calm feedback)

@@ -1,9 +1,8 @@
 import React, { useEffect, useRef } from 'react';
-import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
+import { NavigationContainer, NavigationContainerRef, DarkTheme, DefaultTheme } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { DarkTheme, DefaultTheme } from '@react-navigation/native';
 import { InterventionProvider, useIntervention } from '@/src/contexts/InterventionProvider';
 import RootNavigator from './navigation/RootNavigator';
 
@@ -18,8 +17,13 @@ function InterventionNavigationHandler() {
   const previousStateRef = useRef<string>(state);
 
   useEffect(() => {
-    // Only navigate if state actually changed and navigation is ready
-    if (state === previousStateRef.current || !navigationRef.current?.isReady()) {
+    // Wait for navigation to be ready
+    if (!navigationRef.current?.isReady()) {
+      return;
+    }
+
+    // Only navigate if state actually changed
+    if (state === previousStateRef.current) {
       return;
     }
 
@@ -30,9 +34,15 @@ function InterventionNavigationHandler() {
       navigationRef.current.navigate('Breathing');
     } else if (state === 'root-cause') {
       navigationRef.current.navigate('RootCause');
+    } else if (state === 'alternatives') {
+      navigationRef.current.navigate('Alternatives');
     } else if (state === 'idle') {
       // Return to main tabs when intervention is idle
-      navigationRef.current.navigate('MainTabs');
+      // Use reset to clear the navigation stack
+      navigationRef.current.reset({
+        index: 0,
+        routes: [{ name: 'MainTabs' }],
+      });
     }
   }, [state]);
 

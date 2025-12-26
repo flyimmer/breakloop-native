@@ -72,10 +72,22 @@ export const interventionReducer = (context, action) => {
       };
 
     case 'SELECT_ALTERNATIVE':
+      // Selection only: sets selectedAlternative without state transition
+      // Used when user taps a card to preview/select (but hasn't committed yet)
       if (context.state !== 'alternatives') return context;
       return {
         ...context,
         selectedAlternative: action.alternative,
+        // Stay in 'alternatives' state - no transition
+      };
+
+    case 'PROCEED_TO_ACTION':
+      // Commit: transitions from alternatives to action state
+      // Used when user explicitly commits (e.g., "Plan this activity", "Start")
+      if (context.state !== 'alternatives') return context;
+      if (!context.selectedAlternative) return context;
+      return {
+        ...context,
         state: 'action',
       };
 
@@ -202,14 +214,19 @@ export const parseDurationToMinutes = (durationStr) => {
 export const startAlternative = (context, alternative) => {
   const durationMinutes = parseDurationToMinutes(alternative.duration || '5m');
   
-  // First select the alternative (transition to 'action')
+  // First select the alternative (selection only, no state transition)
   const withSelected = interventionReducer(context, {
     type: 'SELECT_ALTERNATIVE',
     alternative,
   });
   
+  // Then commit to action state
+  const withCommitted = interventionReducer(withSelected, {
+    type: 'PROCEED_TO_ACTION',
+  });
+  
   // Then start the timer (transition to 'action_timer')
-  return interventionReducer(withSelected, {
+  return interventionReducer(withCommitted, {
     type: 'START_ALTERNATIVE',
     durationMinutes,
   });
