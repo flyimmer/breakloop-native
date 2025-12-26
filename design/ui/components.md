@@ -3,7 +3,14 @@
 This document defines all reusable UI components for the BreakLoop mobile app, extracted from `design/ui/screens.md`.
 
 **Purpose:** Component library specification for React Native implementation  
+**Platform:** React Native (Expo) with React Navigation v7  
 **Scope:** Functional and structural definitions (styling specifications to be added separately)
+
+**Implementation Notes:**
+- Components use React Native primitives (View, Text, ScrollView, TouchableOpacity, etc.)
+- Icons use `lucide-react-native` library
+- Navigation handled by React Navigation (not component-based navigation)
+- Components should be presentational (state managed in screens/contexts)
 
 ---
 
@@ -1184,65 +1191,76 @@ This document defines all reusable UI components for the BreakLoop mobile app, e
 
 ## Component Organization Strategy
 
-### Directory Structure (Recommended)
+### Directory Structure (React Native)
 
+**Current Structure:**
 ```
-src/
-├── components/
-│   ├── navigation/
-│   │   ├── TabBar.tsx
-│   │   ├── SubMenuNav.tsx
-│   │   ├── TabNavigation.tsx
-│   │   ├── BackButton.tsx
-│   │   └── PaginationControls.tsx
-│   ├── intervention/
-│   │   ├── CountdownTimer.tsx
-│   │   ├── CauseCard.tsx
-│   │   ├── ActionStepsList.tsx
-│   │   ├── MoodSelector.tsx
-│   │   └── TimeOptionGrid.tsx
-│   ├── cards/
-│   │   ├── ActivityCard.tsx
-│   │   ├── ActivitySuggestionCard.tsx
-│   │   ├── ValueCard.tsx
-│   │   ├── FriendCard.tsx
-│   │   ├── JoinRequestCard.tsx
-│   │   └── AppSelectionCard.tsx
-│   ├── forms/
-│   │   ├── FormInput.tsx
-│   │   ├── DatePicker.tsx
-│   │   ├── TimePicker.tsx
-│   │   ├── Dropdown.tsx
-│   │   ├── Toggle.tsx
-│   │   ├── NumberInput.tsx
-│   │   └── SearchBar.tsx
-│   ├── feedback/
-│   │   ├── StatusBadge.tsx
-│   │   ├── Toast.tsx
-│   │   ├── LoadingSpinner.tsx
-│   │   ├── EmptyState.tsx
-│   │   ├── ErrorMessage.tsx
-│   │   ├── NotificationBanner.tsx
-│   │   └── SuccessCheckmark.tsx
-│   ├── system/
-│   │   ├── Modal.tsx
-│   │   ├── Dialog.tsx
-│   │   ├── Overlay.tsx
-│   │   ├── IconButton.tsx
-│   │   └── AppIcon.tsx
-│   ├── containers/
-│   │   ├── Screen.tsx
-│   │   ├── Card.tsx
-│   │   ├── Section.tsx
-│   │   ├── HorizontalScrollList.tsx
-│   │   └── Grid.tsx
-│   └── lists/
-│       ├── ParticipantList.tsx
-│       ├── MessageList.tsx
-│       ├── StatsDisplay.tsx
-│       ├── ContactList.tsx
-│       └── SessionHistory.tsx
+app/
+├── components/                 # App-specific reusable components
+│   └── ActivityCard.tsx       # Example component (already exists)
+├── screens/                    # Screen components (not reusable components)
+│   ├── conscious_process/     # Intervention flow screens
+│   └── mainAPP/              # Main app screens
+
+components/                     # Shared components (project root, Expo structure)
+└── ui/                        # UI components
+    └── (existing components)
+
+# Recommended structure for reusable components:
+app/components/                 # OR create dedicated components directory
+├── navigation/
+│   ├── TabBar.tsx             # Bottom tab bar component (if custom)
+│   └── BackButton.tsx
+├── intervention/
+│   ├── CountdownTimer.tsx
+│   ├── CauseCard.tsx
+│   ├── ActionStepsList.tsx
+│   ├── MoodSelector.tsx
+│   └── TimeOptionGrid.tsx
+├── cards/
+│   ├── ActivityCard.tsx       # Already exists
+│   ├── ActivitySuggestionCard.tsx
+│   ├── ValueCard.tsx
+│   ├── FriendCard.tsx
+│   ├── JoinRequestCard.tsx
+│   └── AppSelectionCard.tsx
+├── forms/
+│   ├── FormInput.tsx
+│   ├── DatePicker.tsx         # Wrapper around Expo DateTimePicker
+│   ├── TimePicker.tsx
+│   ├── Dropdown.tsx
+│   ├── Toggle.tsx             # Wrapper around React Native Switch
+│   ├── NumberInput.tsx
+│   └── SearchBar.tsx
+├── feedback/
+│   ├── StatusBadge.tsx
+│   ├── Toast.tsx              # Use react-native-toast-message or similar
+│   ├── LoadingSpinner.tsx     # Use ActivityIndicator
+│   ├── EmptyState.tsx
+│   ├── ErrorMessage.tsx
+│   ├── NotificationBanner.tsx
+│   └── SuccessCheckmark.tsx
+├── system/
+│   ├── Modal.tsx              # Wrapper or use React Navigation Modal
+│   ├── Dialog.tsx             # Custom dialog component
+│   ├── Overlay.tsx
+│   ├── IconButton.tsx
+│   └── AppIcon.tsx
+├── containers/
+│   ├── Screen.tsx             # Base screen wrapper with SafeAreaView
+│   ├── Card.tsx
+│   ├── Section.tsx
+│   ├── HorizontalScrollList.tsx  # Use ScrollView with horizontal prop
+│   └── Grid.tsx               # Use Flexbox or FlatList
+└── lists/
+    ├── ParticipantList.tsx    # Use FlatList
+    ├── MessageList.tsx        # Use FlatList
+    ├── StatsDisplay.tsx
+    ├── ContactList.tsx        # Use FlatList
+    └── SessionHistory.tsx     # Use FlatList
 ```
+
+**Note:** Navigation components (TabBar, SubMenuNav) are handled by React Navigation, but custom tab bar styling components may be needed.
 
 ---
 
@@ -1289,17 +1307,21 @@ src/
 
 ## Cross-Platform Considerations
 
-### React Native Specific
-- Use `TouchableOpacity` or `Pressable` for touchable components
-- Native date/time pickers via `@react-native-community/datetimepicker`
-- Safe area handling via `react-native-safe-area-context`
-- Modal implementation via React Native `Modal` component
-- Gesture handling via `react-native-gesture-handler`
+### React Native Implementation
 
-### Platform Adaptations
-- **iOS:** Swipe-down to dismiss modals
-- **Android:** Back button handling for modals and overlays
+**Core Libraries:**
+- Use `TouchableOpacity` or `Pressable` from `react-native` for touchable components
+- Native date/time pickers via Expo DateTimePicker API or `@react-native-community/datetimepicker`
+- Safe area handling via `react-native-safe-area-context` (SafeAreaProvider, useSafeAreaInsets)
+- Modal implementation via React Native `Modal` component (or React Navigation modal presentation)
+- Gesture handling via `react-native-gesture-handler` (used by React Navigation)
+- Icons from `lucide-react-native`
+
+**Platform Adaptations:**
+- **iOS:** Swipe-down to dismiss modals (handled by React Navigation modal presentation)
+- **Android:** Back button handling via React Navigation (custom handlers in screen options)
 - **Both:** Native look-and-feel for pickers, toggles, and system components
+- **Expo:** Use Expo APIs for native features (DateTimePicker, ImagePicker, etc.)
 
 ### Accessibility
 - All interactive components must support screen readers

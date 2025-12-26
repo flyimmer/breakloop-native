@@ -1,5 +1,7 @@
 # Design Tokens
 
+**Platform:** Framework-agnostic design tokens for React Native (primary) and web implementations.
+
 ## Color
 
 ### Dark Mode (Primary)

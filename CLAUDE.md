@@ -5,22 +5,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Development Commands
 
 ```bash
-# Start development server
+# Start Expo development server
 npm start
+# or
+expo start
 
-# Build for production
-npm run build
+# Run on specific platform
+npm run android    # Start Android emulator/device
+npm run ios        # Start iOS simulator/device
+npm run web        # Start web version (Expo web)
 
-# Run tests
-npm test
-
-# Eject from react-scripts (one-way operation)
-npm run eject
+# Lint code
+npm run lint
 ```
 
 ## Project Overview
 
-**BreakLoop** is a React-based digital wellbeing application that helps users break mindless scrolling habits through mindful interventions, alternative activity suggestions, and community accountability features.
+**BreakLoop** is a React Native (Expo) mobile application that helps users break mindless scrolling habits through mindful interventions, alternative activity suggestions, and community accountability features. The codebase includes both a React Native mobile app and shared core business logic that can be reused across platforms.
 
 ## Design Documentation
 
@@ -51,14 +52,23 @@ This project includes comprehensive design documentation that serves as the sour
 
 ## High-Level Architecture
 
-### Single-File Application Pattern
-The core application logic resides in `src/App.js` (~8200 lines). This is a deliberate design choice for a prototype/market test. The file orchestrates:
-- Multiple screen contexts (launcher, BreakLoop config, dummy apps)
-- Intervention flow state machine (breathing → root-cause → alternatives → action → reflection)
-- Community/social features with a mock backend layer
-- Settings, friends management, and activity planning
+### React Native (Expo) Application
 
-**Note:** While the app maintains a single-file core, common utilities, constants, and core business logic have been extracted to shared modules for better maintainability and reusability (especially for React Native).
+**Platform:** React Native with Expo SDK (~54.0.30)
+**Navigation:** React Navigation v7 (Stack Navigator + Bottom Tabs)
+**State Management:** React Context + useReducer for intervention state
+**UI Library:** Lucide React Native for icons
+
+### Architecture Overview
+
+The React Native app uses a screen-based navigation architecture:
+
+- **Root Navigator** (`app/navigation/RootNavigator.tsx`): Stack navigator managing main tabs and intervention flow screens
+- **Main Navigation** (`app/navigation/MainNavigation.tsx`): Bottom tab navigator for main app sections (Insights, Community, Inbox, Settings)
+- **Community Stack** (`app/navigation/CommunityStackNavigator.tsx`): Stack navigator for community sub-screens
+- **Intervention Screens**: Modal-style screens for the intervention flow (breathing → root-cause → alternatives → action → reflection)
+
+**Note:** The core intervention business logic is framework-agnostic and shared between web and mobile implementations. UI components and navigation are React Native-specific.
 
 ### Framework-Agnostic Core Logic
 The intervention state machine has been extracted into `src/core/intervention/` as pure JavaScript functions with no React dependencies. This allows the same business logic to be reused in React Native or other frameworks. See [Intervention State Machine](#intervention-state-machine) section below.
@@ -67,34 +77,52 @@ The intervention state machine has been extracted into `src/core/intervention/` 
 
 **Directory Structure:**
 ```
-src/
-├── App.js                      # Main application (8200+ lines)
+app/                            # React Native app directory (Expo Router structure)
+├── App.tsx                     # Root app component with navigation handler
+├── navigation/                 # Navigation configuration
+│   ├── RootNavigator.tsx      # Root stack navigator (main tabs + intervention screens)
+│   ├── MainNavigation.tsx     # Bottom tab navigator (Insights, Community, Inbox, Settings)
+│   └── CommunityStackNavigator.tsx  # Community sub-navigation stack
+├── screens/                    # Screen components
+│   ├── conscious_process/     # Intervention flow screens
+│   │   ├── BreathingScreen.tsx
+│   │   ├── RootCauseScreen.tsx
+│   │   ├── AlternativesScreen.tsx
+│   │   ├── ActionConfirmationScreen.tsx
+│   │   ├── ActivityTimerScreen.tsx
+│   │   ├── IntentionTimerScreen.tsx  # A2: Exit normalization
+│   │   ├── ReflectionScreen.tsx
+│   │   └── QuickTaskDialogScreen.tsx
+│   └── mainAPP/               # Main app screens
+│       ├── InsightsScreen.tsx
+│       ├── CommunityScreen.tsx
+│       ├── InboxScreen.tsx
+│       ├── SettingsScreen.tsx
+│       ├── FriendOverviewScreen.tsx
+│       └── FullFriendProfileScreen.tsx
+└── components/                 # Reusable React Native components
+    └── ActivityCard.tsx
+
+src/                            # Shared core logic (framework-agnostic)
+├── contexts/
+│   └── InterventionProvider.tsx  # React Context provider for intervention state
 ├── core/                       # Framework-agnostic business logic
 │   └── intervention/           # Intervention state machine (pure JS)
 │       ├── index.js           # Public API exports
 │       ├── state.js           # State definitions and initial context
 │       ├── transitions.js     # Pure transition functions (reducer)
 │       └── timers.js          # Timer utilities and calculations
-├── components/                 # Modular UI components
-│   ├── ActivityCard.js
-│   ├── ActivityDetailsModal.js
-│   ├── ActivitySuggestionCard.jsx
-│   ├── AltSchedulerModal.js
-│   └── PlanActivityModal.jsx
-├── constants/                  # Shared configuration and constants
-│   ├── config.js              # App configuration (version, defaults, quick task settings)
-│   └── hostLabels.js          # Activity host type labels (card/modal variants)
-├── utils/                      # Reusable utility functions
-│   ├── activityMatching.js    # Activity ID matching logic
-│   ├── eventChat.js           # Event Group Chat storage and utilities
-│   ├── eventUpdates.js        # Event Update Signal System (Phase E-2c)
-│   ├── gemini.js              # Gemini API integration
-│   ├── icons.js               # Icon mapping for apps
-│   └── time.js                # Time/date formatting and parsing utilities
-├── hooks/
-│   └── useStickyState.js      # localStorage persistence hook
-├── mockApi.js                  # Mock backend for community features
-└── mockActivities.js           # Seed data for activities
+├── constants/                  # Shared configuration and constants (if exists)
+├── utils/                      # Reusable utility functions (if exists)
+└── (Web-only utilities/components - not used in React Native)
+
+constants/                      # App-wide constants (React Native)
+└── theme.ts                    # Theme configuration
+
+hooks/                          # React Native hooks
+├── use-color-scheme.ts
+├── use-theme-color.ts
+└── (other React Native hooks)
 ```
 
 **Shared Utilities:**
@@ -183,42 +211,35 @@ idle → breathing → root-cause → alternatives → action → action_timer �
                                    timer (unlock)
 ```
 
-**Usage in App.js:**
-```javascript
-import { 
-  createInitialInterventionContext,
+**Usage in React Native (InterventionProvider.tsx):**
+```typescript
+import { useReducer } from 'react';
+import {
   interventionReducer,
-  beginIntervention,
-  toggleCause,
-  startAlternative,
-  shouldTickBreathing,
-  shouldTickActionTimer
-} from './core/intervention';
+  createInitialInterventionContext,
+} from '../core/intervention';
 
-// Initialize state
-const [interventionContext, setInterventionContext] = useState(() => 
+// Provider uses useReducer
+const [interventionState, dispatchIntervention] = useReducer(
+  interventionReducer,
   createInitialInterventionContext()
 );
 
+// Usage in screens (via useIntervention hook):
+const { interventionState, dispatchIntervention } = useIntervention();
+
 // Dispatch actions
-const dispatchIntervention = useCallback((action) => {
-  setInterventionContext(prev => interventionReducer(prev, action));
-}, []);
+dispatchIntervention({ type: 'SELECT_CAUSE', causeId: 'boredom' });
 
-// Start intervention
-setInterventionContext(prev => 
-  beginIntervention(prev, app, breathingDuration)
-);
-
-// Timer effects
+// Timer effects (in screen components)
 useEffect(() => {
-  if (shouldTickBreathing(interventionState, breathingCount)) {
+  if (shouldTickBreathing(interventionState.state, interventionState.breathingCount)) {
     const timer = setTimeout(() => {
       dispatchIntervention({ type: 'BREATHING_TICK' });
     }, 1000);
     return () => clearTimeout(timer);
   }
-}, [interventionState, breathingCount, dispatchIntervention]);
+}, [interventionState.state, interventionState.breathingCount]);
 ```
 
 **Action Types:**
@@ -254,9 +275,10 @@ useEffect(() => {
 - See `design/ux/states.md` for complete state variable reference and transition matrix
 
 **Persistence Layer:**
-- `useStickyState` hook (`src/hooks/useStickyState.js`) wraps localStorage with React state
-- Supports a `disablePersistence` option for demo mode
-- All user data persists across sessions unless demo mode is enabled
+- React Native: Uses `@react-native-async-storage/async-storage` or Expo SecureStore for persistence
+- Web: Uses `localStorage` via `useStickyState` hook
+- All user data persists across sessions
+- Storage keys documented in [State Persistence Keys](#state-persistence-keys) section
 
 **Mock Backend:**
 - `src/mockApi.js` simulates server-side state for community features
@@ -763,20 +785,29 @@ Modals are rendered at the root level to ensure proper z-index stacking:
 
 ## External Dependencies
 
-Key production dependencies:
-- `react: ^19.0.0`
-- `react-dom: ^19.0.0`
-- `lucide-react: 0.555.0` (icon library)
+**React Native (Production):**
+- `react: 19.1.0`
+- `react-native: 0.81.5`
+- `expo: ~54.0.30` (Expo SDK)
+- `@react-navigation/native: ^7.1.26` (Navigation)
+- `@react-navigation/native-stack: ^7.9.0` (Stack Navigator)
+- `@react-navigation/bottom-tabs: ^7.9.0` (Bottom Tabs)
+- `lucide-react-native: ^0.562.0` (Icon library)
+- `react-native-safe-area-context: ~5.6.0` (Safe area handling)
+- `react-native-gesture-handler: ~2.28.0` (Gesture support)
 
-Development:
-- `react-scripts: ^5.0.0` (Create React App tooling)
-- `typescript: 5.7.2` (not actively used, but available)
+**Development:**
+- `typescript: ~5.9.2` (TypeScript support)
+- `expo-lint: ~10.0.0` (Linting)
 
 ## Environment Variables
 
 ```bash
-# Optional: Enable AI features
-REACT_APP_GEMINI_KEY=your_api_key_here
+# Optional: Enable AI features (Expo)
+EXPO_PUBLIC_GEMINI_KEY=your_api_key_here
+
+# Note: In Expo, use EXPO_PUBLIC_ prefix for public environment variables
+# Access via process.env.EXPO_PUBLIC_GEMINI_KEY
 ```
 
 ## Recent Refactoring (December 2025)
@@ -829,10 +860,9 @@ The codebase underwent incremental refactoring to improve maintainability while 
 - `INTERVENTION_EXTRACTION_SUMMARY.md` - Detailed extraction documentation
 
 **Files Modified:**
-- `src/App.js` (8,232 lines) - Updated to use extracted intervention core
-  - Replaced direct state mutations with `dispatchIntervention()` calls
-  - Updated timer effects to use extracted logic
-  - Maintained 100% backward compatibility
+- React Native: `src/contexts/InterventionProvider.tsx` - React Context provider using interventionReducer
+- React Native: `app/App.tsx` - Navigation handler that watches intervention state
+- React Native: Screen components use `useIntervention()` hook to access state
 
 **Impact:**
 - **+394 lines** of framework-agnostic core logic
@@ -841,60 +871,38 @@ The codebase underwent incremental refactoring to improve maintainability while 
 - **Ready for React Native** - same logic can be reused
 
 
-## React Native Compatibility
+## React Native Implementation
 
-The intervention state machine has been extracted to prepare for React Native app development:
+**Current Status:** React Native app is actively developed using the shared core logic.
 
 **Framework-Agnostic Core:**
 - `src/core/intervention/` contains pure JavaScript with no React dependencies
-- Can be imported directly into React Native projects
-- Same business logic for web and mobile
+- Imported and used via `InterventionProvider` React Context
+- Same business logic shared between web and mobile implementations
 
-**Usage in React Native:**
-```javascript
-// Import the same core logic
-import { 
-  createInitialInterventionContext,
-  interventionReducer,
-  beginIntervention,
-  shouldTickBreathing
-} from './core/intervention';
+**React Native Architecture:**
+- **Navigation:** React Navigation v7 (Stack + Bottom Tabs)
+- **State Management:** React Context + useReducer pattern
+- **Screens:** Separate screen components in `app/screens/`
+- **Intervention Flow:** Modal-style navigation triggered by state changes
+- **Navigation Handler:** `InterventionNavigationHandler` in `app/App.tsx` watches intervention state and navigates accordingly
 
-// Use with React Native state
-const [context, setContext] = useState(createInitialInterventionContext());
+**Implementation Details:**
+- Intervention screens are modal-style (`presentation: 'modal'` in RootNavigator)
+- State-driven navigation: intervention state changes trigger screen navigation
+- Bottom tabs: Insights, Community, Inbox, Settings
+- Community uses stack navigator for sub-screens (Friends, My Upcoming, Discover, Plan)
 
-// Same dispatch pattern
-const dispatch = (action) => {
-  setContext(prev => interventionReducer(prev, action));
-};
+**What's Shared:**
+- ✅ Intervention state machine (`src/core/intervention/`)
+- ✅ Core business logic (framework-agnostic)
 
-// Same timer logic
-useEffect(() => {
-  if (shouldTickBreathing(context.state, context.breathingCount)) {
-    const timer = setTimeout(() => {
-      dispatch({ type: 'BREATHING_TICK' });
-    }, 1000);
-    return () => clearTimeout(timer);
-  }
-}, [context.state, context.breathingCount]);
-```
-
-**What's Portable:**
-- ✅ Intervention state machine (`core/intervention/`)
-- ✅ Time utilities (`utils/time.js`)
-- ✅ Activity matching logic (`utils/activityMatching.js`)
-- ✅ Configuration constants (`constants/config.js`)
-
-**What Needs Adaptation:**
-- ⚠️ UI components (React Native uses different primitives)
-- ⚠️ Storage layer (use AsyncStorage instead of localStorage)
-- ⚠️ Navigation (use React Navigation instead of context switching)
-
-**Future Extractions:**
-Other state machines can follow the same pattern:
-- Community activity flow
-- Quick Task system
-- Inbox update management
+**React Native Specific:**
+- ✅ UI components use React Native primitives (View, Text, ScrollView, etc.)
+- ✅ Storage uses AsyncStorage/Expo SecureStore instead of localStorage
+- ✅ Navigation uses React Navigation instead of context switching
+- ✅ Icons use `lucide-react-native` instead of `lucide-react`
+- ✅ Screens are separate components instead of conditional rendering
 
 ## Git Workflow
 

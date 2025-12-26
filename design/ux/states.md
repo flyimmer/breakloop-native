@@ -4,81 +4,50 @@
 
 This document defines all user-facing UI states, transitions, triggers, and edge cases for BreakLoop. This structure serves as the foundation for mobile app implementation, ensuring consistent behavioral logic across platforms.
 
----
-
-## Root Contexts
-
-Root contexts define the primary screen/view the user sees. Only one root context is active at a time.
-
-### Context: Launcher
-
-**State ID:** `activeContext: "launcher"`
-
-**Description:** Home screen with app grid and dock icons
-
-**Initial State:** Default on app start
-
-**Sub-states:**
-- Normal: Base launcher view
-- With notification: `simNotification !== null` - Shows notification banner
-- Quick task active: `quickTaskActiveUntil > Date.now()` - Shows quick task badge with countdown
-- Active session: `userSessionState.joined && !userSessionState.isFinished` - Shows session widget
-- Intervention overlay: `interventionState !== "idle"` - Shows intervention flow overlay
-- Proactive overlay: `proactiveState !== null` - Shows proactive prompt
-- Quick task dialog: `showQuickTaskDialog === true` - Shows quick task decision dialog
-
-**Transitions:**
-- → `activeContext: "app-mindful"` - Tap BreakLoop icon
-- → `activeContext: "app-{id}"` - Tap any app icon
-- → Intervention states - When monitored app launched
-
-**Triggers:**
-- App initialization (default)
-- `handleHomeButton()` - User taps home/back
+**Platform:** React Native (Expo) with React Navigation v7  
+**Navigation Pattern:** Stack Navigator for intervention flow, Bottom Tabs for main app, Stack Navigator for community sub-screens
 
 ---
 
-### Context: BreakLoop App
+## Root Navigation Contexts
 
-**State ID:** `activeContext: "app-mindful"`
+**React Native Implementation:** Navigation is handled by React Navigation. The following contexts map to navigation routes:
 
-**Description:** Main BreakLoop application interface
+- `"launcher"` → Not applicable in React Native (no launcher screen)
+- `"app-mindful"` → `MainTabs` screen (Bottom Tab Navigator)
+- `"app-{id}"` → Not applicable in React Native (no dummy apps)
+- Intervention states → Modal-style screens in RootNavigator stack
+
+### Context: Main App Tabs
+
+**State ID:** `activeContext: "app-mindful"` (mapped to `MainTabs` route)
+
+**React Native Route:** `MainTabs` (Bottom Tab Navigator)
+
+**Description:** Main BreakLoop application interface with bottom tab navigation
+
+**Initial State:** Default on app start (after onboarding)
+
+**Tabs:**
+- Insights (`activeTab: "insights"`)
+- Community (`activeTab: "community"`)
+- Inbox (`activeTab: "inbox"`)
+- Settings (`activeTab: "settings"`)
 
 **Sub-states:** See [BreakLoop Config States](#breakloop-config-states)
 
 **Transitions:**
-- → `activeContext: "launcher"` - Tap home/back button
-- → Intervention states - Can be triggered from within BreakLoop
+- Tab navigation changes `activeTab` state
+- Intervention states navigate to modal-style intervention screens
+- Community sub-navigation uses stack navigator
 
 **Triggers:**
-- Tap BreakLoop icon in launcher
-- Return from intervention flow
+- App initialization (after onboarding)
+- Return from intervention flow (navigates back to MainTabs)
 
 ---
 
-### Context: Dummy App
-
-**State ID:** `activeContext: "app-{id}"`
-
-**Description:** Simulated app screen (Instagram, TikTok, etc.)
-
-**Sub-states:**
-- Normal: App content display
-- With timer: `activeSessions[app.name]` exists - Shows countdown badge
-
-**Transitions:**
-- → `activeContext: "launcher"` - Tap home button
-- → Intervention states - When session expires or monitored app opened
-
-**Triggers:**
-- Tap app icon in launcher
-- Quick task activates
-- Timer unlocks app
-
-**Edge Cases:**
-- Countdown timer visible if session active
-- Monitored apps: Clearing session on home button removes unlock token
-- Non-monitored apps: No intervention trigger
+**Note:** In React Native, there is no launcher or dummy app context. The app starts directly at MainTabs (main app interface).
 
 ---
 
@@ -295,7 +264,19 @@ Social states define relationships between users.
 
 ## Intervention Flow States
 
-Intervention overlay renders on top of launcher when `interventionState !== "idle"`. States form a linear flow with branching options.
+**React Native Implementation:** Intervention screens are modal-style screens in the RootNavigator stack. Navigation is triggered by intervention state changes via `InterventionNavigationHandler` in `app/App.tsx`.
+
+**Navigation Pattern:** Each intervention state maps to a screen route:
+- `"breathing"` → `BreathingScreen`
+- `"root-cause"` → `RootCauseScreen`
+- `"alternatives"` → `AlternativesScreen`
+- `"action"` → `ActionConfirmationScreen`
+- `"action_timer"` → `ActivityTimerScreen`
+- `"timer"` → `IntentionTimerScreen` (A2: Exit normalization)
+- `"reflection"` → `ReflectionScreen`
+- `"idle"` → Returns to `MainTabs`
+
+States form a linear flow with branching options.
 
 ### State: Breathing
 
@@ -312,7 +293,7 @@ Intervention overlay renders on top of launcher when `interventionState !== "idl
 - → `interventionState: "root-cause"` when `breathingCount === 0`
 
 **Manual Transition:**
-- → `activeContext: "launcher"` + `interventionState: "idle"` - Close (X button)
+- → `MainTabs` + `interventionState: "idle"` - Close (X button or back gesture)
 
 **Triggers:**
 - `beginInterventionForApp(app)` - Monitored app launch without quick task
@@ -343,7 +324,7 @@ Intervention overlay renders on top of launcher when `interventionState !== "idl
 **Transitions:**
 - → `interventionState: "alternatives"` - "See Alternatives" button (requires causes selected)
 - → `interventionState: "timer"` - "I really need to use it" button (bypass)
-- → `activeContext: "launcher"` - Close (X button)
+- → `MainTabs` + `interventionState: "idle"` - Close (X button or back gesture)
 
 **Triggers:**
 - Auto from breathing countdown completion
@@ -392,9 +373,9 @@ Intervention overlay renders on top of launcher when `interventionState !== "idl
 - No API key: `GEMINI_API_KEY` missing - Warning message
 
 **Transitions:**
-- → `interventionState: "action"` - Select alternative from list
-- Tab switch - Changes `altTab`, resets `altPage`
-- → `interventionState: "alternatives"` (same state) - Show create form
+- → `interventionState: "action"` - Select alternative from list (navigates to `ActionConfirmationScreen`)
+- Tab switch - Changes `altTab`, resets `altPage` (within same screen)
+- → `interventionState: "alternatives"` (same state) - Show create form (within same screen)
 
 **Triggers:**
 - Tab click changes active tab
@@ -425,9 +406,9 @@ Intervention overlay renders on top of launcher when `interventionState !== "idl
 - Close/Back button
 
 **Transitions:**
-- → `interventionState: "action_timer"` - "Start Activity" button
-- → Opens `AltSchedulerModal` - "Plan for later" button
-- → `interventionState: "alternatives"` - Close (X button)
+- → `interventionState: "action_timer"` - "Start Activity" button (navigates to `ActivityTimerScreen`)
+- → Opens modal/screen for scheduling - "Plan for later" button
+- → `interventionState: "alternatives"` - Close (X button or back gesture, navigates back to `AlternativesScreen`)
 
 **Triggers:**
 - User selects alternative from alternatives screen
@@ -489,7 +470,7 @@ Intervention overlay renders on top of launcher when `interventionState !== "idl
 **Transitions:**
 - → Sets `activeSessions[app.name]` with expiry
 - → `interventionState: "idle"`
-- → `activeContext: "app-{id}"` - App unlocked
+- → `MainTabs` - Returns to main app (app unlocked via session state)
 
 **Triggers:**
 - "I really need to use it" from root-cause screen
@@ -516,7 +497,7 @@ Intervention overlay renders on top of launcher when `interventionState !== "idl
 **Transitions:**
 - → `interventionState: "idle"`
 - → Saves to `sessionHistory`
-- → `activeContext: "launcher"` - Returns to home
+- → `MainTabs` - Returns to main app (navigation resets to MainTabs)
 
 **Triggers:**
 - "Complete & Reflect" from action_timer screen

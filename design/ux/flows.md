@@ -6,7 +6,8 @@ This document defines user journeys through the BreakLoop app by sequencing stat
 
 **Source of Truth:** All state IDs and transitions reference `design/ux/states.md`
 
-**Platform:** Mobile-first (Android + iOS)
+**Platform:** React Native (Expo) - Android + iOS  
+**Navigation:** React Navigation v7 (Stack Navigator + Bottom Tabs)
 
 ---
 
@@ -19,9 +20,9 @@ This document defines user journeys through the BreakLoop app by sequencing stat
 **Steps:**
 
 1. **Initial State**
-   - State: `activeContext: "launcher"` + `!hasOnboarded`
-   - Action: User taps BreakLoop icon
-   - Transition: → `activeContext: "app-mindful"`
+   - State: App first launch + `!hasOnboarded`
+   - Action: App opens
+   - Transition: → Onboarding screens
 
 2. **Onboarding Step 0: Select Values**
    - State: `onboardingStep: 0`
@@ -41,8 +42,8 @@ This document defines user journeys through the BreakLoop app by sequencing stat
    - Transition: → `hasOnboarded: true` + `activeTab: "insights"`
 
 4. **Completion**
-   - State: `activeContext: "app-mindful"` + `hasOnboarded: true`
-   - Display: Main BreakLoop app (Insights tab by default)
+   - State: `hasOnboarded: true`
+   - Display: Main BreakLoop app (`MainTabs` route, Insights tab by default)
    - User is now in main app interface
 
 **Exit Points:**
@@ -64,36 +65,23 @@ This document defines user journeys through the BreakLoop app by sequencing stat
 
 **Steps:**
 
-1. **Launcher View**
-   - State: `activeContext: "launcher"` + `interventionState: "idle"`
-   - Display: Home screen with app grid and dock
+1. **Main App View**
+   - State: `MainTabs` route + `interventionState: "idle"`
+   - Display: Main BreakLoop app with bottom tab navigation
    - Sub-states may include:
      - Quick task badge if `quickTaskActiveUntil > Date.now()`
      - Active session widget if `userSessionState.joined: true`
      - Notification banner if `simNotification !== null`
 
-2. **Launch Non-Monitored App**
-   - User Action: Tap non-monitored app icon (e.g., Gmail, Maps)
-   - Transition: → `activeContext: "app-{id}"`
-   - Display: App content (no intervention)
-
-3. **Return to Launcher**
-   - User Action: Tap home/back button
-   - Transition: → `activeContext: "launcher"`
-
-4. **Open BreakLoop App**
-   - User Action: Tap BreakLoop icon
-   - Transition: → `activeContext: "app-mindful"`
-   - Display: Last active tab (default: `activeTab: "insights"`)
-
-5. **Navigate Tabs**
-   - User Action: Tap Community/Settings tabs
-   - State Update: `activeTab` changes
+2. **Navigate Tabs**
+   - User Action: Tap Insights/Community/Inbox/Settings tabs
+   - State Update: `activeTab` changes (within `MainTabs` route)
    - Display updates accordingly
 
-6. **Return to Launcher**
-   - User Action: Tap home/back button
-   - Transition: → `activeContext: "launcher"`
+3. **App Switching (OS Level)**
+   - User Action: Switch to another app via OS app switcher
+   - State: App remains in background, state preserved
+   - Note: No launcher screen in React Native
 
 **Exit Points:**
 - User remains in normal usage pattern
@@ -118,14 +106,14 @@ This document defines user journeys through the BreakLoop app by sequencing stat
 
 **Steps:**
 
-1. **Launcher View**
-   - State: `activeContext: "launcher"` + `interventionState: "idle"`
+1. **Main App View**
+   - State: `MainTabs` route + `interventionState: "idle"`
 
-2. **Launch Monitored App**
-   - User Action: Tap monitored app icon (e.g., Instagram)
+2. **Trigger Monitored App Launch**
+   - User Action: Monitored app launch detected (OS-level integration required)
    - Trigger: Quick task availability check
    - State Update: `pendingQuickTaskApp: appObject` + `showQuickTaskDialog: true`
-   - Transition: → Quick Task Dialog overlays launcher
+   - Transition: → `QuickTaskDialogScreen` modal
 
 3. **Quick Task Dialog**
    - State: `showQuickTaskDialog: true`
@@ -142,8 +130,8 @@ This document defines user journeys through the BreakLoop app by sequencing stat
      - `activeQuickTaskApp: appObject`
      - `quickTaskUsesInWindow: +1`
      - `showQuickTaskDialog: false`
-   - Transition: → `activeContext: "app-{id}"` (app unlocked)
-   - Display: App content with countdown badge in status bar
+   - Transition: → Returns to monitored app (unlocked via session state)
+   - Display: App content with countdown badge (OS-level integration)
 
    **Path B: Full Intervention**
    - User Action: Tap "Go through conscious process"
@@ -171,21 +159,22 @@ This document defines user journeys through the BreakLoop app by sequencing stat
    - State Update: `activeQuickTaskApp: null`
    - Next monitored app launch triggers intervention
 
-6. **Return to Launcher (Before Expiration)**
-   - User Action: Tap home/back button
-   - State Update: Session cleared (monitored app only)
-   - Transition: → `activeContext: "launcher"`
+6. **Return to BreakLoop (Before Expiration)**
+   - User Action: Switch back to BreakLoop app
+   - State Update: Session state preserved
+   - Transition: → `MainTabs` route
 
 **Exit Points:**
-- Quick task completed within time limit (user returns to launcher)
-- Quick task expires → triggers full intervention
-- Dialog cancelled → app doesn't launch
+- Quick task completed within time limit (user continues using monitored app)
+- Quick task expires → triggers full intervention (navigates to intervention flow)
+- Dialog cancelled → returns to `MainTabs`
 
-**Mobile Considerations:**
-- Android: Back button exits app, clears session token
-- iOS: Home gesture exits app, clears session token
-- Quick task badge visible in notification area (if supported)
+**React Native Considerations:**
+- Android: Back button behavior handled by React Navigation
+- iOS: Swipe-back gesture handled by React Navigation
+- Quick task badge requires OS-level integration (notification badge)
 - Window resets automatically after 15 minutes
+- Navigation: Quick task dialog is a modal screen in RootNavigator stack
 
 ---
 
@@ -201,13 +190,14 @@ This document defines user journeys through the BreakLoop app by sequencing stat
 **Steps:**
 
 1. **Trigger Intervention**
-   - User Action: Launch monitored app
-   - Function Call: `beginInterventionForApp(app)`
+   - User Action: Launch monitored app (OS-level integration)
+   - Function Call: `beginIntervention(app)` via InterventionProvider
    - State Updates:
      - `targetApp: appObject`
      - `interventionState: "breathing"`
      - `breathingCount: settings.interventionDuration` (default: 5)
-   - Transition: → Intervention overlay on launcher
+   - Navigation: `InterventionNavigationHandler` detects state change → navigates to `BreathingScreen`
+   - Transition: → `BreathingScreen` modal
 
 2. **Breathing Countdown**
    - State: `interventionState: "breathing"`
@@ -223,9 +213,10 @@ This document defines user journeys through the BreakLoop app by sequencing stat
    - Transition: → `interventionState: "root-cause"`
 
    **Path B: Cancel**
-   - User Action: Tap X button
+   - User Action: Tap X button or back gesture
    - State Update: `interventionState: "idle"` + `targetApp: null`
-   - Transition: → `activeContext: "launcher"` (app doesn't launch)
+   - Navigation: `InterventionNavigationHandler` detects state change → navigates back to `MainTabs`
+   - Transition: → `MainTabs` (intervention cancelled)
 
 3. **Root Cause Selection (Path A continuation)**
    - State: `interventionState: "root-cause"`
@@ -245,19 +236,21 @@ This document defines user journeys through the BreakLoop app by sequencing stat
    - Transition: → `interventionState: "timer"`
 
    **Path A3: Cancel**
-   - User Action: Tap X button
+   - User Action: Tap X button or back gesture
    - State Reset: `interventionState: "idle"` + `selectedCauses: []` + `targetApp: null`
-   - Transition: → `activeContext: "launcher"`
+   - Navigation: Returns to `MainTabs`
+   - Transition: → `MainTabs`
 
 4. **Timer Unlock (Path A2 continuation)**
    - State: `interventionState: "timer"`
+   - Navigation: `IntentionTimerScreen` modal
    - Display: Clock icon + time option grid (5m, 15m, 30m, 45m, 60m + 1m small button)
    - User Action: Tap time duration
    - State Updates:
      - `activeSessions[app.name]: { expiry: Date.now() + selectedMinutes }`
      - `interventionState: "idle"`
-   - Transition: → `activeContext: "app-{id}"` (app unlocked)
-   - Display: App content with countdown timer badge
+   - Navigation: Returns to `MainTabs`
+   - Transition: → `MainTabs` (app unlocked via session state)
 
 5. **Browse Alternatives (Path A1 continuation)**
    - State: `interventionState: "alternatives"`
@@ -314,30 +307,33 @@ This document defines user journeys through the BreakLoop app by sequencing stat
 
 11. **Reflection**
     - State: `interventionState: "reflection"`
+    - Navigation: `ReflectionScreen` modal
     - Display: Welcome message + three emoji buttons + skip option
     - User Action: Select mood (😊 positive / 😐 neutral / 😫 negative / Skip)
-    - Function Call: `finishReflection(moodValue)`
+    - Function Call: `finishReflection(moodValue)` via dispatchIntervention
     - State Updates:
       - Saves to `sessionHistory`
       - `interventionState: "idle"`
       - Clears intervention variables
-    - Transition: → `activeContext: "launcher"`
+    - Navigation: `InterventionNavigationHandler` detects state change → navigates back to `MainTabs`
+    - Transition: → `MainTabs`
 
 **Exit Points:**
-- Reflection completed → launcher with intervention cleared
-- Timer unlock → app unlocked for session duration
-- Cancel at any stage → launcher without app launch
+- Reflection completed → `MainTabs` with intervention cleared
+- Timer unlock → `MainTabs` (app unlocked for session duration)
+- Cancel at any stage → `MainTabs` (intervention cancelled)
 
-**Mobile Considerations:**
-- Full-screen overlay blocks launcher interaction
-- Back button behavior:
-  - Breathing/Root-cause: Cancels intervention
-  - Alternatives: Closes intervention
-  - Action: Returns to alternatives
-  - Action Timer: Remains in timer (no back)
-  - Reflection: Remains in reflection (must complete)
+**React Native Considerations:**
+- Intervention screens are modal-style (presentation: 'modal' in RootNavigator)
+- Back gesture/button behavior (React Navigation):
+  - Breathing/Root-cause: Cancels intervention (navigates to MainTabs)
+  - Alternatives: Can navigate back (navigates to previous screen or MainTabs)
+  - Action: Returns to alternatives (navigates back to AlternativesScreen)
+  - Action Timer: Custom back behavior (may remain in timer)
+  - Reflection: Custom back behavior (may require completion)
 - Timer continues in background if user switches apps
-- Android: Intervention survives app switching (remains in memory)
+- Navigation state managed by React Navigation stack
+- State-driven navigation: `InterventionNavigationHandler` watches intervention state and navigates accordingly
 
 ---
 
