@@ -2,10 +2,15 @@
  * OS Trigger Brain (Contract v1.1)
  * 
  * Tracks foreground app changes and records exit timestamps.
- * Step 5A: Tracking only - no intervention logic yet.
+ * Implements app switch interval logic to prevent intervention spam.
+ * 
+ * KNOWN LIMITATION:
+ * Android UsageStats may report the last used app when returning to home launcher,
+ * causing spurious re-entry events. App exits are inferred reliably when another
+ * app enters foreground, so interval logic remains functionally correct.
  */
 
-import { isMonitoredApp } from './osConfig';
+import { getAppSwitchIntervalMs, isMonitoredApp } from './osConfig';
 
 // Internal state
 let lastForegroundApp: string | null = null;
@@ -21,6 +26,8 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
   const { packageName, timestamp } = app;
 
   // If there was a previous app, it has now exited
+  // NOTE: Android UsageStats may report the last used app when returning to launcher.
+  // App exits are inferred reliably when another app enters foreground.
   if (lastForegroundApp !== null && lastForegroundApp !== packageName) {
     lastExitTimestamps.set(lastForegroundApp, timestamp);
     console.log('[OS Trigger Brain] App exited foreground:', {
@@ -43,7 +50,42 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
       packageName,
       timestamp,
     });
-    // TODO Step 5B: Add intervention trigger logic here
+
+    // Check app switch interval logic
+    const lastExitTimestamp = lastExitTimestamps.get(packageName);
+    const intervalMs = getAppSwitchIntervalMs();
+
+    if (lastExitTimestamp !== undefined) {
+      // App was previously exited - check if enough time has passed
+      const timeSinceExit = timestamp - lastExitTimestamp;
+
+      if (timeSinceExit < intervalMs) {
+        console.log('[OS Trigger Brain] Re-entry within app switch interval — no intervention', {
+          packageName,
+          timeSinceExitMs: timeSinceExit,
+          intervalMs,
+          lastExitTimestamp,
+          currentTimestamp: timestamp,
+        });
+      } else {
+        console.log('[OS Trigger Brain] App switch interval elapsed — intervention eligible', {
+          packageName,
+          timeSinceExitMs: timeSinceExit,
+          intervalMs,
+          lastExitTimestamp,
+          currentTimestamp: timestamp,
+        });
+        // TODO Step 5B: Add intervention trigger logic here
+      }
+    } else {
+      // No previous exit recorded (first launch or never exited before)
+      console.log('[OS Trigger Brain] App switch interval elapsed — intervention eligible', {
+        packageName,
+        reason: 'no_previous_exit',
+        currentTimestamp: timestamp,
+      });
+      // TODO Step 5B: Add intervention trigger logic here
+    }
   }
 
   // Update current foreground app

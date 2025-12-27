@@ -26,7 +26,7 @@ const MONITORED_APPS = new Set<string>([
  * Minimum interval between intervention triggers (milliseconds)
  * Current value: 5 minutes
  */
-const APP_SWITCH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const APP_SWITCH_INTERVAL_MS = 1 * 60 * 1000; // 1 minutes
 
 /**
  * Duration of breathing countdown in intervention flow (seconds)
