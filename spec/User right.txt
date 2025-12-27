@@ -1,0 +1,2 @@
+User Right documentation:
+1. Zugriff auf Nutzungsinformationen: Zugriff auf Nutzung zulassen

@@ -12,6 +12,16 @@ import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from './navigation/RootNavigator';
 
+// Use NativeModules instead of TurboModuleRegistry for legacy modules
+const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
+
+// TEMP DEBUG: Check module access
+console.log('=== TEMP DEBUG START ===');
+console.log('Is bridgeless:', (global as any).__bridgeless);
+console.log('AppMonitorModule via NativeModules:', AppMonitorModule);
+console.log('AppMonitorModule is non-null:', !!AppMonitorModule);
+console.log('=== TEMP DEBUG END ===');
+
 /**
  * Component that watches intervention state and navigates accordingly
  */
@@ -63,8 +73,6 @@ function InterventionNavigationHandler() {
   );
 }
 
-const { AppMonitorModule } = NativeModules;
-
 const App = () => {
   /**
    * STEP 4 — Android foreground app listener (OBSERVATION ONLY)
@@ -75,24 +83,38 @@ const App = () => {
       return;
     }
 
+    // TEMP DEBUG: Start monitoring
+    console.log('[AppMonitor] TEMP DEBUG: Starting monitoring...');
+    AppMonitorModule.startMonitoring()
+      .then((result: any) => {
+        console.log('[AppMonitor] TEMP DEBUG: Monitoring started:', result);
+      })
+      .catch((error: any) => {
+        console.error('[AppMonitor] TEMP DEBUG: Failed to start monitoring:', error);
+      });
+
     const emitter = new NativeEventEmitter(AppMonitorModule);
 
     const subscription = emitter.addListener(
       'onForegroundAppChanged',
-      (event) => {
-        console.log('[AppMonitor] Foreground app:', event);
+      (event: { packageName: string; timestamp: number }) => {
+        console.log('[AppMonitor] Foreground app changed:', {
+          packageName: event.packageName,
+          timestamp: event.timestamp,
+        });
       }
     );
 
-    if (AppMonitorModule.start) {
-      AppMonitorModule.start();
-    }
-
     return () => {
+      console.log('[AppMonitor] TEMP DEBUG: Cleaning up monitoring...');
       subscription.remove();
-      if (AppMonitorModule.stop) {
-        AppMonitorModule.stop();
-      }
+      AppMonitorModule.stopMonitoring()
+        .then((result: any) => {
+          console.log('[AppMonitor] TEMP DEBUG: Monitoring stopped:', result);
+        })
+        .catch((error: any) => {
+          console.error('[AppMonitor] TEMP DEBUG: Failed to stop monitoring:', error);
+        });
     };
   }, []);
 
@@ -107,3 +129,5 @@ const App = () => {
 };
 
 export default App;
+
+

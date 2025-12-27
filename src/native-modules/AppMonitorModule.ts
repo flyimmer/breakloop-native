@@ -68,6 +68,17 @@ interface IAppMonitorModule {
    * @returns Promise resolving to boolean (true if monitoring is active)
    */
   isMonitoring(): Promise<boolean>;
+
+  /**
+   * Open the Usage Access settings screen where the user can grant PACKAGE_USAGE_STATS permission
+   * 
+   * This opens the system settings screen that lists all apps with Usage Access permission.
+   * The user must manually enable "BreakLoop" in this list.
+   * 
+   * @returns Promise resolving to true if settings screen was opened successfully
+   * @throws Error if settings screen cannot be opened
+   */
+  openUsageAccessSettings(): Promise<boolean>;
 }
 
 /**
