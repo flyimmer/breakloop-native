@@ -11,7 +11,11 @@ import React, { useEffect, useRef } from 'react';
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from './navigation/RootNavigator';
-import { handleForegroundAppChange } from '@/src/os/osTriggerBrain';
+import { 
+  handleForegroundAppChange, 
+  checkForegroundIntentionExpiration,
+  checkBackgroundIntentionExpiration 
+} from '@/src/os/osTriggerBrain';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -68,6 +72,21 @@ function InterventionNavigationHandler() {
 
 const App = () => {
   /**
+   * STEP 5E — Intention timer expiration checking
+   * Periodically checks if intention timers have expired for foreground/background apps.
+   * Silent checks - only logs when timers actually expire.
+   */
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      const now = Date.now();
+      checkForegroundIntentionExpiration(now);
+      checkBackgroundIntentionExpiration(now);
+    }, 5000); // Check every 5 seconds
+
+    return () => clearInterval(intervalId);
+  }, []);
+
+  /**
    * STEP 4 — Android foreground app monitoring (OBSERVATION ONLY)
    * Starts monitoring service and logs foreground app changes.
    * No intervention triggering logic yet - that's Step 5.
@@ -98,11 +117,7 @@ const App = () => {
     const subscription = emitter.addListener(
       'onForegroundAppChanged',
       (event: { packageName: string; timestamp: number }) => {
-        if (__DEV__) {
-          console.log('[OS] Foreground app changed:', event.packageName);
-        }
-        
-        // Pass to OS Trigger Brain for tracking
+        // Pass to OS Trigger Brain for tracking (silent - Brain will log important events)
         handleForegroundAppChange({
           packageName: event.packageName,
           timestamp: event.timestamp,

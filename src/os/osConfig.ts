@@ -26,13 +26,20 @@ const MONITORED_APPS = new Set<string>([
  * Minimum interval between intervention triggers (milliseconds)
  * Current value: 5 minutes
  */
-const APP_SWITCH_INTERVAL_MS = 1 * 60 * 1000; // 1 minutes
+const APP_SWITCH_INTERVAL_MS = 0.5 * 60 * 1000; // 1 minutes
 
 /**
  * Duration of breathing countdown in intervention flow (seconds)
  * Current value: 5 seconds
  */
 const INTERVENTION_DURATION_SEC = 5; // 5 seconds
+
+/**
+ * Default intention timer duration (milliseconds)
+ * TEMPORARY: Set to 2 minutes for testing
+ * Current value: 2 minutes
+ */
+const INTENTION_TIMER_DURATION_MS = 2* 60 * 1000; // 2 minutes
 
 // ============================================================================
 // PUBLIC API
@@ -66,6 +73,17 @@ export function getAppSwitchIntervalMs(): number {
  */
 export function getInterventionDurationSec(): number {
   return INTERVENTION_DURATION_SEC;
+}
+
+/**
+ * Get the default intention timer duration.
+ * 
+ * Used when setting intention timers for monitored apps.
+ * 
+ * @returns Duration in milliseconds (default: 2 minutes)
+ */
+export function getIntentionTimerDurationMs(): number {
+  return INTENTION_TIMER_DURATION_MS;
 }
 
 /**
