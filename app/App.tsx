@@ -1,8 +1,14 @@
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { InterventionProvider, useIntervention } from '@/src/contexts/InterventionProvider';
-import { DarkTheme, DefaultTheme, NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
+import {
+  DarkTheme,
+  DefaultTheme,
+  NavigationContainer,
+  NavigationContainerRef,
+} from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useRef } from 'react';
+import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from './navigation/RootNavigator';
 
@@ -17,19 +23,16 @@ function InterventionNavigationHandler() {
   const previousStateRef = useRef<string>(state);
 
   useEffect(() => {
-    // Wait for navigation to be ready
     if (!navigationRef.current?.isReady()) {
       return;
     }
 
-    // Only navigate if state actually changed
     if (state === previousStateRef.current) {
       return;
     }
 
     previousStateRef.current = state;
 
-    // Navigate based on intervention state
     if (state === 'breathing') {
       navigationRef.current.navigate('Breathing');
     } else if (state === 'root-cause') {
@@ -43,8 +46,6 @@ function InterventionNavigationHandler() {
     } else if (state === 'reflection') {
       navigationRef.current.navigate('Reflection');
     } else if (state === 'idle') {
-      // Return to main tabs when intervention is idle
-      // Use reset to clear the navigation stack
       navigationRef.current.reset({
         index: 0,
         routes: [{ name: 'MainTabs' }],
@@ -62,7 +63,39 @@ function InterventionNavigationHandler() {
   );
 }
 
+const { AppMonitorModule } = NativeModules;
+
 const App = () => {
+  /**
+   * STEP 4 — Android foreground app listener (OBSERVATION ONLY)
+   */
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !AppMonitorModule) {
+      console.log('[AppMonitor] Android module not available');
+      return;
+    }
+
+    const emitter = new NativeEventEmitter(AppMonitorModule);
+
+    const subscription = emitter.addListener(
+      'onForegroundAppChanged',
+      (event) => {
+        console.log('[AppMonitor] Foreground app:', event);
+      }
+    );
+
+    if (AppMonitorModule.start) {
+      AppMonitorModule.start();
+    }
+
+    return () => {
+      subscription.remove();
+      if (AppMonitorModule.stop) {
+        AppMonitorModule.stop();
+      }
+    };
+  }, []);
+
   return (
     <SafeAreaProvider>
       <InterventionProvider>
@@ -74,4 +107,3 @@ const App = () => {
 };
 
 export default App;
-
