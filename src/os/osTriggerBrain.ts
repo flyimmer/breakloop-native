@@ -38,6 +38,92 @@ const lastExitTimestamps: Map<string, number> = new Map();
 const intentionTimers: Map<string, { expiresAt: number }> = new Map();
 
 /**
+ * Track interventions in progress per app.
+ * Prevents repeated intervention triggers for the same app until intervention completes.
+ */
+const interventionsInProgress: Set<string> = new Set();
+
+/**
+ * Trigger intervention for a monitored app (Step 5F).
+ * Dispatches exactly ONE intervention and prevents repeated triggers.
+ * 
+ * @param packageName - App package name requiring intervention
+ * @param timestamp - Current timestamp
+ */
+function triggerIntervention(packageName: string, timestamp: number): void {
+  // Check if intervention already in progress for this app
+  if (interventionsInProgress.has(packageName)) {
+    // Silent - no log spam for repeated checks
+    return;
+  }
+
+  // Mark intervention as in-progress
+  interventionsInProgress.add(packageName);
+
+  // Reset/overwrite intention timer for this app (will be set again after intervention completes)
+  intentionTimers.delete(packageName);
+
+  console.log('[OS Trigger Brain] BEGIN_INTERVENTION dispatched', {
+    packageName,
+    timestamp,
+    time: new Date(timestamp).toISOString(),
+  });
+
+  // TODO Step 5G: Dispatch to intervention state machine
+  // dispatchIntervention({ type: 'BEGIN_INTERVENTION', appPackageName: packageName });
+}
+
+/**
+ * Mark intervention as completed for an app.
+ * Clears the in-progress flag so future expirations can trigger new interventions.
+ * 
+ * Called by intervention flow when user completes or dismisses the intervention.
+ * 
+ * @param packageName - App package name
+ */
+export function onInterventionCompleted(packageName: string): void {
+  interventionsInProgress.delete(packageName);
+  console.log('[OS Trigger Brain] Intervention completed, cleared in-progress flag', {
+    packageName,
+  });
+}
+
+// ============================================================================
+// DEV-ONLY TESTING HOOKS
+// ============================================================================
+
+/**
+ * [DEV ONLY] Manually complete an intervention for testing.
+ * Simulates the intervention flow calling onInterventionCompleted().
+ * 
+ * This function does NOTHING in production builds.
+ * 
+ * @param packageName - App package name
+ */
+export function completeInterventionDEV(packageName: string): void {
+  if (__DEV__) {
+    interventionsInProgress.delete(packageName);
+    console.log('[OS Trigger Brain][DEV] Intervention completed for', {
+      packageName,
+      note: 'Manual completion via DEV hook',
+    });
+  }
+}
+
+/**
+ * [DEV ONLY] Get list of apps currently with interventions in progress.
+ * Useful for debugging and testing.
+ * 
+ * @returns Array of package names with active interventions
+ */
+export function getInterventionsInProgressDEV(): string[] {
+  if (__DEV__) {
+    return Array.from(interventionsInProgress);
+  }
+  return [];
+}
+
+/**
  * Handles foreground app change events from the OS.
  * Records exit timestamps and updates tracking state.
  * 
@@ -98,8 +184,9 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
         expiredMs: timestamp - intentionTimer.expiresAt,
         expiredSec: `${expiredSec}s ago`,
       });
-      // TODO Step 5F: Trigger intervention (BEGIN_INTERVENTION)
-      // Note: Will overwrite existing intention timer when intervention starts
+      
+      // Trigger intervention (Step 5F)
+      triggerIntervention(packageName, timestamp);
       return;
     }
 
@@ -161,8 +248,8 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
           });
         }
         
-        // TODO Step 5F: Trigger intervention (BEGIN_INTERVENTION)
-        // Note: Intention timer will be set when user completes intervention flow
+        // Trigger intervention (Step 5F)
+        triggerIntervention(packageName, timestamp);
       }
     } else {
       // No previous exit recorded (first launch or never exited before)
@@ -172,8 +259,8 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
         currentTimestamp: timestamp,
       });
       
-      // TODO Step 5F: Trigger intervention (BEGIN_INTERVENTION)
-      // Note: Intention timer will be set when user completes intervention flow
+      // Trigger intervention (Step 5F)
+      triggerIntervention(packageName, timestamp);
     }
   } else {
     // Non-monitored app in foreground - but we still need to check ALL monitored app timers
@@ -315,6 +402,7 @@ export function resetTrackingState(): void {
   lastForegroundApp = null;
   lastExitTimestamps.clear();
   intentionTimers.clear();
+  interventionsInProgress.clear();
   console.log('[OS Trigger Brain] Tracking state reset');
 }
 

@@ -4,6 +4,8 @@ import React, { useState } from 'react';
 import {
   Alert,
   Image,
+  NativeModules,
+  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -14,6 +16,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
+import { completeInterventionDEV } from '@/src/os/osTriggerBrain';
+
+const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
 const SettingsScreen = () => {
   // Intervention context (for debug button)
@@ -144,6 +149,45 @@ const SettingsScreen = () => {
     });
     // Navigation will react to state change automatically
     // (interventionState changes from 'idle' to 'breathing')
+  };
+
+  // DEV-ONLY: Manually complete Instagram intervention for testing Step 5F
+  const handleCompleteInstagramIntervention = () => {
+    completeInterventionDEV('com.instagram.android');
+    Alert.alert(
+      'DEV: Intervention Completed',
+      'Instagram intervention completed. OS Trigger Brain can now trigger new interventions.',
+      [{ text: 'OK' }]
+    );
+  };
+
+  // DEV-ONLY: Stop monitoring service for testing
+  const handleStopMonitoringService = () => {
+    if (Platform.OS !== 'android' || !AppMonitorModule) {
+      Alert.alert('Error', 'Monitoring service not available');
+      return;
+    }
+
+    Alert.alert(
+      'Stop Monitoring Service?',
+      'This will stop the foreground app monitoring service. Normally it should run independently even when the app is closed.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Stop',
+          style: 'destructive',
+          onPress: () => {
+            AppMonitorModule.stopMonitoring()
+              .then(() => {
+                Alert.alert('Success', 'Monitoring service stopped');
+              })
+              .catch((error: any) => {
+                Alert.alert('Error', `Failed to stop: ${error.message}`);
+              });
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -484,6 +528,28 @@ const SettingsScreen = () => {
               </TouchableOpacity>
               <Text style={styles.debugHint}>
                 Development-only trigger
+              </Text>
+
+              <TouchableOpacity
+                style={[styles.debugButton, { marginTop: 16 }]}
+                onPress={handleCompleteInstagramIntervention}
+              >
+                <Text style={styles.debugButtonText}>DEV: Complete Instagram Intervention</Text>
+              </TouchableOpacity>
+              <Text style={styles.debugHint}>
+                Manually complete to allow retesting (Step 5F)
+              </Text>
+
+              <TouchableOpacity
+                style={[styles.debugButton, { marginTop: 16, borderColor: '#EF4444' }]}
+                onPress={handleStopMonitoringService}
+              >
+                <Text style={[styles.debugButtonText, { color: '#EF4444' }]}>
+                  DEV: Stop Monitoring Service
+                </Text>
+              </TouchableOpacity>
+              <Text style={styles.debugHint}>
+                Stop foreground service (normally runs independently)
               </Text>
             </View>
           </View>

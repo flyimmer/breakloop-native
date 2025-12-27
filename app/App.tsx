@@ -100,6 +100,8 @@ const App = () => {
     }
 
     // Start monitoring service
+    // NOTE: Service runs independently of React Native lifecycle
+    // It should continue even when the app is closed/backgrounded
     AppMonitorModule.startMonitoring()
       .then((result: any) => {
         if (__DEV__ && result.success) {
@@ -128,16 +130,12 @@ const App = () => {
     );
 
     return () => {
+      // Only remove the event listener
+      // DO NOT stop the monitoring service - it must run independently
       subscription.remove();
-      AppMonitorModule.stopMonitoring()
-        .then(() => {
-          if (__DEV__) {
-            console.log('[OS] Foreground app monitoring stopped');
-          }
-        })
-        .catch((error: any) => {
-          console.error('[OS] Failed to stop monitoring:', error);
-        });
+      
+      // The monitoring service continues running even when React Native app is closed
+      // This is required for intervention system to work correctly
     };
   }, []);
 
