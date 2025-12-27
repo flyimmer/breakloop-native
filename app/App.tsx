@@ -11,6 +11,7 @@ import React, { useEffect, useRef } from 'react';
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from './navigation/RootNavigator';
+import { handleForegroundAppChange } from '@/src/os/osTriggerBrain';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -100,7 +101,14 @@ const App = () => {
         if (__DEV__) {
           console.log('[OS] Foreground app changed:', event.packageName);
         }
-        // TODO Step 5: Add intervention trigger logic here
+        
+        // Pass to OS Trigger Brain for tracking
+        handleForegroundAppChange({
+          packageName: event.packageName,
+          timestamp: event.timestamp,
+        });
+        
+        // TODO Step 5B: Add intervention trigger logic here
       }
     );
 
