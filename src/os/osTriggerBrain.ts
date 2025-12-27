@@ -5,6 +5,8 @@
  * Step 5A: Tracking only - no intervention logic yet.
  */
 
+import { isMonitoredApp } from './osConfig';
+
 // Internal state
 let lastForegroundApp: string | null = null;
 const lastExitTimestamps: Map<string, number> = new Map();
@@ -34,6 +36,15 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
     timestamp,
     enterTime: new Date(timestamp).toISOString(),
   });
+
+  // Check if this is a monitored app
+  if (isMonitoredApp(packageName)) {
+    console.log('[OS Trigger Brain] Monitored app entered foreground:', {
+      packageName,
+      timestamp,
+    });
+    // TODO Step 5B: Add intervention trigger logic here
+  }
 
   // Update current foreground app
   lastForegroundApp = packageName;
