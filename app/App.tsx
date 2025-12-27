@@ -12,15 +12,7 @@ import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from './navigation/RootNavigator';
 
-// Use NativeModules instead of TurboModuleRegistry for legacy modules
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
-
-// TEMP DEBUG: Check module access
-console.log('=== TEMP DEBUG START ===');
-console.log('Is bridgeless:', (global as any).__bridgeless);
-console.log('AppMonitorModule via NativeModules:', AppMonitorModule);
-console.log('AppMonitorModule is non-null:', !!AppMonitorModule);
-console.log('=== TEMP DEBUG END ===');
 
 /**
  * Component that watches intervention state and navigates accordingly
@@ -75,45 +67,53 @@ function InterventionNavigationHandler() {
 
 const App = () => {
   /**
-   * STEP 4 — Android foreground app listener (OBSERVATION ONLY)
+   * STEP 4 — Android foreground app monitoring (OBSERVATION ONLY)
+   * Starts monitoring service and logs foreground app changes.
+   * No intervention triggering logic yet - that's Step 5.
    */
   useEffect(() => {
     if (Platform.OS !== 'android' || !AppMonitorModule) {
-      console.log('[AppMonitor] Android module not available');
+      if (__DEV__) {
+        console.log('[OS] App monitoring not available (not Android or module missing)');
+      }
       return;
     }
 
-    // TEMP DEBUG: Start monitoring
-    console.log('[AppMonitor] TEMP DEBUG: Starting monitoring...');
+    // Start monitoring service
     AppMonitorModule.startMonitoring()
       .then((result: any) => {
-        console.log('[AppMonitor] TEMP DEBUG: Monitoring started:', result);
+        if (__DEV__ && result.success) {
+          console.log('[OS] Foreground app monitoring started');
+        } else if (__DEV__ && !result.success) {
+          console.warn('[OS] Monitoring service started but permission may be missing:', result.message);
+        }
       })
       .catch((error: any) => {
-        console.error('[AppMonitor] TEMP DEBUG: Failed to start monitoring:', error);
+        console.error('[OS] Failed to start monitoring:', error);
       });
 
+    // Listen for foreground app changes
     const emitter = new NativeEventEmitter(AppMonitorModule);
-
     const subscription = emitter.addListener(
       'onForegroundAppChanged',
       (event: { packageName: string; timestamp: number }) => {
-        console.log('[AppMonitor] Foreground app changed:', {
-          packageName: event.packageName,
-          timestamp: event.timestamp,
-        });
+        if (__DEV__) {
+          console.log('[OS] Foreground app changed:', event.packageName);
+        }
+        // TODO Step 5: Add intervention trigger logic here
       }
     );
 
     return () => {
-      console.log('[AppMonitor] TEMP DEBUG: Cleaning up monitoring...');
       subscription.remove();
       AppMonitorModule.stopMonitoring()
-        .then((result: any) => {
-          console.log('[AppMonitor] TEMP DEBUG: Monitoring stopped:', result);
+        .then(() => {
+          if (__DEV__) {
+            console.log('[OS] Foreground app monitoring stopped');
+          }
         })
         .catch((error: any) => {
-          console.error('[AppMonitor] TEMP DEBUG: Failed to stop monitoring:', error);
+          console.error('[OS] Failed to stop monitoring:', error);
         });
     };
   }, []);
