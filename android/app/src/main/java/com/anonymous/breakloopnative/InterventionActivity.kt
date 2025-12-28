@@ -96,11 +96,11 @@ class InterventionActivity : ReactActivity() {
      * 
      * We update the Intent so getInitialTriggeringApp() can read the new trigger.
      */
-    override fun onNewIntent(intent: Intent?) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent) // Update Intent for subsequent getIntent() calls
         
-        intent?.getStringExtra(EXTRA_TRIGGERING_APP)?.let { triggeringApp ->
+        intent.getStringExtra(EXTRA_TRIGGERING_APP)?.let { triggeringApp ->
             Log.i(TAG, "🔄 onNewIntent - New trigger: $triggeringApp")
         }
     }

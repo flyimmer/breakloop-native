@@ -117,7 +117,7 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     @ReactMethod
     fun getInitialTriggeringApp(promise: Promise) {
         try {
-            val activity = currentActivity
+            val activity = reactApplicationContext.currentActivity
             if (activity is InterventionActivity) {
                 val triggeringApp = activity.intent?.getStringExtra(InterventionActivity.EXTRA_TRIGGERING_APP)
                 android.util.Log.d("AppMonitorModule", "getInitialTriggeringApp: $triggeringApp")
@@ -143,7 +143,7 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     @ReactMethod
     fun finishInterventionActivity() {
         try {
-            val activity = currentActivity
+            val activity = reactApplicationContext.currentActivity
             if (activity is InterventionActivity) {
                 android.util.Log.i("AppMonitorModule", "Finishing InterventionActivity")
                 activity.finish()
