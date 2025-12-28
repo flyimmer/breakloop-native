@@ -41,3 +41,10 @@ app-example
 # generated native folders
 /ios
 /android
+
+# But track custom native source code (Option 2: Track java/kotlin source + custom resources)
+!/android/app/src/main/java/
+!/android/app/src/main/AndroidManifest.xml
+!/android/app/src/main/res/xml/
+!/android/app/src/main/res/values/strings.xml
+!/android/docs/

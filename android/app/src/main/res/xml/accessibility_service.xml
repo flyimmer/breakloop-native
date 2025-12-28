@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    AccessibilityService Configuration for BreakLoop
+    
+    This configuration defines how the ForegroundDetectionService operates
+    and what the user sees in Android Accessibility Settings.
+    
+    PRIVACY & TRANSPARENCY:
+    - User must explicitly enable this service in Settings > Accessibility
+    - Android shows a clear warning about granting accessibility permissions
+    - The description below explains exactly what the service does
+    - Users can disable the service at any time
+    
+    CAPABILITIES:
+    - accessibilityEventTypes: TYPE_WINDOW_STATE_CHANGED only
+      This means we only detect when apps are opened/switched
+      We do NOT monitor any content, text, or user interactions
+    
+    - accessibilityFlags: flagRetrieveInteractiveWindows
+      This allows us to detect window changes but NOT access their content
+    
+    - canRetrieveWindowContent: false
+      Explicitly disabled - we cannot read any UI content from other apps
+    
+    PHASE F1 STATUS:
+    - Currently used for detection and logging only
+    - Does not trigger any overlays or interventions yet
+    - Foundation for future intervention system
+-->
+<accessibility-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/accessibility_service_description"
+    android:notificationTimeout="0"
+    android:packageNames=""
+    android:settingsActivity="com.anonymous.breakloopnative.MainActivity" />
+

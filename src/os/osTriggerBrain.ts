@@ -11,20 +11,94 @@
  * - Intention timers are overwritten ONLY when new intervention is triggered
  * - Expired intention triggers intervention (immediately if foreground, or on next entry)
  * 
- * KNOWN LIMITATION:
- * Android UsageStats may report the last used app when returning to home launcher,
- * causing spurious re-entry events. App exits are inferred reliably when another
- * app enters foreground, so interval logic remains functionally correct.
+ * SEMANTIC LAUNCHER FILTERING:
+ * The native layer reports ALL foreground changes (including launchers).
+ * This layer filters launchers semantically because:
+ * - Launchers don't represent user intent to "use an app"
+ * - On OEM devices, launchers briefly regain focus during transitions
+ * - App switch interval should only count time between meaningful apps
+ * - Easier to maintain launcher list in JS than in multiple native platforms
  */
 
 import { getAppSwitchIntervalMs, isMonitoredApp } from './osConfig';
 
 // ============================================================================
+// Launcher Filtering
+// ============================================================================
+
+/**
+ * Known launcher package names.
+ * Launchers are NOT treated as "meaningful apps" for intervention logic.
+ * 
+ * WHY FILTER LAUNCHERS?
+ * - On OEM devices (Huawei/Honor, Xiaomi, Samsung), launchers briefly regain
+ *   focus during app transitions, creating false "app switch" events.
+ * - Launchers don't represent user intent to engage with content.
+ * - App switch interval should measure time between actual apps, not launcher bounces.
+ * 
+ * Example without filtering:
+ *   Instagram → Launcher (100ms) → YouTube
+ *   = Two app switches, two interventions
+ * 
+ * With filtering:
+ *   Instagram → [Launcher ignored] → YouTube
+ *   = One app switch from Instagram to YouTube
+ */
+const LAUNCHER_PACKAGES = new Set([
+  'com.android.launcher',           // AOSP launcher
+  'com.android.launcher3',          // Pixel launcher
+  'com.google.android.launcher',    // Google launcher
+  'com.hihonor.android.launcher',   // Honor launcher
+  'com.huawei.android.launcher',    // Huawei launcher
+  'com.miui.home',                  // Xiaomi MIUI launcher
+  'com.samsung.android.app.launcher', // Samsung One UI launcher
+  'com.oppo.launcher',              // OPPO ColorOS launcher
+  'com.vivo.launcher',              // Vivo launcher
+  'com.oneplus.launcher',           // OnePlus launcher
+  'com.teslacoilsw.launcher',       // Nova Launcher
+  'com.microsoft.launcher',         // Microsoft Launcher
+  'com.actionlauncher.playstore',   // Action Launcher
+]);
+
+/**
+ * Check if a package is a launcher.
+ * 
+ * @param packageName - Package name to check
+ * @returns True if this is a known launcher
+ */
+function isLauncher(packageName: string): boolean {
+  return LAUNCHER_PACKAGES.has(packageName);
+}
+
+// ============================================================================
 // Internal State
 // ============================================================================
 
+/**
+ * Last foreground app (raw, includes launchers).
+ * Tracks what native layer reports, used for exit timestamp inference.
+ */
 let lastForegroundApp: string | null = null;
+
+/**
+ * Last MEANINGFUL app (excludes launchers).
+ * Used for app switch interval logic and intervention decisions.
+ * This represents the last app the user actually engaged with.
+ */
+let lastMeaningfulApp: string | null = null;
+
+/**
+ * Exit timestamps for ALL apps (including launchers).
+ * Maps packageName -> last exit timestamp.
+ */
 const lastExitTimestamps: Map<string, number> = new Map();
+
+/**
+ * Exit timestamps for MEANINGFUL apps only (excludes launchers).
+ * Used for app switch interval calculations.
+ * Maps packageName -> last meaningful exit timestamp.
+ */
+const lastMeaningfulExitTimestamps: Map<string, number> = new Map();
 
 /**
  * Per-app intention timers (t_monitored).
@@ -126,15 +200,17 @@ export function getInterventionsInProgressDEV(): string[] {
 /**
  * Handles foreground app change events from the OS.
  * Records exit timestamps and updates tracking state.
+ * Implements semantic launcher filtering at the business logic layer.
  * 
  * @param app - App info containing packageName and timestamp
  */
 export function handleForegroundAppChange(app: { packageName: string; timestamp: number }): void {
   const { packageName, timestamp } = app;
 
-  // If there was a previous app, it has now exited
-  // NOTE: Android UsageStats may report the last used app when returning to launcher.
-  // App exits are inferred reliably when another app enters foreground.
+  // ============================================================================
+  // Step 1: Record raw exit (for all apps, including launchers)
+  // ============================================================================
+  
   if (lastForegroundApp !== null && lastForegroundApp !== packageName) {
     lastExitTimestamps.set(lastForegroundApp, timestamp);
     console.log('[OS Trigger Brain] App exited foreground:', {
@@ -144,7 +220,45 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
     });
   }
 
-  // Log the new app entering foreground (only on actual change)
+  // ============================================================================
+  // Step 2: Semantic launcher filtering
+  // ============================================================================
+  
+  const isLauncherEvent = isLauncher(packageName);
+  
+  if (isLauncherEvent) {
+    // Launcher detected - log but don't treat as meaningful app
+    if (__DEV__) {
+      console.log('[OS Trigger Brain] Launcher event ignored for semantics:', {
+        packageName,
+        timestamp,
+      });
+    }
+    
+    // Update raw tracking (for exit inference) but NOT meaningful app tracking
+    lastForegroundApp = packageName;
+    
+    // Do NOT update lastMeaningfulApp
+    // Do NOT update lastMeaningfulExitTimestamps
+    // Do NOT run intervention logic
+    return;
+  }
+
+  // ============================================================================
+  // Step 3: Handle meaningful app entry
+  // ============================================================================
+  
+  // Record exit of last meaningful app (if transitioning between meaningful apps)
+  if (lastMeaningfulApp !== null && lastMeaningfulApp !== packageName) {
+    lastMeaningfulExitTimestamps.set(lastMeaningfulApp, timestamp);
+    console.log('[OS Trigger Brain] Meaningful app exited:', {
+      packageName: lastMeaningfulApp,
+      exitTimestamp: timestamp,
+      exitTime: new Date(timestamp).toISOString(),
+    });
+  }
+
+  // Log the new meaningful app entering foreground (only on actual change)
   if (lastForegroundApp !== packageName) {
     console.log('[OS Trigger Brain] App entered foreground:', {
       packageName,
@@ -153,10 +267,14 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
     });
   }
 
+  // ============================================================================
+  // Step 4: Monitored app intervention logic
+  // ============================================================================
+  
   // Check if this is a monitored app
   if (isMonitoredApp(packageName)) {
     // Log entry only when app actually changes
-    if (lastForegroundApp !== packageName) {
+    if (lastMeaningfulApp !== packageName) {
       console.log('[OS Trigger Brain] Monitored app entered foreground:', {
         packageName,
         timestamp,
@@ -187,17 +305,23 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
       
       // Trigger intervention (Step 5F)
       triggerIntervention(packageName, timestamp);
+      
+      // Update tracking and return
+      lastForegroundApp = packageName;
+      lastMeaningfulApp = packageName;
       return;
     }
 
     // Only run app switch interval logic on actual entry (not heartbeat)
-    if (lastForegroundApp === packageName) {
+    if (lastMeaningfulApp === packageName) {
       // This is a heartbeat event for the same app - skip interval logic
+      lastForegroundApp = packageName;
       return;
     }
 
     // Check app switch interval logic (t_appSwitchInterval)
-    const lastExitTimestamp = lastExitTimestamps.get(packageName);
+    // Use meaningful exit timestamps (excludes launcher bounces)
+    const lastExitTimestamp = lastMeaningfulExitTimestamps.get(packageName);
     const intervalMs = getAppSwitchIntervalMs();
 
     if (lastExitTimestamp !== undefined) {
@@ -282,8 +406,9 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
     }
   }
 
-  // Update current foreground app
+  // Update tracking (both raw and meaningful)
   lastForegroundApp = packageName;
+  lastMeaningfulApp = packageName;
 }
 
 /**
@@ -294,10 +419,17 @@ export function getLastExitTimestamp(packageName: string): number | undefined {
 }
 
 /**
- * Get the current foreground app (for debugging/testing).
+ * Get the current foreground app (raw, for debugging/testing).
  */
 export function getCurrentForegroundApp(): string | null {
   return lastForegroundApp;
+}
+
+/**
+ * Get the current meaningful app (excludes launchers, for debugging/testing).
+ */
+export function getCurrentMeaningfulApp(): string | null {
+  return lastMeaningfulApp;
 }
 
 /**
@@ -337,12 +469,12 @@ export function getIntentionTimer(packageName: string): { expiresAt: number } | 
 export function checkForegroundIntentionExpiration(currentTimestamp: number): void {
   // Silent check - only log if something important happens
   
-  if (lastForegroundApp === null) {
+  if (lastMeaningfulApp === null) {
     return;
   }
 
   // Only check if the foreground app is monitored
-  if (!isMonitoredApp(lastForegroundApp)) {
+  if (!isMonitoredApp(lastMeaningfulApp)) {
     // Check ALL monitored apps with timers instead
     for (const [packageName, timer] of intentionTimers.entries()) {
       if (isMonitoredApp(packageName) && currentTimestamp > timer.expiresAt) {
@@ -357,14 +489,14 @@ export function checkForegroundIntentionExpiration(currentTimestamp: number): vo
     return;
   }
 
-  const timer = intentionTimers.get(lastForegroundApp);
+  const timer = intentionTimers.get(lastMeaningfulApp);
   if (!timer) {
     return;
   }
 
   if (currentTimestamp > timer.expiresAt) {
     console.log('[OS Trigger Brain] Intention expired while app in foreground — intervention required', {
-      packageName: lastForegroundApp,
+      packageName: lastMeaningfulApp,
       expiresAt: timer.expiresAt,
       currentTimestamp,
       expiredMs: currentTimestamp - timer.expiresAt,
@@ -381,8 +513,8 @@ export function checkForegroundIntentionExpiration(currentTimestamp: number): vo
  */
 export function checkBackgroundIntentionExpiration(currentTimestamp: number): void {
   for (const [packageName, timer] of intentionTimers.entries()) {
-    // Only check apps that are NOT in foreground (foreground expiration is checked separately)
-    if (packageName !== lastForegroundApp && currentTimestamp > timer.expiresAt) {
+    // Only check apps that are NOT the current meaningful app (meaningful app expiration is checked separately)
+    if (packageName !== lastMeaningfulApp && currentTimestamp > timer.expiresAt) {
       console.log('[OS Trigger Brain] Background intention timer expired — intervention on next entry', {
         packageName,
         expiresAt: timer.expiresAt,
@@ -400,7 +532,9 @@ export function checkBackgroundIntentionExpiration(currentTimestamp: number): vo
  */
 export function resetTrackingState(): void {
   lastForegroundApp = null;
+  lastMeaningfulApp = null;
   lastExitTimestamps.clear();
+  lastMeaningfulExitTimestamps.clear();
   intentionTimers.clear();
   interventionsInProgress.clear();
   console.log('[OS Trigger Brain] Tracking state reset');

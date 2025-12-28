@@ -1,2 +1,7 @@
 User Right documentation:
 1. Zugriff auf Nutzungsinformationen: Zugriff auf Nutzung zulassen
+2. Settings → Accessibility → BreakLoop → Toggle ON  
+or
+Bedinungshilfe->BreakLoop app on.
+
+
