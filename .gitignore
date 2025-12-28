@@ -42,9 +42,6 @@ app-example
 /ios
 /android
 
-# But track custom native source code (Option 2: Track java/kotlin source + custom resources)
-!/android/app/src/main/java/
-!/android/app/src/main/AndroidManifest.xml
-!/android/app/src/main/res/xml/
-!/android/app/src/main/res/values/strings.xml
-!/android/docs/
+# Expo Config Plugin files are tracked (version-controlled)
+# The plugin automatically applies native changes during expo prebuild
+# plugins/ directory is NOT ignored - it contains source files
