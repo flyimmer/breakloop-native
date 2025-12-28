@@ -39,8 +39,8 @@ yarn-error.*
 app-example
 
 # generated native folders
-/ios
-/android
+# /ios - Commented out: tracking native iOS code
+# /android - Commented out: tracking native Android code (Phase F3.5)
 
 # Expo Config Plugin files are tracked (version-controlled)
 # The plugin automatically applies native changes during expo prebuild

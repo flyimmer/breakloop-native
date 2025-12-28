@@ -34,6 +34,67 @@
         <data android:scheme="exp+breakloop-native"/>
       </intent-filter>
     </activity>
+    <!-- 
+      InterventionActivity - Intervention UI Only
+      
+      PURPOSE:
+      - Displays ONLY the intervention experience (no main app UI)
+      - Wakes app from killed state directly into intervention
+      - Prevents main app tabs/settings from flashing on screen
+      
+      KEY CONFIGURATION:
+      
+      launchMode="singleInstance":
+      - Only one instance ever exists
+      - Runs in its own dedicated task
+      - Completely isolated from MainActivity task
+      - If already running, brings to foreground instead of creating new instance
+      
+      excludeFromRecents="true":
+      - Hidden from Android's recent apps list
+      - Users don't see "Intervention" as separate app
+      - Reinforces temporary interruption nature
+      
+      taskAffinity="" (empty):
+      - Further isolates intervention task from main app
+      - Prevents grouping with MainActivity in task switcher
+      - Allows clean exit without affecting main app state
+      
+      theme="@style/Theme.Intervention":
+      - Transparent/minimal theme
+      - No splash screen or loading UI
+      - Smooth, non-disruptive entrance
+      - React Native content shows immediately
+      
+      exported="false":
+      - Cannot be launched by external apps
+      - Only launchable by ForegroundDetectionService (internal component)
+      
+      NO LAUNCHER INTENT:
+      - Does not appear in app drawer
+      - Does not show launcher icon
+      - Only accessible via internal launching
+      
+      NAVIGATION FLOW:
+      - Launched by ForegroundDetectionService when monitored app detected
+      - React Native boots and OS Trigger Brain evaluates situation
+      - JS decides intervention flow and navigation
+      - User completes intervention
+      - Activity finishes and returns to previously opened app
+      - Main app is NOT left open in background
+    -->
+    <activity
+      android:name=".InterventionActivity"
+      android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode"
+      android:launchMode="singleInstance"
+      android:excludeFromRecents="true"
+      android:taskAffinity=""
+      android:theme="@style/Theme.Intervention"
+      android:exported="false"
+      android:windowSoftInputMode="adjustResize"
+      android:screenOrientation="portrait">
+      <!-- No intent-filter: Not launchable from app drawer or externally -->
+    </activity>
     <service
       android:name=".AppMonitorService"
       android:enabled="true"

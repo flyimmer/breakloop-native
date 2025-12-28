@@ -2,6 +2,7 @@ package com.anonymous.breakloopnative
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.Intent
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 
@@ -22,15 +23,13 @@ import android.view.accessibility.AccessibilityEvent
  * - The detected package names are used solely for mindfulness intervention
  * - Users must explicitly grant this permission in Android Settings
  * 
- * PHASE F1/F2 STATUS:
- * - Phase F1: Detection-only implementation with event-driven app switching
- * - Phase F2 (Refactored): Raw event reporting - launcher filtering moved to JS layer
- * - Currently logs ALL detected package names for debugging (including launchers)
- * - Native layer only suppresses duplicate consecutive events
- * - Semantic filtering (launcher handling) done in OS Trigger Brain
- * - Does NOT trigger overlays or intervention UI yet
- * - Does NOT communicate with React Native yet
- * - Future phases will connect this to the intervention system
+ * PHASE F3.5 STATUS:
+ * - Detects foreground app changes in real-time
+ * - Launches InterventionActivity (NOT MainActivity) when monitored app detected
+ * - Passes triggering app package name to InterventionActivity
+ * - Native code decides WHEN to wake app, JS decides IF and HOW to intervene
+ * - Does NOT contain any intervention business logic
+ * - Future phases will add monitored apps list checking
  * 
  * LIFECYCLE:
  * - Service starts when user enables it in Android Accessibility Settings
@@ -50,6 +49,24 @@ class ForegroundDetectionService : AccessibilityService() {
         @Volatile
         var isServiceConnected = false
             private set
+            
+        /**
+         * Hardcoded list of monitored apps for Phase F3.5
+         * 
+         * TODO Phase F4: Replace with dynamic list from JS
+         * TODO Phase F4: Sync this list with user's settings in React Native
+         * 
+         * For now, using common social media / entertainment apps for testing
+         */
+        private val MONITORED_APPS = setOf(
+            "com.instagram.android",
+            "com.zhiliaoapp.musically",  // TikTok
+            "com.twitter.android",
+            "com.facebook.katana",
+            "com.reddit.frontpage",
+            "com.snapchat.android",
+            "com.youtube.android"
+        )
     }
 
     /**
@@ -96,15 +113,25 @@ class ForegroundDetectionService : AccessibilityService() {
      * Called when accessibility events occur
      * This is where we detect foreground app changes
      * 
-     * RAW EVENT REPORTING (Phase F2 Refactored):
-     * This service reports ALL foreground app changes, including launcher events.
-     * Semantic filtering (e.g., ignoring launchers) is handled in the OS Trigger Brain
-     * at the JavaScript layer, where business logic belongs.
+     * PHASE F3.5 BEHAVIOR:
+     * - Detects when a MONITORED app comes to foreground
+     * - Launches InterventionActivity (NOT MainActivity)
+     * - Passes triggering app package name via Intent extra
+     * - Native code decides WHEN to wake app
+     * - JS (OS Trigger Brain) decides IF and HOW to intervene
      * 
      * Native layer responsibility:
      * - Detect raw OS-level foreground changes
      * - Suppress duplicate consecutive events (same package repeatedly)
-     * - Report all meaningful transitions
+     * - Check if package is in monitored list
+     * - Launch InterventionActivity if monitored app detected
+     * 
+     * JavaScript responsibility:
+     * - Evaluate if intervention should occur (Quick Task window, etc.)
+     * - Decide which intervention flow to show
+     * - Manage intervention state machine
+     * - Navigate through intervention screens
+     * - Determine when to exit intervention
      * 
      * @param event The accessibility event containing app switch information
      */
@@ -133,20 +160,65 @@ class ForegroundDetectionService : AccessibilityService() {
         // Update last detected package
         lastPackageName = packageName
         
-        // Log ALL foreground changes (including launchers)
-        // Semantic filtering happens in OS Trigger Brain
+        // Log all foreground changes for debugging
         Log.i(TAG, "📱 Foreground app changed: $packageName")
         
-        // Additional debug info
-        val className = event.className?.toString() ?: "unknown"
-        val timestamp = System.currentTimeMillis()
+        // Check if this is a monitored app
+        if (MONITORED_APPS.contains(packageName)) {
+            Log.i(TAG, "🎯 MONITORED APP DETECTED: $packageName")
+            launchInterventionActivity(packageName)
+        } else {
+            Log.d(TAG, "  └─ Not a monitored app, ignoring")
+        }
+    }
+    
+    /**
+     * Launch InterventionActivity to show intervention UI
+     * 
+     * INTENT FLAGS EXPLAINED:
+     * 
+     * FLAG_ACTIVITY_NEW_TASK:
+     * - Required when starting activity from a Service (not an Activity context)
+     * - Creates activity in a new task (required for non-activity contexts)
+     * 
+     * FLAG_ACTIVITY_CLEAR_TOP:
+     * - If InterventionActivity already exists, brings it to front
+     * - Clears any activities above it in the stack
+     * - Combined with singleInstance launchMode, ensures clean state
+     * 
+     * FLAG_ACTIVITY_SINGLE_TOP:
+     * - If activity is already at top of stack, reuses existing instance
+     * - Calls onNewIntent() instead of creating new instance
+     * - Prevents duplicate intervention screens
+     * 
+     * Together these flags ensure:
+     * - Clean wake from killed state
+     * - No duplicate intervention screens
+     * - Proper isolation from MainActivity
+     * - User sees ONLY intervention UI, not main app
+     * 
+     * @param triggeringApp Package name of the app that triggered intervention
+     */
+    private fun launchInterventionActivity(triggeringApp: String) {
+        Log.i(TAG, "[Accessibility] Launching InterventionActivity for $triggeringApp")
         
-        Log.d(TAG, "  └─ Class: $className")
-        Log.d(TAG, "  └─ Time: $timestamp")
-        
-        // TODO Phase F3: Send this information to React Native
-        // TODO Phase F4: Check if packageName is in monitored apps list
-        // TODO Phase F5: Trigger intervention overlay if needed
+        try {
+            val intent = Intent(this, InterventionActivity::class.java).apply {
+                // Pass the triggering app to JS
+                putExtra(InterventionActivity.EXTRA_TRIGGERING_APP, triggeringApp)
+                
+                // Required flags for launching from Service context
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            }
+            
+            startActivity(intent)
+            Log.d(TAG, "  └─ InterventionActivity launched successfully")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to launch InterventionActivity", e)
+        }
     }
 
     /**
@@ -178,4 +250,3 @@ class ForegroundDetectionService : AccessibilityService() {
         return super.onUnbind(intent)
     }
 }
-

@@ -16,19 +16,88 @@ import {
   checkForegroundIntentionExpiration,
   checkBackgroundIntentionExpiration 
 } from '@/src/os/osTriggerBrain';
+import { isMonitoredApp, getInterventionDurationSec } from '@/src/os/osConfig';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
 /**
  * Component that watches intervention state and navigates accordingly
+ * 
+ * PHASE F3.5 ADDITIONS:
+ * - Checks for initial triggering app on mount (InterventionActivity launch)
+ * - Finishes InterventionActivity when intervention completes (state → idle)
  */
 function InterventionNavigationHandler() {
   const navigationRef = useRef<NavigationContainerRef<any>>(null);
   const colorScheme = useColorScheme();
-  const { interventionState } = useIntervention();
+  const { interventionState, dispatchIntervention } = useIntervention();
   const { state } = interventionState;
   const previousStateRef = useRef<string>(state);
+  const hasCheckedInitialTrigger = useRef<boolean>(false);
 
+  /**
+   * PHASE F3.5 - Fix #3: Check for initial triggering app
+   * 
+   * When InterventionActivity launches, this checks if there's a triggering app
+   * passed via Intent extras. If found and it's a monitored app, dispatches
+   * BEGIN_INTERVENTION to start the intervention flow.
+   * 
+   * This runs ONCE on mount, before any navigation occurs.
+   */
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !AppMonitorModule || hasCheckedInitialTrigger.current) {
+      return;
+    }
+
+    hasCheckedInitialTrigger.current = true;
+
+    AppMonitorModule.getInitialTriggeringApp()
+      .then((triggeringApp: string | null) => {
+        if (triggeringApp && isMonitoredApp(triggeringApp)) {
+          if (__DEV__) {
+            console.log(`[F3.5] Triggering app received: ${triggeringApp}`);
+            console.log('[F3.5] Dispatching BEGIN_INTERVENTION');
+          }
+          
+          dispatchIntervention({
+            type: 'BEGIN_INTERVENTION',
+            app: triggeringApp,
+            breathingDuration: getInterventionDurationSec(),
+          });
+        } else if (__DEV__ && triggeringApp) {
+          console.log(`[F3.5] Triggering app ${triggeringApp} is not monitored, ignoring`);
+        }
+      })
+      .catch((error: any) => {
+        console.error('[F3.5] Failed to get initial triggering app:', error);
+      });
+  }, [dispatchIntervention]);
+
+  /**
+   * PHASE F3.5 - Fix #4: Finish InterventionActivity when intervention completes
+   * 
+   * When intervention state transitions to 'idle', explicitly finishes
+   * InterventionActivity so user returns to previously opened app without
+   * MainActivity being resumed.
+   */
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !AppMonitorModule) {
+      return;
+    }
+
+    if (state === 'idle' && previousStateRef.current !== 'idle' && previousStateRef.current !== state) {
+      if (__DEV__) {
+        console.log('[F3.5] Intervention complete (state → idle), finishing InterventionActivity');
+      }
+      
+      AppMonitorModule.finishInterventionActivity();
+    }
+  }, [state]);
+
+  /**
+   * Navigation based on intervention state
+   * (Existing logic from pre-F3.5)
+   */
   useEffect(() => {
     if (!navigationRef.current?.isReady()) {
       return;
