@@ -1,10 +1,13 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '@/app/navigation/RootNavigator';
+import { setIntentionTimer, onInterventionCompleted } from '@/src/os/osTriggerBrain';
+
+const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
 /**
  * IntentionTimerScreen
@@ -47,17 +50,48 @@ export default function IntentionTimerScreen() {
 
   // Handle duration selection - starts timer immediately
   const handleSelectDuration = (durationMinutes: number) => {
-    // Calculate timestamp when intention timer expires
-    const intentionTimerUntil = Date.now() + durationMinutes * 60 * 1000;
+    const currentTimestamp = Date.now();
+    const durationMs = durationMinutes * 60 * 1000;
 
-    // Dispatch action to set intention timer and reset intervention
-    dispatchIntervention({
-      type: 'SET_INTENTION_TIMER',
-      intentionTimerUntil,
+    console.log('[IntentionTimer] User selected duration:', {
+      durationMinutes,
+      targetApp: interventionState.targetApp,
+      currentTimestamp,
+      expiresAt: currentTimestamp + durationMs,
     });
 
-    // Navigate back to main app (intervention is now idle)
-    navigation.navigate('MainTabs');
+    // Set intention timer in OS Trigger Brain for the target app
+    if (interventionState.targetApp) {
+      const expiresAt = currentTimestamp + durationMs;
+      
+      setIntentionTimer(interventionState.targetApp, durationMs, currentTimestamp);
+      
+      // Store timer in native SharedPreferences so ForegroundDetectionService can check it
+      if (AppMonitorModule) {
+        AppMonitorModule.storeIntentionTimer(interventionState.targetApp, expiresAt);
+        console.log('[IntentionTimer] Stored intention timer in native SharedPreferences');
+      }
+      
+      // Mark intervention as completed so future expirations can trigger new interventions
+      onInterventionCompleted(interventionState.targetApp);
+      
+      console.log('[IntentionTimer] Timer set and intervention marked complete');
+    }
+
+    // Dispatch action to reset intervention state to idle
+    // This will trigger navigation handler to finish InterventionActivity
+    // and release user back to the monitored app
+    console.log('[IntentionTimer] Dispatching SET_INTENTION_TIMER to reset state to idle');
+    console.log('[IntentionTimer] Current intervention state before dispatch:', {
+      state: interventionState.state,
+      targetApp: interventionState.targetApp,
+    });
+    
+    dispatchIntervention({
+      type: 'SET_INTENTION_TIMER',
+    });
+    
+    console.log('[IntentionTimer] SET_INTENTION_TIMER dispatched');
   };
 
   // Handle "Just 1 min" - starts immediately

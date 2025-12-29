@@ -155,7 +155,7 @@ export default function AlternativesScreen() {
 
   // Handle "Ignore & Continue" - navigate to IntentionTimer (changed behavior for A2)
   const handleIgnoreAndContinue = () => {
-    navigation.navigate('IntentionTimer');
+    dispatchIntervention({ type: 'PROCEED_TO_TIMER' });
   };
 
   // Handle "Add your own idea" - dispatches action to create custom alternative

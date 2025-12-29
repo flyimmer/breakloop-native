@@ -3,6 +3,8 @@ package com.anonymous.breakloopnative
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 
@@ -74,6 +76,22 @@ class ForegroundDetectionService : AccessibilityService() {
      * Used to avoid duplicate logging of the same app
      */
     private var lastPackageName: String? = null
+    
+    /**
+     * Handler for periodic timer expiration checks
+     */
+    private val handler = Handler(Looper.getMainLooper())
+    
+    /**
+     * Runnable for checking timer expirations periodically
+     */
+    private val timerCheckRunnable = object : Runnable {
+        override fun run() {
+            checkIntentionTimerExpirations()
+            // Schedule next check in 5 seconds
+            handler.postDelayed(this, 5000)
+        }
+    }
 
     /**
      * Called when the service is connected and ready
@@ -107,6 +125,10 @@ class ForegroundDetectionService : AccessibilityService() {
         serviceInfo = info
         
         Log.d(TAG, "Service configuration applied - listening for window state changes")
+        
+        // Start periodic timer expiration checks
+        handler.post(timerCheckRunnable)
+        Log.d(TAG, "Started periodic intention timer expiration checks (every 5 seconds)")
     }
 
     /**
@@ -173,6 +195,46 @@ class ForegroundDetectionService : AccessibilityService() {
     }
     
     /**
+     * Check if there's a valid intention timer for the given app
+     * 
+     * Intention timers are stored in SharedPreferences by the JS layer
+     * Format: "intention_timer_{packageName}" -> expiration timestamp (Long)
+     * 
+     * @param packageName Package name to check
+     * @return true if valid timer exists (not expired), false otherwise
+     */
+    private fun hasValidIntentionTimer(packageName: String): Boolean {
+        try {
+            val prefs = getSharedPreferences("intention_timers", MODE_PRIVATE)
+            val key = "intention_timer_$packageName"
+            val expiresAt = prefs.getLong(key, 0L)
+            
+            if (expiresAt == 0L) {
+                // No timer set
+                return false
+            }
+            
+            val now = System.currentTimeMillis()
+            val isValid = now <= expiresAt
+            
+            if (isValid) {
+                val remainingSec = (expiresAt - now) / 1000
+                Log.i(TAG, "✅ Valid intention timer exists for $packageName (${remainingSec}s remaining)")
+            } else {
+                Log.d(TAG, "⏰ Intention timer expired for $packageName")
+                // Clean up expired timer
+                prefs.edit().remove(key).apply()
+            }
+            
+            return isValid
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error checking intention timer", e)
+            return false
+        }
+    }
+    
+    /**
      * Launch InterventionActivity to show intervention UI
      * 
      * INTENT FLAGS EXPLAINED:
@@ -198,8 +260,15 @@ class ForegroundDetectionService : AccessibilityService() {
      * - User sees ONLY intervention UI, not main app
      * 
      * @param triggeringApp Package name of the app that triggered intervention
+     * @param skipTimerCheck If true, skip the intention timer check (used when timer already expired)
      */
-    private fun launchInterventionActivity(triggeringApp: String) {
+    private fun launchInterventionActivity(triggeringApp: String, skipTimerCheck: Boolean = false) {
+        // Check if there's a valid intention timer first (unless we're called from timer expiration check)
+        if (!skipTimerCheck && hasValidIntentionTimer(triggeringApp)) {
+            Log.i(TAG, "⏭️ Skipping intervention - valid intention timer exists for $triggeringApp")
+            return
+        }
+        
         Log.i(TAG, "[Accessibility] Launching InterventionActivity for $triggeringApp")
         
         try {
@@ -233,10 +302,51 @@ class ForegroundDetectionService : AccessibilityService() {
      * Called when the service is disconnected
      * This happens when user disables the service in Settings
      */
+    /**
+     * Check if any intention timers have expired and trigger interventions
+     * 
+     * This runs periodically (every 5 seconds) to catch timer expirations
+     * even when the React Native app is backgrounded (JS timers don't fire reliably)
+     */
+    private fun checkIntentionTimerExpirations() {
+        try {
+            val prefs = getSharedPreferences("intention_timers", MODE_PRIVATE)
+            val allPrefs = prefs.all
+            val now = System.currentTimeMillis()
+            
+            for ((key, value) in allPrefs) {
+                if (!key.startsWith("intention_timer_")) {
+                    continue
+                }
+                
+                val packageName = key.substring("intention_timer_".length)
+                val expiresAt = value as? Long ?: continue
+                
+                if (now > expiresAt) {
+                    val expiredSec = (now - expiresAt) / 1000
+                    Log.i(TAG, "⏰ Intention timer EXPIRED for $packageName (${expiredSec}s ago) — launching intervention")
+                    
+                    // Clear expired timer
+                    prefs.edit().remove(key).apply()
+                    
+                    // Launch intervention immediately
+                    launchInterventionActivity(packageName, skipTimerCheck = true)
+                }
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error checking intention timer expirations", e)
+        }
+    }
+    
     override fun onDestroy() {
         super.onDestroy()
         isServiceConnected = false
         lastPackageName = null
+        
+        // Stop periodic timer checks
+        handler.removeCallbacks(timerCheckRunnable)
+        
         Log.i(TAG, "❌ ForegroundDetectionService destroyed")
     }
 

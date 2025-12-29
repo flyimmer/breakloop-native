@@ -11,6 +11,8 @@ const { withAndroidManifest, withStringsXml, withDangerousMod } = require('@expo
  * PHASE F3.5 ADDITIONS:
  * - Copies InterventionActivity.kt (dedicated intervention UI activity)
  * - Copies AppMonitorModule.kt (with Phase F3.5 methods)
+ * - Copies AppMonitorPackage.kt (native module package registration)
+ * - Copies AppMonitorService.kt (service stub with React context)
  * - Merges styles.xml (adds Theme.Intervention)
  * - Registers InterventionActivity in AndroidManifest.xml
  * 
@@ -18,6 +20,8 @@ const { withAndroidManifest, withStringsXml, withDangerousMod } = require('@expo
  * 1. Copies ForegroundDetectionService.kt to the correct Android directory
  * 2. Copies InterventionActivity.kt (Phase F3.5)
  * 3. Copies AppMonitorModule.kt (Phase F3.5)
+ * 4. Copies AppMonitorPackage.kt (native module package)
+ * 5. Copies AppMonitorService.kt (service stub)
  * 4. Adds BIND_ACCESSIBILITY_SERVICE permission to AndroidManifest.xml
  * 5. Registers the AccessibilityService in AndroidManifest.xml
  * 6. Registers InterventionActivity in AndroidManifest.xml (Phase F3.5)
@@ -47,6 +51,8 @@ function getSourcePaths(projectRoot) {
     foregroundService: path.join(javaPath, 'ForegroundDetectionService.kt'),
     interventionActivity: path.join(javaPath, 'InterventionActivity.kt'),
     appMonitorModule: path.join(javaPath, 'AppMonitorModule.kt'),
+    appMonitorPackage: path.join(javaPath, 'AppMonitorPackage.kt'),
+    appMonitorService: path.join(javaPath, 'AppMonitorService.kt'),
     accessibilityXml: path.join(pluginSrcPath, 'res', 'xml', 'accessibility_service.xml'),
     stringsXml: path.join(pluginSrcPath, 'res', 'values', 'strings.xml'),
     stylesXml: path.join(pluginSrcPath, 'res', 'values', 'styles.xml'),
@@ -63,6 +69,8 @@ function getDestinationPaths(projectRoot) {
     foregroundService: path.join(javaPath, 'ForegroundDetectionService.kt'),
     interventionActivity: path.join(javaPath, 'InterventionActivity.kt'),
     appMonitorModule: path.join(javaPath, 'AppMonitorModule.kt'),
+    appMonitorPackage: path.join(javaPath, 'AppMonitorPackage.kt'),
+    appMonitorService: path.join(javaPath, 'AppMonitorService.kt'),
     accessibilityXml: path.join(androidMainPath, 'res', 'xml', 'accessibility_service.xml'),
   };
 }
@@ -102,6 +110,22 @@ function copyKotlinFiles(projectRoot) {
     console.log(`[${PLUGIN_NAME}] Copied AppMonitorModule.kt`);
   } else {
     throw new Error(`[${PLUGIN_NAME}] Source file not found: ${sourcePaths.appMonitorModule}`);
+  }
+  
+  // Copy AppMonitorPackage.kt
+  if (fs.existsSync(sourcePaths.appMonitorPackage)) {
+    fs.copyFileSync(sourcePaths.appMonitorPackage, destPaths.appMonitorPackage);
+    console.log(`[${PLUGIN_NAME}] Copied AppMonitorPackage.kt`);
+  } else {
+    console.warn(`[${PLUGIN_NAME}] AppMonitorPackage.kt not found, skipping (optional)`);
+  }
+  
+  // Copy AppMonitorService.kt
+  if (fs.existsSync(sourcePaths.appMonitorService)) {
+    fs.copyFileSync(sourcePaths.appMonitorService, destPaths.appMonitorService);
+    console.log(`[${PLUGIN_NAME}] Copied AppMonitorService.kt`);
+  } else {
+    console.warn(`[${PLUGIN_NAME}] AppMonitorService.kt not found, skipping (optional)`);
   }
 }
 

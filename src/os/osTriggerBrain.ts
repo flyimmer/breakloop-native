@@ -7,7 +7,7 @@
  * 
  * Key Contract Rules:
  * - t_appSwitchInterval determines when a new conscious decision is required
- * - t_monitored (intention timer) remains valid across brief exits
+ * - t_intention (intention timer) remains valid across brief exits
  * - Intention timers are overwritten ONLY when new intervention is triggered
  * - Expired intention triggers intervention (immediately if foreground, or on next entry)
  * 
@@ -101,7 +101,7 @@ const lastExitTimestamps: Map<string, number> = new Map();
 const lastMeaningfulExitTimestamps: Map<string, number> = new Map();
 
 /**
- * Per-app intention timers (t_monitored).
+ * Per-app intention timers (t_intention).
  * Maps packageName -> { expiresAt: timestamp }
  * 
  * Contract rules:
@@ -135,10 +135,14 @@ let interventionDispatcher: ((action: any) => void) | null = null;
  * @param timestamp - Current timestamp
  */
 function triggerIntervention(packageName: string, timestamp: number): void {
-  // Check if intervention already in progress for THIS SPECIFIC app
+  // ALWAYS clear any previous intervention for this app when triggering new one
+  // This handles the case where user abandoned intervention and is returning
   if (interventionsInProgress.has(packageName)) {
-    // Silent - no log spam for repeated checks
-    return;
+    console.log('[OS Trigger Brain] Clearing abandoned intervention for same app', {
+      packageName,
+      reason: 'User returned after abandoning intervention',
+    });
+    interventionsInProgress.delete(packageName);
   }
 
   // If there's an intervention in progress for a DIFFERENT app, clear it
@@ -320,19 +324,31 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
       console.log('[OS Trigger Brain] Monitored app entered foreground:', {
         packageName,
         timestamp,
+        time: new Date(timestamp).toISOString(),
       });
-
-      // FOR TESTING: Auto-set a 2-minute intention timer on first entry if none exists
-      // TODO: Remove this when real intervention flow is wired
-      if (!intentionTimers.has(packageName)) {
-        const testDuration = 2 * 60 * 1000; // 2 minutes
-        setIntentionTimer(packageName, testDuration, timestamp);
-        console.log('[OS Trigger Brain] DEBUG: Auto-set test intention timer (2 min)');
-      }
     }
 
-    // ALWAYS check if intention timer has expired (even on heartbeat events)
+    // ALWAYS check if intention timer exists and its status (even on heartbeat events)
     const intentionTimer = intentionTimers.get(packageName);
+    
+    // Debug: Log timer status (always log on entry, not just first time)
+    if (intentionTimer) {
+      console.log('[OS Trigger Brain] Timer status check:', {
+        packageName,
+        hasTimer: true,
+        expiresAt: intentionTimer.expiresAt,
+        currentTimestamp: timestamp,
+        expired: timestamp > intentionTimer.expiresAt,
+        remainingMs: intentionTimer.expiresAt - timestamp,
+      });
+    } else {
+      console.log('[OS Trigger Brain] Timer status check:', {
+        packageName,
+        hasTimer: false,
+      });
+    }
+    
+    // If timer expired, trigger intervention
     if (intentionTimer && timestamp > intentionTimer.expiresAt) {
       const expiredSec = Math.round((timestamp - intentionTimer.expiresAt) / 1000);
       console.log('[OS Trigger Brain] Intention timer expired — intervention required', {
@@ -349,6 +365,25 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
       triggerIntervention(packageName, timestamp);
       
       // Update tracking and return
+      lastForegroundApp = packageName;
+      lastMeaningfulApp = packageName;
+      return;
+    }
+    
+    // If timer exists and is still valid, allow app usage without intervention
+    if (intentionTimer && timestamp <= intentionTimer.expiresAt) {
+      const remainingSec = Math.round((intentionTimer.expiresAt - timestamp) / 1000);
+      console.log('[OS Trigger Brain] Valid intention timer exists — allowing app usage', {
+        packageName,
+        expiresAt: intentionTimer.expiresAt,
+        expiresAtTime: new Date(intentionTimer.expiresAt).toISOString(),
+        currentTimestamp: timestamp,
+        currentTime: new Date(timestamp).toISOString(),
+        remainingMs: intentionTimer.expiresAt - timestamp,
+        remainingSec: `${remainingSec}s remaining`,
+      });
+      
+      // Update tracking and return (no intervention)
       lastForegroundApp = packageName;
       lastMeaningfulApp = packageName;
       return;
@@ -430,7 +465,7 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
     }
   } else {
     // Non-monitored app in foreground - but we still need to check ALL monitored app timers
-    // because per spec: "t_monitored counts down independently of which app is in foreground"
+    // because per spec: "t_intention counts down independently of which app is in foreground"
     for (const [monitoredPkg, timer] of intentionTimers.entries()) {
       if (timestamp > timer.expiresAt) {
         console.log('[OS Trigger Brain] Monitored app timer expired (not in foreground) — intervention on next entry', {
@@ -478,7 +513,7 @@ export function getCurrentMeaningfulApp(): string | null {
  * Set intention timer for an app (called after user completes intervention).
  * 
  * @param packageName - App package name
- * @param durationMs - Duration in milliseconds (t_monitored)
+ * @param durationMs - Duration in milliseconds (t_intention)
  * @param currentTimestamp - Current timestamp
  */
 export function setIntentionTimer(packageName: string, durationMs: number, currentTimestamp: number): void {
@@ -509,41 +544,62 @@ export function getIntentionTimer(packageName: string): { expiresAt: number } | 
  * @param currentTimestamp - Current timestamp
  */
 export function checkForegroundIntentionExpiration(currentTimestamp: number): void {
-  // Silent check - only log if something important happens
+  // Check ALL monitored apps with active intention timers
+  // This works even if we don't have recent foreground events (due to Android task switching quirks)
   
-  if (lastMeaningfulApp === null) {
-    return;
-  }
-
-  // Only check if the foreground app is monitored
-  if (!isMonitoredApp(lastMeaningfulApp)) {
-    // Check ALL monitored apps with timers instead
-    for (const [packageName, timer] of intentionTimers.entries()) {
-      if (isMonitoredApp(packageName) && currentTimestamp > timer.expiresAt) {
-        console.log('[OS Trigger Brain] Monitored app timer expired (not in foreground) — intervention on next entry', {
-          packageName,
-          expiresAt: timer.expiresAt,
-          currentTimestamp,
-          expiredMs: currentTimestamp - timer.expiresAt,
-        });
-      }
-    }
-    return;
-  }
-
-  const timer = intentionTimers.get(lastMeaningfulApp);
-  if (!timer) {
-    return;
-  }
-
-  if (currentTimestamp > timer.expiresAt) {
-    console.log('[OS Trigger Brain] Intention expired while app in foreground — intervention required', {
-      packageName: lastMeaningfulApp,
-      expiresAt: timer.expiresAt,
+  // Debug: Always log that the check is running
+  if (__DEV__ && intentionTimers.size > 0) {
+    console.log('[OS Trigger Brain] Periodic timer check running', {
       currentTimestamp,
-      expiredMs: currentTimestamp - timer.expiresAt,
+      currentTime: new Date(currentTimestamp).toISOString(),
+      activeTimers: intentionTimers.size,
     });
-    // TODO Step 5F: Trigger intervention (BEGIN_INTERVENTION)
+  }
+  
+  for (const [packageName, timer] of intentionTimers.entries()) {
+    if (!isMonitoredApp(packageName)) {
+      continue;
+    }
+    
+    // Debug: Log each timer being checked
+    if (__DEV__) {
+      const remainingMs = timer.expiresAt - currentTimestamp;
+      const remainingSec = Math.round(remainingMs / 1000);
+      console.log('[OS Trigger Brain] Checking timer for', {
+        packageName,
+        expiresAt: timer.expiresAt,
+        expiresAtTime: new Date(timer.expiresAt).toISOString(),
+        currentTimestamp,
+        currentTime: new Date(currentTimestamp).toISOString(),
+        remainingMs,
+        remainingSec: `${remainingSec}s`,
+        expired: currentTimestamp > timer.expiresAt,
+      });
+    }
+    
+    if (currentTimestamp > timer.expiresAt) {
+      const expiredMs = currentTimestamp - timer.expiresAt;
+      const expiredSec = Math.round(expiredMs / 1000);
+      
+      console.log('[OS Trigger Brain] Intention timer expired — triggering intervention', {
+        packageName,
+        expiresAt: timer.expiresAt,
+        expiresAtTime: new Date(timer.expiresAt).toISOString(),
+        currentTimestamp,
+        currentTime: new Date(currentTimestamp).toISOString(),
+        expiredMs,
+        expiredSec: `${expiredSec}s`,
+        assumption: 'User likely still on this app (timer was active)',
+      });
+      
+      // Clear the expired timer
+      intentionTimers.delete(packageName);
+      
+      // Trigger intervention (Step 5F)
+      // If user is still on this app, InterventionActivity will show immediately
+      // If user switched away, intervention will trigger on next entry
+      triggerIntervention(packageName, currentTimestamp);
+    }
   }
 }
 

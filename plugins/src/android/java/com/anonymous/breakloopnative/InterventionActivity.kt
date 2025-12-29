@@ -94,9 +94,8 @@ class InterventionActivity : ReactActivity() {
      * launches it again (e.g., user opens another monitored app), this method
      * is called instead of onCreate().
      * 
-     * We update the Intent so getInitialTriggeringApp() can read the new trigger.
-     * 
-     * Fixed: Changed parameter from Intent? to Intent (non-nullable)
+     * We update the Intent and send an event to React Native to trigger
+     * a new intervention for the new app.
      */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -104,6 +103,27 @@ class InterventionActivity : ReactActivity() {
         
         intent.getStringExtra(EXTRA_TRIGGERING_APP)?.let { triggeringApp ->
             Log.i(TAG, "🔄 onNewIntent - New trigger: $triggeringApp")
+            
+            // Send event to React Native to trigger new intervention
+            val reactContext = AppMonitorService.getReactContext()
+            if (reactContext != null && reactContext.hasActiveReactInstance()) {
+                try {
+                    val params = com.facebook.react.bridge.Arguments.createMap().apply {
+                        putString("packageName", triggeringApp)
+                        putDouble("timestamp", System.currentTimeMillis().toDouble())
+                    }
+                    
+                    reactContext
+                        .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                        .emit("onNewInterventionTrigger", params)
+                    
+                    Log.i(TAG, "  └─ Sent onNewInterventionTrigger event to React Native")
+                } catch (e: Exception) {
+                    Log.e(TAG, "  └─ Failed to send event to React Native", e)
+                }
+            } else {
+                Log.w(TAG, "  └─ React context not available, cannot notify React Native")
+            }
         }
     }
 

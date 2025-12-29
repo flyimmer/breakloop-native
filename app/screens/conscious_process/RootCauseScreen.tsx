@@ -63,7 +63,7 @@ export default function RootCauseScreen() {
 
   // Navigate to intention timer (user chose "I really need to use it")
   const handleNeedToUseIt = () => {
-    navigation.navigate('IntentionTimer');
+    dispatchIntervention({ type: 'PROCEED_TO_TIMER' });
   };
 
   // Cancel intervention and return to idle

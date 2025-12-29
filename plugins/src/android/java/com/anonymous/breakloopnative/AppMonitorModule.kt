@@ -156,6 +156,55 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             android.util.Log.e("AppMonitorModule", "Failed to finish InterventionActivity", e)
         }
     }
+
+    /**
+     * Store intention timer in SharedPreferences
+     * This allows ForegroundDetectionService to check if intervention should be skipped
+     * 
+     * @param packageName Package name of the app (e.g., "com.instagram.android")
+     * @param expiresAt Timestamp when timer expires (milliseconds since epoch)
+     */
+    @ReactMethod
+    fun storeIntentionTimer(packageName: String, expiresAt: Double) {
+        try {
+            val prefs = reactApplicationContext.getSharedPreferences("intention_timers", android.content.Context.MODE_PRIVATE)
+            val key = "intention_timer_$packageName"
+            val expiresAtLong = expiresAt.toLong()
+            
+            prefs.edit().putLong(key, expiresAtLong).apply()
+            
+            val remainingSec = (expiresAtLong - System.currentTimeMillis()) / 1000
+            android.util.Log.i("AppMonitorModule", "Stored intention timer for $packageName (expires in ${remainingSec}s)")
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to store intention timer", e)
+        }
+    }
+    
+    /**
+     * Launch a specific app by package name
+     * Used to return user to monitored app after intervention completes
+     * 
+     * @param packageName Package name of the app to launch (e.g., "com.instagram.android")
+     */
+    @ReactMethod
+    fun launchApp(packageName: String) {
+        try {
+            val packageManager = reactApplicationContext.packageManager
+            val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+            
+            if (launchIntent != null) {
+                android.util.Log.i("AppMonitorModule", "Launching app: $packageName")
+                // Clear task flags to ensure the app comes to foreground properly
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                reactApplicationContext.startActivity(launchIntent)
+                android.util.Log.i("AppMonitorModule", "Launch intent sent for: $packageName")
+            } else {
+                android.util.Log.w("AppMonitorModule", "Cannot launch app: $packageName (no launch intent found)")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to launch app: $packageName", e)
+        }
+    }
     
     override fun invalidate() {
         super.invalidate()

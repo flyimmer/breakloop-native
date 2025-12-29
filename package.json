@@ -5,10 +5,13 @@
   "scripts": {
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
-    "android": "expo run:android",
+    "android": "npm run validate:kotlin && expo run:android",
+    "android:direct": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "validate:kotlin": "node scripts/validate-kotlin-plugin.js",
+    "prebuild": "npm run validate:kotlin && expo prebuild"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

@@ -15,7 +15,8 @@ import {
   handleForegroundAppChange, 
   checkForegroundIntentionExpiration,
   checkBackgroundIntentionExpiration,
-  setInterventionDispatcher 
+  setInterventionDispatcher,
+  getIntentionTimer
 } from '@/src/os/osTriggerBrain';
 import { isMonitoredApp, getInterventionDurationSec } from '@/src/os/osConfig';
 
@@ -64,6 +65,19 @@ function InterventionNavigationHandler() {
     AppMonitorModule.getInitialTriggeringApp()
       .then((triggeringApp: string | null) => {
         if (triggeringApp && isMonitoredApp(triggeringApp)) {
+          // Check if a valid intention timer exists before triggering intervention
+          const intentionTimer = getIntentionTimer(triggeringApp);
+          const now = Date.now();
+          
+          if (intentionTimer && now <= intentionTimer.expiresAt) {
+            // Valid timer exists - don't trigger intervention
+            const remainingSec = Math.round((intentionTimer.expiresAt - now) / 1000);
+            if (__DEV__) {
+              console.log(`[F3.5] Triggering app ${triggeringApp} has valid intention timer (${remainingSec}s remaining), skipping intervention`);
+            }
+            return;
+          }
+          
           if (__DEV__) {
             console.log(`[F3.5] Triggering app received: ${triggeringApp}`);
             console.log('[F3.5] Dispatching BEGIN_INTERVENTION');
@@ -87,22 +101,46 @@ function InterventionNavigationHandler() {
    * PHASE F3.5 - Fix #4: Finish InterventionActivity when intervention completes
    * 
    * When intervention state transitions to 'idle', explicitly finishes
-   * InterventionActivity so user returns to previously opened app without
-   * MainActivity being resumed.
+   * InterventionActivity and launches the monitored app to return user to it.
+   * 
+   * IMPORTANT: We use previousTargetAppRef to get the target app because
+   * the intervention reducer clears targetApp when transitioning to idle.
    */
   useEffect(() => {
+    console.log('[F3.5 Debug] useEffect triggered:', {
+      state,
+      previousState: previousStateRef.current,
+      targetApp,
+      previousTargetApp: previousTargetAppRef.current,
+      isAndroid: Platform.OS === 'android',
+      hasModule: !!AppMonitorModule,
+    });
+
     if (Platform.OS !== 'android' || !AppMonitorModule) {
       return;
     }
 
     if (state === 'idle' && previousStateRef.current !== 'idle' && previousStateRef.current !== state) {
-      if (__DEV__) {
-        console.log('[F3.5] Intervention complete (state → idle), finishing InterventionActivity');
-      }
+      console.log('[F3.5] Intervention complete (state → idle)');
       
-      AppMonitorModule.finishInterventionActivity();
+      // Use previousTargetAppRef because targetApp is cleared when state becomes idle
+      const appToLaunch = previousTargetAppRef.current;
+      
+      console.log('[F3.5] App to launch:', appToLaunch);
+      
+      // Just finish the InterventionActivity immediately
+      // Android should naturally return to the previously opened app (Instagram/TikTok)
+      console.log('[F3.5] Intervention complete, finishing InterventionActivity');
+      console.log('[F3.5] Target app was:', appToLaunch);
+      
+      try {
+        AppMonitorModule.finishInterventionActivity();
+        console.log('[F3.5] finishInterventionActivity called successfully');
+      } catch (error) {
+        console.error('[F3.5] finishInterventionActivity threw error:', error);
+      }
     }
-  }, [state]);
+  }, [state, targetApp]);
 
   /**
    * Navigation based on intervention state
@@ -147,6 +185,8 @@ function InterventionNavigationHandler() {
       navigationRef.current.navigate('RootCause');
     } else if (state === 'alternatives') {
       navigationRef.current.navigate('Alternatives');
+    } else if (state === 'timer') {
+      navigationRef.current.navigate('IntentionTimer');
     } else if (state === 'action') {
       navigationRef.current.navigate('ActionConfirmation');
     } else if (state === 'action_timer') {
@@ -154,10 +194,12 @@ function InterventionNavigationHandler() {
     } else if (state === 'reflection') {
       navigationRef.current.navigate('Reflection');
     } else if (state === 'idle') {
-      navigationRef.current.reset({
-        index: 0,
-        routes: [{ name: 'MainTabs' }],
-      });
+      // Don't navigate to MainTabs - just let InterventionActivity finish
+      // The finishInterventionActivity() call in the other useEffect will handle closing
+      // If we're in MainActivity (not InterventionActivity), this will do nothing
+      if (__DEV__) {
+        console.log('[Navigation] State is idle - InterventionActivity will finish via separate useEffect');
+      }
     }
   }, [state, targetApp]);
 
@@ -230,10 +272,26 @@ const App = () => {
       }
     );
 
+    // Listen for new intervention triggers when InterventionActivity gets new intent
+    const newTriggerSubscription = emitter.addListener(
+      'onNewInterventionTrigger',
+      (event: { packageName: string; timestamp: number }) => {
+        if (__DEV__) {
+          console.log('[OS] New intervention trigger received:', event.packageName);
+        }
+        // Pass to OS Trigger Brain to handle intervention
+        handleForegroundAppChange({
+          packageName: event.packageName,
+          timestamp: event.timestamp,
+        });
+      }
+    );
+
     return () => {
-      // Only remove the event listener
+      // Only remove the event listeners
       // DO NOT stop the monitoring service - it must run independently
       subscription.remove();
+      newTriggerSubscription.remove();
       
       // The monitoring service continues running even when React Native app is closed
       // This is required for intervention system to work correctly

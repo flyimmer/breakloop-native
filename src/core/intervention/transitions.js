@@ -151,6 +151,19 @@ export const interventionReducer = (context, action) => {
         selectedAlternative: null,
       };
 
+    case 'SET_INTENTION_TIMER':
+      // User selected intention timer duration - reset to idle and release app
+      // The OS Trigger Brain will handle setting the actual timer
+      return {
+        ...context,
+        state: 'idle',
+        targetApp: null,
+        breathingCount: 0,
+        selectedCauses: [],
+        selectedAlternative: null,
+        actionTimer: 0,
+      };
+
     case 'RESET_INTERVENTION':
       return {
         ...context,
