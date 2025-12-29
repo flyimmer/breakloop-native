@@ -112,6 +112,8 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
      * Returns the package name of the monitored app that triggered the intervention,
      * or null if not launched from InterventionActivity or no trigger info available.
      * 
+     * Fixed: Use reactApplicationContext.currentActivity instead of currentActivity
+     * 
      * @param promise Resolves with triggering app package name (String) or null
      */
     @ReactMethod

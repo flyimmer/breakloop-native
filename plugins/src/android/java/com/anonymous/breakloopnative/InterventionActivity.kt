@@ -95,6 +95,8 @@ class InterventionActivity : ReactActivity() {
      * is called instead of onCreate().
      * 
      * We update the Intent so getInitialTriggeringApp() can read the new trigger.
+     * 
+     * Fixed: Changed parameter from Intent? to Intent (non-nullable)
      */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
