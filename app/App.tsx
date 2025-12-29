@@ -14,7 +14,8 @@ import RootNavigator from './navigation/RootNavigator';
 import { 
   handleForegroundAppChange, 
   checkForegroundIntentionExpiration,
-  checkBackgroundIntentionExpiration 
+  checkBackgroundIntentionExpiration,
+  setInterventionDispatcher 
 } from '@/src/os/osTriggerBrain';
 import { isMonitoredApp, getInterventionDurationSec } from '@/src/os/osConfig';
 
@@ -31,9 +32,18 @@ function InterventionNavigationHandler() {
   const navigationRef = useRef<NavigationContainerRef<any>>(null);
   const colorScheme = useColorScheme();
   const { interventionState, dispatchIntervention } = useIntervention();
-  const { state } = interventionState;
+  const { state, targetApp } = interventionState;
   const previousStateRef = useRef<string>(state);
+  const previousTargetAppRef = useRef<any>(targetApp);
   const hasCheckedInitialTrigger = useRef<boolean>(false);
+
+  /**
+   * Connect OS Trigger Brain to React intervention system
+   * This must run ONCE on mount to wire up the dispatcher.
+   */
+  useEffect(() => {
+    setInterventionDispatcher(dispatchIntervention);
+  }, [dispatchIntervention]);
 
   /**
    * PHASE F3.5 - Fix #3: Check for initial triggering app
@@ -96,19 +106,41 @@ function InterventionNavigationHandler() {
 
   /**
    * Navigation based on intervention state
-   * (Existing logic from pre-F3.5)
+   * 
+   * IMPORTANT: Also watches targetApp to detect app switches.
+   * When targetApp changes (user switches from Instagram to TikTok during intervention),
+   * we force navigation to Breathing screen even if state is already 'breathing'.
    */
   useEffect(() => {
     if (!navigationRef.current?.isReady()) {
       return;
     }
 
-    if (state === previousStateRef.current) {
+    const stateChanged = state !== previousStateRef.current;
+    const appChanged = targetApp !== previousTargetAppRef.current;
+
+    // If neither state nor app changed, do nothing
+    if (!stateChanged && !appChanged) {
       return;
     }
 
+    // Update refs
     previousStateRef.current = state;
+    previousTargetAppRef.current = targetApp;
 
+    // If app changed and we're in breathing state, force navigate to Breathing
+    // This handles the case where user switches apps during intervention
+    if (appChanged && state === 'breathing') {
+      if (__DEV__) {
+        console.log('[Navigation] App switch detected, forcing navigation to Breathing screen', {
+          newApp: targetApp,
+        });
+      }
+      navigationRef.current.navigate('Breathing');
+      return;
+    }
+
+    // Normal state-based navigation
     if (state === 'breathing') {
       navigationRef.current.navigate('Breathing');
     } else if (state === 'root-cause') {
@@ -127,7 +159,7 @@ function InterventionNavigationHandler() {
         routes: [{ name: 'MainTabs' }],
       });
     }
-  }, [state]);
+  }, [state, targetApp]);
 
   return (
     <NavigationContainer

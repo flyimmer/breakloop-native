@@ -7,6 +7,12 @@
 
 /**
  * Main reducer function for intervention state transitions
+ * 
+ * IMPORTANT: Each app gets its own independent intervention flow.
+ * When BEGIN_INTERVENTION is dispatched for a different app while an intervention
+ * is already active, the old intervention is abandoned and a new one starts.
+ * This prevents intervention state from mixing between apps.
+ * 
  * @param {Object} context - Current intervention context
  * @param {Object} action - Action object with type and payload
  * @returns {Object} New intervention context
@@ -14,6 +20,10 @@
 export const interventionReducer = (context, action) => {
   switch (action.type) {
     case 'BEGIN_INTERVENTION':
+      // If intervention is already active for a DIFFERENT app, reset and start fresh
+      // This ensures each app gets its own independent intervention flow
+      const isDifferentApp = context.targetApp && context.targetApp !== action.app;
+      
       return {
         ...context,
         state: 'breathing',

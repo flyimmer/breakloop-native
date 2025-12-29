@@ -20,7 +20,7 @@
  * - Easier to maintain launcher list in JS than in multiple native platforms
  */
 
-import { getAppSwitchIntervalMs, isMonitoredApp } from './osConfig';
+import { getAppSwitchIntervalMs, isMonitoredApp, getInterventionDurationSec } from './osConfig';
 
 // ============================================================================
 // Launcher Filtering
@@ -118,20 +118,41 @@ const intentionTimers: Map<string, { expiresAt: number }> = new Map();
 const interventionsInProgress: Set<string> = new Set();
 
 /**
+ * Dispatch function for triggering interventions in React layer.
+ * Set by setInterventionDispatcher() from App.tsx.
+ */
+let interventionDispatcher: ((action: any) => void) | null = null;
+
+/**
  * Trigger intervention for a monitored app (Step 5F).
  * Dispatches exactly ONE intervention and prevents repeated triggers.
+ * 
+ * IMPORTANT: Each app gets its own independent intervention flow.
+ * If user switches apps during an active intervention, the old intervention
+ * is abandoned and a new one starts for the new app.
  * 
  * @param packageName - App package name requiring intervention
  * @param timestamp - Current timestamp
  */
 function triggerIntervention(packageName: string, timestamp: number): void {
-  // Check if intervention already in progress for this app
+  // Check if intervention already in progress for THIS SPECIFIC app
   if (interventionsInProgress.has(packageName)) {
     // Silent - no log spam for repeated checks
     return;
   }
 
-  // Mark intervention as in-progress
+  // If there's an intervention in progress for a DIFFERENT app, clear it
+  // This ensures each app gets its own independent intervention
+  if (interventionsInProgress.size > 0) {
+    const oldApps = Array.from(interventionsInProgress);
+    interventionsInProgress.clear();
+    console.log('[OS Trigger Brain] Clearing previous intervention(s) for app switch', {
+      oldApps,
+      newApp: packageName,
+    });
+  }
+
+  // Mark intervention as in-progress for this app
   interventionsInProgress.add(packageName);
 
   // Reset/overwrite intention timer for this app (will be set again after intervention completes)
@@ -143,8 +164,29 @@ function triggerIntervention(packageName: string, timestamp: number): void {
     time: new Date(timestamp).toISOString(),
   });
 
-  // TODO Step 5G: Dispatch to intervention state machine
-  // dispatchIntervention({ type: 'BEGIN_INTERVENTION', appPackageName: packageName });
+  // Dispatch to intervention state machine (React layer)
+  if (interventionDispatcher) {
+    interventionDispatcher({
+      type: 'BEGIN_INTERVENTION',
+      app: packageName,
+      breathingDuration: getInterventionDurationSec(),
+    });
+  } else {
+    console.warn('[OS Trigger Brain] No intervention dispatcher set - intervention not triggered');
+  }
+}
+
+/**
+ * Set the intervention dispatcher function.
+ * This connects the OS Trigger Brain to the React intervention state machine.
+ * 
+ * MUST be called from App.tsx on mount to wire up the intervention system.
+ * 
+ * @param dispatcher - Function to dispatch intervention actions
+ */
+export function setInterventionDispatcher(dispatcher: (action: any) => void): void {
+  interventionDispatcher = dispatcher;
+  console.log('[OS Trigger Brain] Intervention dispatcher connected');
 }
 
 /**

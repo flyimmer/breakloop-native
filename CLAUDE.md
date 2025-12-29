@@ -870,6 +870,39 @@ The codebase underwent incremental refactoring to improve maintainability while 
 - **Build verified** - compiles successfully
 - **Ready for React Native** - same logic can be reused
 
+**Phase 4 - App Switch Intervention Fix (December 29, 2025):**
+- Fixed issue where intervention state mixed between different monitored apps
+- Each app now gets its own independent intervention flow
+- Switching apps during intervention resets state and starts fresh
+
+**Problem Fixed:**
+- When switching from Instagram to TikTok during intervention, the old intervention state (root causes, selected alternatives) was carried over
+- Wrong app name displayed in intervention UI
+- Confusing user experience with mixed state
+
+**Solution:**
+- Updated `interventionReducer` to always reset state on `BEGIN_INTERVENTION`
+- Updated navigation handler to watch both `state` and `targetApp` for app switches
+- Updated `triggerIntervention()` in OS Trigger Brain to clear previous in-progress flags
+- Ensured only ONE app can have active intervention at a time
+
+**Files Modified:**
+- `src/core/intervention/transitions.js` - State reset logic on app switch
+- `app/App.tsx` - Navigation handler watches state AND targetApp
+- `src/os/osTriggerBrain.ts` - Clear previous interventions before starting new one
+
+**Documentation Created:**
+- `docs/APP_SWITCH_INTERVENTION_FIX.md` - Detailed fix documentation
+- `docs/APP_SWITCH_FIX_SUMMARY.md` - Quick summary
+- `docs/TEST_APP_SWITCH_INTERVENTION.md` - Complete test plan
+
+**Impact:**
+- ✅ Each monitored app gets independent intervention flow
+- ✅ No state mixing between apps
+- ✅ Correct app name displayed in UI
+- ✅ Navigation always resets to breathing screen on app switch
+- ✅ Clean user experience when switching apps
+
 
 ## React Native Implementation
 
