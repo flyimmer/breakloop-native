@@ -14,6 +14,7 @@ import ActionConfirmationScreen from '../screens/conscious_process/ActionConfirm
 import ActivityTimerScreen from '../screens/conscious_process/ActivityTimerScreen';
 import ReflectionScreen from '../screens/conscious_process/ReflectionScreen';
 import IntentionTimerScreen from '../screens/conscious_process/IntentionTimerScreen';
+import EditMonitoredAppsScreen from '../screens/mainAPP/Settings/EditMonitoredAppsScreen';
 
 export type RootStackParamList = {
   MainTabs: undefined;
@@ -24,6 +25,11 @@ export type RootStackParamList = {
   ActivityTimer: undefined;
   Reflection: undefined;
   IntentionTimer: undefined; // A2: Exit normalization screen
+  EditMonitoredApps: {
+    initialApps?: string[];
+    initialWebsites?: string[];
+    onSave?: (apps: string[], websites: string[]) => void;
+  };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -44,6 +50,13 @@ export default function RootNavigator() {
       <Stack.Screen name="ActivityTimer" component={ActivityTimerScreen} />
       <Stack.Screen name="Reflection" component={ReflectionScreen} />
       <Stack.Screen name="IntentionTimer" component={IntentionTimerScreen} />
+      <Stack.Screen
+        name="EditMonitoredApps"
+        component={EditMonitoredAppsScreen}
+        options={{
+          presentation: 'modal',
+        }}
+      />
     </Stack.Navigator>
   );
 }

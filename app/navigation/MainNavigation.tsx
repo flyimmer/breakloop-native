@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CommunityStackNavigator from './CommunityStackNavigator';
 import InboxScreen from '../screens/mainAPP/InboxScreen';
 import InsightsScreen from '../screens/mainAPP/InsightsScreen';
-import SettingsScreen from '../screens/mainAPP/SettingsScreen';
+import SettingsScreen from '../screens/mainAPP/Settings/SettingsScreen';
 
 const Tab = createBottomTabNavigator();
 

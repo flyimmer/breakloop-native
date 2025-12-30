@@ -1,6 +1,8 @@
 import * as ImagePicker from 'expo-image-picker';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Camera, Eye, LogOut, Shield, Sliders, Smartphone, User, Zap } from 'lucide-react-native';
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Alert,
   Image,
@@ -17,10 +19,20 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { completeInterventionDEV } from '@/src/os/osTriggerBrain';
+import { RootStackParamList } from '../../../navigation/RootNavigator';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
+// Module-level callback for EditMonitoredApps to pass data back
+// This is a simple workaround since React Navigation doesn't support function callbacks in params
+export let editAppsCallback: ((apps: string[], websites: string[]) => void) | null = null;
+
 const SettingsScreen = () => {
+  // Navigation
+  const navigation = useNavigation<NavigationProp>();
+  
   // Intervention context (for debug button)
   const { dispatchIntervention } = useIntervention();
 
@@ -64,8 +76,10 @@ const SettingsScreen = () => {
   const [shareRecentMood, setShareRecentMood] = useState(true);
   const [shareAlternativesList, setShareAlternativesList] = useState(true);
 
-  // Monitored apps (mock)
-  const monitoredApps = ['Instagram', 'TikTok'];
+  // Monitored apps and websites state
+  // Note: Stored as app names (e.g., 'Instagram', 'TikTok') for display compatibility
+  const [monitoredApps, setMonitoredApps] = useState<string[]>(['Instagram', 'TikTok']);
+  const [monitoredWebsites, setMonitoredWebsites] = useState<string[]>([]);
 
   // Profile state check (independent of authentication)
   const hasProfile = !!(userProfile.displayName || userProfile.aboutMe || userProfile.interests || userProfile.primaryPhoto);
@@ -130,8 +144,17 @@ const SettingsScreen = () => {
   };
 
   const handleEditApps = () => {
-    // TODO: Navigate to edit apps screen
-    console.log('Edit apps');
+    // Set up callback before navigating
+    editAppsCallback = (apps: string[], websites: string[]) => {
+      setMonitoredApps(apps);
+      setMonitoredWebsites(websites);
+      editAppsCallback = null; // Clear after use
+    };
+
+    navigation.navigate('EditMonitoredApps', {
+      initialApps: monitoredApps,
+      initialWebsites: monitoredWebsites,
+    });
   };
 
   // DEV-ONLY: Debug button to start intervention flow
