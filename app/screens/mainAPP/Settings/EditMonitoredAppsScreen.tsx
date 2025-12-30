@@ -5,6 +5,7 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -233,13 +234,22 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
           ) : (
             filteredApps.map((app) => {
               const isSelected = selectedApps.includes(app.packageName);
+              const iconUri = app.icon ? `data:image/png;base64,${app.icon}` : null;
               return (
                 <Pressable
                   key={app.packageName}
                   style={[styles.appItem, isSelected && styles.appItemSelected]}
                   onPress={() => handleToggleApp(app.packageName)}
                 >
-                  <View style={styles.appIcon} />
+                  {iconUri ? (
+                    <Image
+                      source={{ uri: iconUri }}
+                      style={styles.appIcon}
+                      resizeMode="contain"
+                    />
+                  ) : (
+                    <View style={styles.appIconPlaceholder} />
+                  )}
                   <View style={styles.appInfo}>
                     <Text style={styles.appName}>{app.appName}</Text>
                     <Text style={styles.packageName} numberOfLines={1}>
@@ -482,6 +492,12 @@ const styles = StyleSheet.create({
     color: '#A1A1AA',
   },
   appIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    marginRight: 12,
+  },
+  appIconPlaceholder: {
     width: 40,
     height: 40,
     borderRadius: 8,

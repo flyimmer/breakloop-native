@@ -39,6 +39,8 @@ export interface InstalledApp {
   packageName: string;
   /** Display name of the app (e.g., "Instagram") */
   appName: string;
+  /** Base64 encoded PNG icon (optional, may be null if icon retrieval fails) */
+  icon?: string | null;
 }
 
 /**
@@ -93,10 +95,11 @@ interface IAppMonitorModule {
   /**
    * Get list of all installed apps on the device
    * 
-   * Returns user-installable apps (excludes system apps) with package names and display names.
+   * Returns user-installable apps (excludes system apps) with package names, display names, and icons.
    * Apps are sorted alphabetically by display name.
+   * Icons are returned as base64-encoded PNG strings for use with React Native Image component.
    * 
-   * @returns Promise resolving to array of installed app objects
+   * @returns Promise resolving to array of installed app objects with optional icon field
    * @throws Error if app list cannot be retrieved
    */
   getInstalledApps(): Promise<InstalledApp[]>;

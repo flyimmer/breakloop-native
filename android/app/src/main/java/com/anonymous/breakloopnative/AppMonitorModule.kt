@@ -3,8 +3,13 @@ package com.anonymous.breakloopnative
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.os.Build
 import android.provider.Settings
+import android.util.Base64
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
@@ -12,6 +17,7 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.Arguments
+import java.io.ByteArrayOutputStream
 
 class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
     
@@ -22,6 +28,48 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     
     override fun getName(): String {
         return "AppMonitorModule"
+    }
+
+    /**
+     * Convert Drawable to base64 string for React Native Image component
+     * 
+     * @param drawable The app icon drawable
+     * @param size The desired size in pixels (default: 48dp converted to px)
+     * @return Base64 encoded PNG string, or null if conversion fails
+     */
+    private fun drawableToBase64(drawable: Drawable?, size: Int = 192): String? {
+        if (drawable == null) return null
+        
+        return try {
+            // Convert dp to px (assuming ~3x density)
+            val bitmap = when (drawable) {
+                is BitmapDrawable -> drawable.bitmap
+                else -> {
+                    // Create a bitmap from the drawable
+                    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bitmap)
+                    drawable.setBounds(0, 0, canvas.width, canvas.height)
+                    drawable.draw(canvas)
+                    bitmap
+                }
+            }
+            
+            // Resize if needed
+            val resizedBitmap = if (bitmap.width != size || bitmap.height != size) {
+                Bitmap.createScaledBitmap(bitmap, size, size, true)
+            } else {
+                bitmap
+            }
+            
+            // Convert to PNG and encode as base64
+            val outputStream = ByteArrayOutputStream()
+            resizedBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+            val byteArray = outputStream.toByteArray()
+            Base64.encodeToString(byteArray, Base64.NO_WRAP)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to convert drawable to base64: ${e.message}")
+            null
+        }
     }
 
     @ReactMethod
@@ -346,10 +394,22 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
                     pkgName
                 }
                 
+                // Get app icon and convert to base64
+                val iconBase64 = try {
+                    val icon = packageManager.getApplicationIcon(appInfo)
+                    drawableToBase64(icon)
+                } catch (e: Exception) {
+                    android.util.Log.w("AppMonitorModule", "Failed to get icon for $pkgName: ${e.message}")
+                    null
+                }
+                
                 // Create app object
                 val appMap: WritableMap = Arguments.createMap()
                 appMap.putString("packageName", pkgName)
                 appMap.putString("appName", appName)
+                if (iconBase64 != null) {
+                    appMap.putString("icon", iconBase64)
+                }
                 
                 appsArray.pushMap(appMap)
                 processedCount++
@@ -368,9 +428,18 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
                     val instagramAppInfo = instagramInfo.applicationInfo
                     if (instagramAppInfo != null) {
                         val appName = packageManager.getApplicationLabel(instagramAppInfo).toString()
+                        val iconBase64 = try {
+                            val icon = packageManager.getApplicationIcon(instagramAppInfo)
+                            drawableToBase64(icon)
+                        } catch (e: Exception) {
+                            null
+                        }
                         val appMap: WritableMap = Arguments.createMap()
                         appMap.putString("packageName", "com.instagram.android")
                         appMap.putString("appName", appName)
+                        if (iconBase64 != null) {
+                            appMap.putString("icon", iconBase64)
+                        }
                         appsArray.pushMap(appMap)
                         android.util.Log.e("AppMonitorModule", "✅ Instagram MANUALLY ADDED: $appName")
                     }
@@ -389,9 +458,18 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
                         val tiktokAppInfo = tiktokInfo.applicationInfo
                         if (tiktokAppInfo != null) {
                             val appName = packageManager.getApplicationLabel(tiktokAppInfo).toString()
+                            val iconBase64 = try {
+                                val icon = packageManager.getApplicationIcon(tiktokAppInfo)
+                                drawableToBase64(icon)
+                            } catch (e: Exception) {
+                                null
+                            }
                             val appMap: WritableMap = Arguments.createMap()
                             appMap.putString("packageName", pkg)
                             appMap.putString("appName", appName)
+                            if (iconBase64 != null) {
+                                appMap.putString("icon", iconBase64)
+                            }
                             appsArray.pushMap(appMap)
                             android.util.Log.e("AppMonitorModule", "✅ TikTok MANUALLY ADDED: $appName")
                             break
