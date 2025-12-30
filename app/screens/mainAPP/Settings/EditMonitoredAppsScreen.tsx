@@ -173,10 +173,22 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
   };
 
   // Filter apps based on search query
-  const filteredApps = installedApps.filter((app) =>
-    app.appName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    app.packageName.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredApps = installedApps
+    .filter((app) =>
+      app.appName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      app.packageName.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+    .sort((a, b) => {
+      const aIsSelected = selectedApps.includes(a.packageName);
+      const bIsSelected = selectedApps.includes(b.packageName);
+      
+      // Monitored apps first
+      if (aIsSelected && !bIsSelected) return -1;
+      if (!aIsSelected && bIsSelected) return 1;
+      
+      // Within each group, sort alphabetically by app name
+      return a.appName.localeCompare(b.appName);
+    });
 
   // Render Apps tab content
   const renderAppsTab = () => {
