@@ -161,6 +161,36 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     }
 
     /**
+     * Update monitored apps list in ForegroundDetectionService
+     * 
+     * Called from React Native when user changes monitored apps in Settings.
+     * Updates the native service's monitored apps list so it knows which apps to intercept.
+     * 
+     * @param packageNames Array of package names to monitor
+     * @param promise Promise to resolve when update is complete
+     */
+    @ReactMethod
+    fun setMonitoredApps(packageNames: com.facebook.react.bridge.ReadableArray, promise: Promise) {
+        try {
+            val apps = mutableSetOf<String>()
+            for (i in 0 until packageNames.size()) {
+                packageNames.getString(i)?.let { apps.add(it) }
+            }
+            
+            android.util.Log.i("AppMonitorModule", "Updating monitored apps list: $apps")
+            ForegroundDetectionService.updateMonitoredApps(apps)
+            
+            val result: WritableMap = Arguments.createMap()
+            result.putBoolean("success", true)
+            result.putInt("count", apps.size)
+            promise.resolve(result)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to update monitored apps", e)
+            promise.reject("UPDATE_FAILED", "Failed to update monitored apps: ${e.message}", e)
+        }
+    }
+
+    /**
      * Store intention timer in SharedPreferences
      * This allows ForegroundDetectionService to check if intervention should be skipped
      * 

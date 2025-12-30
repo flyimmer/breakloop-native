@@ -53,22 +53,21 @@ class ForegroundDetectionService : AccessibilityService() {
             private set
             
         /**
-         * Hardcoded list of monitored apps for Phase F3.5
+         * Monitored apps list - dynamically updated from React Native
          * 
-         * TODO Phase F4: Replace with dynamic list from JS
-         * TODO Phase F4: Sync this list with user's settings in React Native
-         * 
-         * For now, using common social media / entertainment apps for testing
+         * Initially empty. Updated when user selects apps in Settings.
+         * React Native calls AppMonitorModule.setMonitoredApps() to update this list.
          */
-        private val MONITORED_APPS = setOf(
-            "com.instagram.android",
-            "com.zhiliaoapp.musically",  // TikTok
-            "com.twitter.android",
-            "com.facebook.katana",
-            "com.reddit.frontpage",
-            "com.snapchat.android",
-            "com.youtube.android"
-        )
+        private var MONITORED_APPS = setOf<String>()
+
+        /**
+         * Update the monitored apps list
+         * Called from AppMonitorModule.setMonitoredApps()
+         */
+        fun updateMonitoredApps(apps: Set<String>) {
+            MONITORED_APPS = apps
+            Log.i(TAG, "📋 Monitored apps list updated: $apps (${apps.size} apps)")
+        }
     }
 
     /**

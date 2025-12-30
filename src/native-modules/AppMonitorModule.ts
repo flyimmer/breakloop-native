@@ -100,6 +100,15 @@ interface IAppMonitorModule {
    * @throws Error if app list cannot be retrieved
    */
   getInstalledApps(): Promise<InstalledApp[]>;
+
+  /**
+   * Update the monitored apps list in the native ForegroundDetectionService
+   * This tells the accessibility service which apps should trigger interventions
+   * 
+   * @param packageNames - Array of package names to monitor (e.g., ['com.instagram.android', 'com.zhiliaoapp.musically'])
+   * @returns Promise with success status and count of apps
+   */
+  setMonitoredApps(packageNames: string[]): Promise<{ success: boolean; count: number }>;
 }
 
 /**

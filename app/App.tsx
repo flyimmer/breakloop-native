@@ -7,7 +7,7 @@ import {
   NavigationContainerRef,
 } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from './navigation/RootNavigator';
@@ -18,7 +18,8 @@ import {
   setInterventionDispatcher,
   getIntentionTimer
 } from '@/src/os/osTriggerBrain';
-import { isMonitoredApp, getInterventionDurationSec } from '@/src/os/osConfig';
+import { isMonitoredApp, getInterventionDurationSec, setMonitoredApps } from '@/src/os/osConfig';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -215,6 +216,40 @@ function InterventionNavigationHandler() {
 
 const App = () => {
   /**
+   * Load monitored apps from storage on app start
+   * This initializes osConfig with user-selected apps
+   * IMPORTANT: This must complete before monitoring starts
+   */
+  const [monitoredAppsLoaded, setMonitoredAppsLoaded] = useState(false);
+
+  useEffect(() => {
+    const loadMonitoredApps = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('monitored_apps_v1');
+        if (stored) {
+          const apps = JSON.parse(stored);
+          setMonitoredApps(apps);
+          setMonitoredAppsLoaded(true);
+          if (__DEV__) {
+            console.log('[App] ✅ Loaded monitored apps from storage:', apps);
+            console.log('[App] Monitored apps count:', apps.length);
+          }
+        } else {
+          setMonitoredAppsLoaded(true); // Mark as loaded even if empty
+          if (__DEV__) {
+            console.log('[App] ⚠️ No monitored apps found in storage (user hasn\'t selected any yet)');
+          }
+        }
+      } catch (error) {
+        console.error('[App] ❌ Failed to load monitored apps:', error);
+        setMonitoredAppsLoaded(true); // Mark as loaded even on error
+      }
+    };
+
+    loadMonitoredApps();
+  }, []);
+
+  /**
    * STEP 5E — Intention timer expiration checking
    * Periodically checks if intention timers have expired for foreground/background apps.
    * Silent checks - only logs when timers actually expire.
@@ -233,11 +268,21 @@ const App = () => {
    * STEP 4 — Android foreground app monitoring (OBSERVATION ONLY)
    * Starts monitoring service and logs foreground app changes.
    * No intervention triggering logic yet - that's Step 5.
+   * 
+   * IMPORTANT: Wait for monitored apps to load before starting monitoring
    */
   useEffect(() => {
     if (Platform.OS !== 'android' || !AppMonitorModule) {
       if (__DEV__) {
         console.log('[OS] App monitoring not available (not Android or module missing)');
+      }
+      return;
+    }
+
+    // Wait for monitored apps to load before starting monitoring
+    if (!monitoredAppsLoaded) {
+      if (__DEV__) {
+        console.log('[OS] Waiting for monitored apps to load before starting monitoring...');
       }
       return;
     }
@@ -296,7 +341,7 @@ const App = () => {
       // The monitoring service continues running even when React Native app is closed
       // This is required for intervention system to work correctly
     };
-  }, []);
+  }, [monitoredAppsLoaded]); // Re-run when monitored apps are loaded
 
   return (
     <SafeAreaProvider>

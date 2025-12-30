@@ -16,10 +16,12 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/native-modules/AppMonitorModule';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { completeInterventionDEV } from '@/src/os/osTriggerBrain';
+import { setMonitoredApps as updateOsConfigMonitoredApps } from '@/src/os/osConfig';
 import { RootStackParamList } from '../../../navigation/RootNavigator';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
@@ -86,12 +88,51 @@ const SettingsScreen = () => {
   // Cache of installed apps for display name lookup
   const [installedAppsCache, setInstalledAppsCache] = useState<InstalledApp[]>([]);
 
+  // Storage key for monitored apps
+  const MONITORED_APPS_STORAGE_KEY = 'monitored_apps_v1';
+
+  // Load monitored apps from storage on mount
+  useEffect(() => {
+    loadMonitoredApps();
+  }, []);
+
   // Load installed apps cache on mount (for display name lookup)
   useEffect(() => {
     if (Platform.OS === 'android' && AppMonitorModuleType) {
       loadInstalledAppsCache();
     }
   }, []);
+
+  const loadMonitoredApps = async () => {
+    try {
+      const stored = await AsyncStorage.getItem(MONITORED_APPS_STORAGE_KEY);
+      if (stored) {
+        const apps = JSON.parse(stored);
+        console.log('[SettingsScreen] 📥 Loaded monitored apps from storage:', apps);
+        setMonitoredApps(apps);
+        // Update osConfig with loaded apps
+        updateOsConfigMonitoredApps(apps);
+        console.log('[SettingsScreen] ✅ Updated osConfig with', apps.length, 'apps');
+      } else {
+        console.log('[SettingsScreen] ℹ️ No monitored apps in storage yet');
+      }
+    } catch (error) {
+      console.error('[SettingsScreen] ❌ Failed to load monitored apps:', error);
+    }
+  };
+
+  const saveMonitoredApps = async (apps: string[]) => {
+    try {
+      console.log('[SettingsScreen] 💾 Saving monitored apps:', apps);
+      await AsyncStorage.setItem(MONITORED_APPS_STORAGE_KEY, JSON.stringify(apps));
+      // Update osConfig immediately
+      updateOsConfigMonitoredApps(apps);
+      console.log('[SettingsScreen] ✅ Successfully saved and updated osConfig with', apps.length, 'apps');
+    } catch (error) {
+      console.error('[SettingsScreen] ❌ Failed to save monitored apps:', error);
+      Alert.alert('Error', 'Failed to save monitored apps. Please try again.');
+    }
+  };
 
   const loadInstalledAppsCache = async () => {
     try {
@@ -174,8 +215,11 @@ const SettingsScreen = () => {
   const handleEditApps = () => {
     // Set up callback before navigating
     editAppsCallback = (apps: string[], websites: string[]) => {
+      console.log('[SettingsScreen] 📱 Edit apps callback received:', { apps, websites });
       setMonitoredApps(apps);
       setMonitoredWebsites(websites);
+      // Persist to AsyncStorage and update osConfig
+      saveMonitoredApps(apps);
       editAppsCallback = null; // Clear after use
     };
 
@@ -559,6 +603,53 @@ const SettingsScreen = () => {
             <TouchableOpacity style={styles.upgradeButton}>
               <Text style={styles.upgradeButtonText}>Upgrade to Premium</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Accessibility Service Section */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionTitleRow}>
+              <Text style={styles.sectionTitle}>Intervention System</Text>
+            </View>
+          </View>
+          <Text style={styles.sectionDescription}>
+            Enable accessibility service to detect monitored apps and trigger interventions.
+          </Text>
+
+          <View style={styles.card}>
+            <TouchableOpacity
+              style={styles.accessibilityButton}
+              onPress={() => {
+                Alert.alert(
+                  'Enable Accessibility Service',
+                  'To detect when you open monitored apps, BreakLoop needs accessibility permission.\n\n' +
+                  'Steps:\n' +
+                  '1. Tap "Open Settings" below\n' +
+                  '2. Find "BreakLoop" in the list\n' +
+                  '3. Turn ON the switch\n' +
+                  '4. Confirm the permission dialog\n\n' +
+                  'This allows BreakLoop to show interventions when you open monitored apps.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Open Settings',
+                      onPress: () => {
+                        if (Platform.OS === 'android') {
+                          const { Linking } = require('react-native');
+                          Linking.sendIntent('android.settings.ACCESSIBILITY_SETTINGS');
+                        }
+                      },
+                    },
+                  ]
+                );
+              }}
+            >
+              <Text style={styles.accessibilityButtonText}>Enable Accessibility Service</Text>
+            </TouchableOpacity>
+            <Text style={styles.accessibilityHint}>
+              Required for interventions to work. You only need to do this once.
+            </Text>
           </View>
         </View>
 
@@ -1099,6 +1190,25 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     color: '#A1A1AA',
     fontStyle: 'italic',
+  },
+  accessibilityButton: {
+    height: 50,
+    borderRadius: 8,
+    backgroundColor: '#7C6FD9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  accessibilityButtonText: {
+    fontSize: 16,
+    lineHeight: 24,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  accessibilityHint: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#A1A1AA',
   },
 });
 

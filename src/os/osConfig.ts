@@ -1,26 +1,21 @@
 /**
- * OS Configuration Adapter (v0 - TEMPORARY)
+ * OS Configuration Adapter
  * 
  * Single source of truth for OS-related configuration.
- * Currently uses in-memory values that match Settings UI defaults.
- * 
- * TODO: Wire to real settings state when Settings UI persistence is ready.
- * This adapter will then read from user preferences instead of hardcoded values.
+ * Monitored apps are loaded from user settings (AsyncStorage) on app start
+ * and can be updated when user changes settings.
  */
 
 // ============================================================================
-// TEMPORARY IN-MEMORY CONFIGURATION
-// These values match the current Settings UI defaults
+// CONFIGURATION VALUES
 // ============================================================================
 
 /**
  * List of monitored apps (package names)
- * Matches default apps shown in Settings UI
+ * Initially empty - loaded from AsyncStorage on app start
+ * Updated when user changes monitored apps in Settings
  */
-const MONITORED_APPS = new Set<string>([
-  'com.instagram.android',        // Instagram
-  'com.zhiliaoapp.musically',     // TikTok
-]);
+let MONITORED_APPS = new Set<string>();
 
 /**
  * Minimum interval between intervention triggers (milliseconds)
@@ -52,7 +47,16 @@ const INTENTION_TIMER_DURATION_MS = 2* 60 * 1000; // 2 minutes
  * @returns true if app is monitored, false otherwise
  */
 export function isMonitoredApp(packageName: string): boolean {
-  return MONITORED_APPS.has(packageName);
+  const isMonitored = MONITORED_APPS.has(packageName);
+  if (__DEV__) {
+    console.log('[osConfig] isMonitoredApp check:', {
+      packageName,
+      isMonitored,
+      monitoredAppsCount: MONITORED_APPS.size,
+      monitoredApps: Array.from(MONITORED_APPS),
+    });
+  }
+  return isMonitored;
 }
 
 /**
@@ -93,5 +97,40 @@ export function getIntentionTimerDurationMs(): number {
  */
 export function getMonitoredAppsList(): string[] {
   return Array.from(MONITORED_APPS);
+}
+
+/**
+ * Update the monitored apps list.
+ * Called when user saves monitored apps in Settings or on app start.
+ * Also updates the native ForegroundDetectionService on Android.
+ * 
+ * @param packageNames - Array of package names to monitor
+ */
+export function setMonitoredApps(packageNames: string[]): void {
+  MONITORED_APPS = new Set(packageNames);
+  if (__DEV__) {
+    console.log('[osConfig] Updated monitored apps:', Array.from(MONITORED_APPS));
+  }
+
+  // Update native service on Android
+  if (typeof window !== 'undefined') {
+    // React Native environment
+    try {
+      const { NativeModules, Platform } = require('react-native');
+      if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
+        NativeModules.AppMonitorModule.setMonitoredApps(packageNames)
+          .then((result: any) => {
+            if (__DEV__) {
+              console.log('[osConfig] ✅ Native service updated with', result.count, 'monitored apps');
+            }
+          })
+          .catch((error: any) => {
+            console.error('[osConfig] ❌ Failed to update native service:', error);
+          });
+      }
+    } catch (error) {
+      console.error('[osConfig] Failed to update native monitored apps:', error);
+    }
+  }
 }
 

@@ -20,7 +20,7 @@
  * - Easier to maintain launcher list in JS than in multiple native platforms
  */
 
-import { getAppSwitchIntervalMs, isMonitoredApp, getInterventionDurationSec } from './osConfig';
+import { getAppSwitchIntervalMs, isMonitoredApp, getInterventionDurationSec, getMonitoredAppsList } from './osConfig';
 
 // ============================================================================
 // Launcher Filtering
@@ -318,7 +318,26 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
   // ============================================================================
   
   // Check if this is a monitored app
-  if (isMonitoredApp(packageName)) {
+  const isMonitored = isMonitoredApp(packageName);
+  
+  if (!isMonitored) {
+    // Not a monitored app - skip intervention logic
+    if (lastMeaningfulApp !== packageName) {
+      console.log('[OS Trigger Brain] App is NOT monitored, skipping intervention:', {
+        packageName,
+        monitoredAppsCount: getMonitoredAppsList().length,
+        monitoredApps: getMonitoredAppsList(),
+      });
+    }
+    // Update tracking but don't trigger intervention
+    lastForegroundApp = packageName;
+    if (packageName !== 'com.anonymous.breakloopnative') {
+      lastMeaningfulApp = packageName;
+    }
+    return;
+  }
+  
+  if (isMonitored) {
     // Log entry only when app actually changes
     if (lastMeaningfulApp !== packageName) {
       console.log('[OS Trigger Brain] Monitored app entered foreground:', {
