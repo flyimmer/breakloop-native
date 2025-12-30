@@ -32,6 +32,16 @@ export interface ForegroundAppEvent {
 }
 
 /**
+ * Installed app information
+ */
+export interface InstalledApp {
+  /** Package name of the app (e.g., "com.instagram.android") */
+  packageName: string;
+  /** Display name of the app (e.g., "Instagram") */
+  appName: string;
+}
+
+/**
  * Result returned from startMonitoring() and stopMonitoring()
  */
 export interface MonitoringResult {
@@ -79,6 +89,17 @@ interface IAppMonitorModule {
    * @throws Error if settings screen cannot be opened
    */
   openUsageAccessSettings(): Promise<boolean>;
+
+  /**
+   * Get list of all installed apps on the device
+   * 
+   * Returns user-installable apps (excludes system apps) with package names and display names.
+   * Apps are sorted alphabetically by display name.
+   * 
+   * @returns Promise resolving to array of installed app objects
+   * @throws Error if app list cannot be retrieved
+   */
+  getInstalledApps(): Promise<InstalledApp[]>;
 }
 
 /**

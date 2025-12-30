@@ -16,7 +16,7 @@ import {
   Alert,
   Linking,
 } from 'react-native';
-import { useAppMonitor } from '../hooks/useAppMonitor';
+import { useAppMonitor } from '../../hooks/useAppMonitor';
 
 interface AppEvent {
   packageName: string;
@@ -27,7 +27,7 @@ export function AppMonitorExample() {
   const [events, setEvents] = useState<AppEvent[]>([]);
 
   const { currentApp, isMonitoring, startMonitoring, stopMonitoring, error } = useAppMonitor({
-    onAppChanged: (packageName, timestamp) => {
+    onAppChanged: (packageName: string, timestamp: number) => {
       console.log('📱 Foreground app changed:', packageName);
       
       // Add to events list (keep last 20 events)

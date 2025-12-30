@@ -1,6 +1,8 @@
 package com.anonymous.breakloopnative
 
 import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
 import com.facebook.react.bridge.ReactApplicationContext
@@ -8,6 +10,7 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.WritableMap
+import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.Arguments
 
 class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
@@ -203,6 +206,149 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             }
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "Failed to launch app: $packageName", e)
+        }
+    }
+
+    /**
+     * Get list of all installed apps on the device
+     * Returns apps with package names and display names, excluding system apps
+     * 
+     * @param promise Resolves with array of app objects: [{ packageName: string, appName: string }]
+     */
+    @ReactMethod
+    fun getInstalledApps(promise: Promise) {
+        try {
+            val packageManager = reactApplicationContext.packageManager
+            
+            // FIRST: Test if we can access Instagram directly
+            android.util.Log.e("AppMonitorModule", "========== TESTING DIRECT ACCESS ==========")
+            try {
+                val instagramInfo = packageManager.getPackageInfo("com.instagram.android", 0)
+                android.util.Log.e("AppMonitorModule", "✅ Instagram FOUND via direct query: ${instagramInfo.packageName}")
+            } catch (e: Exception) {
+                android.util.Log.e("AppMonitorModule", "❌ Instagram NOT accessible via direct query: ${e.message}")
+            }
+            
+            // Get ALL installed packages with multiple flags to ensure we get everything
+            val flags = PackageManager.GET_META_DATA or 
+                       PackageManager.MATCH_DISABLED_COMPONENTS or
+                       PackageManager.MATCH_DISABLED_UNTIL_USED_COMPONENTS or
+                       PackageManager.MATCH_UNINSTALLED_PACKAGES
+            val installedPackages = packageManager.getInstalledPackages(flags)
+            
+            android.util.Log.e("AppMonitorModule", "========== GET INSTALLED APPS START ==========")
+            android.util.Log.e("AppMonitorModule", "Total packages found: ${installedPackages.size}")
+            
+            val appsArray: WritableArray = Arguments.createArray()
+            var processedCount = 0
+            var skippedNullAppInfo = 0
+            var skippedSystemApps = 0
+            var instagramFound = false
+            var tiktokFound = false
+            
+            for (packageInfo in installedPackages) {
+                val pkgName = packageInfo.packageName
+                
+                val appInfo = packageInfo.applicationInfo
+                if (appInfo == null) {
+                    skippedNullAppInfo++
+                    continue
+                }
+                
+                // Filter out pure system apps
+                // FLAG_SYSTEM = app is in system partition
+                // FLAG_UPDATED_SYSTEM_APP = system app that user updated (keep these!)
+                val isSystemApp = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                val isUpdatedSystemApp = (appInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+                
+                // Skip pure system apps (but keep updated system apps like Chrome, Gmail)
+                if (isSystemApp && !isUpdatedSystemApp) {
+                    skippedSystemApps++
+                    continue
+                }
+                
+                // Check for Instagram/TikTok after filtering
+                if (pkgName.contains("instagram", ignoreCase = true)) {
+                    android.util.Log.w("AppMonitorModule", ">>> INSTAGRAM FOUND: $pkgName")
+                    instagramFound = true
+                }
+                if (pkgName.contains("tiktok", ignoreCase = true) || pkgName.contains("musically", ignoreCase = true)) {
+                    android.util.Log.w("AppMonitorModule", ">>> TIKTOK FOUND: $pkgName")
+                    tiktokFound = true
+                }
+                
+                // Get app label (display name)
+                val appName = try {
+                    val label = packageManager.getApplicationLabel(appInfo).toString()
+                    if (label.isBlank()) pkgName else label
+                } catch (e: Exception) {
+                    android.util.Log.w("AppMonitorModule", "Failed to get label for $pkgName: ${e.message}")
+                    pkgName
+                }
+                
+                // Create app object
+                val appMap: WritableMap = Arguments.createMap()
+                appMap.putString("packageName", pkgName)
+                appMap.putString("appName", appName)
+                
+                appsArray.pushMap(appMap)
+                processedCount++
+            }
+            
+            android.util.Log.e("AppMonitorModule", "Processed: $processedCount user apps")
+            android.util.Log.e("AppMonitorModule", "Skipped: $skippedSystemApps system apps, $skippedNullAppInfo null appInfo")
+            android.util.Log.e("AppMonitorModule", "Instagram found: $instagramFound")
+            android.util.Log.e("AppMonitorModule", "TikTok found: $tiktokFound")
+            
+            // WORKAROUND: If Instagram was not found in the list, try to add it manually
+            if (!instagramFound) {
+                android.util.Log.w("AppMonitorModule", "Instagram NOT in list, attempting manual add...")
+                try {
+                    val instagramInfo = packageManager.getPackageInfo("com.instagram.android", 0)
+                    val instagramAppInfo = instagramInfo.applicationInfo
+                    if (instagramAppInfo != null) {
+                        val appName = packageManager.getApplicationLabel(instagramAppInfo).toString()
+                        val appMap: WritableMap = Arguments.createMap()
+                        appMap.putString("packageName", "com.instagram.android")
+                        appMap.putString("appName", appName)
+                        appsArray.pushMap(appMap)
+                        android.util.Log.e("AppMonitorModule", "✅ Instagram MANUALLY ADDED: $appName")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("AppMonitorModule", "❌ Failed to manually add Instagram: ${e.message}")
+                }
+            }
+            
+            // Same for TikTok
+            if (!tiktokFound) {
+                android.util.Log.w("AppMonitorModule", "TikTok NOT in list, attempting manual add...")
+                val tiktokPackages = listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.tiktok")
+                for (pkg in tiktokPackages) {
+                    try {
+                        val tiktokInfo = packageManager.getPackageInfo(pkg, 0)
+                        val tiktokAppInfo = tiktokInfo.applicationInfo
+                        if (tiktokAppInfo != null) {
+                            val appName = packageManager.getApplicationLabel(tiktokAppInfo).toString()
+                            val appMap: WritableMap = Arguments.createMap()
+                            appMap.putString("packageName", pkg)
+                            appMap.putString("appName", appName)
+                            appsArray.pushMap(appMap)
+                            android.util.Log.e("AppMonitorModule", "✅ TikTok MANUALLY ADDED: $appName")
+                            break
+                        }
+                    } catch (e: Exception) {
+                        // Try next package name
+                    }
+                }
+            }
+            
+            android.util.Log.e("AppMonitorModule", "Returning ${appsArray.size()} apps to React Native")
+            android.util.Log.e("AppMonitorModule", "========== GET INSTALLED APPS END ==========")
+            
+            promise.resolve(appsArray)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to get installed apps", e)
+            promise.reject("ERROR", "Failed to get installed apps: ${e.message}", e)
         }
     }
     

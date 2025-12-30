@@ -29,7 +29,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
-import { AppMonitorModule, ForegroundAppEvent } from '../native-modules/AppMonitorModule';
+import { AppMonitorModule, ForegroundAppEvent } from '@/src/native-modules/AppMonitorModule';
 
 /**
  * Hook options

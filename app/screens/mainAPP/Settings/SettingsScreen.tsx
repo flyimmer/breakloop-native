@@ -2,7 +2,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Camera, Eye, LogOut, Shield, Sliders, Smartphone, User, Zap } from 'lucide-react-native';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   Image,
@@ -17,6 +17,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/native-modules/AppMonitorModule';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { completeInterventionDEV } from '@/src/os/osTriggerBrain';
 import { RootStackParamList } from '../../../navigation/RootNavigator';
@@ -77,9 +78,36 @@ const SettingsScreen = () => {
   const [shareAlternativesList, setShareAlternativesList] = useState(true);
 
   // Monitored apps and websites state
-  // Note: Stored as app names (e.g., 'Instagram', 'TikTok') for display compatibility
-  const [monitoredApps, setMonitoredApps] = useState<string[]>(['Instagram', 'TikTok']);
+  // Note: Stored as package names (e.g., 'com.instagram.android') for monitoring
+  // We'll display app names by looking them up from the installed apps list
+  const [monitoredApps, setMonitoredApps] = useState<string[]>([]);
   const [monitoredWebsites, setMonitoredWebsites] = useState<string[]>([]);
+  
+  // Cache of installed apps for display name lookup
+  const [installedAppsCache, setInstalledAppsCache] = useState<InstalledApp[]>([]);
+
+  // Load installed apps cache on mount (for display name lookup)
+  useEffect(() => {
+    if (Platform.OS === 'android' && AppMonitorModuleType) {
+      loadInstalledAppsCache();
+    }
+  }, []);
+
+  const loadInstalledAppsCache = async () => {
+    try {
+      const apps = await AppMonitorModuleType.getInstalledApps();
+      setInstalledAppsCache(apps);
+    } catch (error) {
+      console.error('Failed to load installed apps cache:', error);
+      // Non-critical error - continue without cache
+    }
+  };
+
+  // Helper function to get app name from package name
+  const getAppName = (packageName: string): string => {
+    const app = installedAppsCache.find((a) => a.packageName === packageName);
+    return app ? app.appName : packageName; // Fallback to package name if not found
+  };
 
   // Profile state check (independent of authentication)
   const hasProfile = !!(userProfile.displayName || userProfile.aboutMe || userProfile.interests || userProfile.primaryPhoto);
@@ -465,19 +493,23 @@ const SettingsScreen = () => {
           </View>
 
           <View style={styles.card}>
-            <View style={styles.appsList}>
-              {monitoredApps.map((app, index) => (
-                <View
-                  key={app}
-                  style={[
-                    styles.appChip,
-                    index === monitoredApps.length - 1 && styles.appChipLast,
-                  ]}
-                >
-                  <Text style={styles.appChipText}>{app}</Text>
-                </View>
-              ))}
-            </View>
+            {monitoredApps.length === 0 ? (
+              <Text style={styles.emptyAppsText}>No apps selected</Text>
+            ) : (
+              <View style={styles.appsList}>
+                {monitoredApps.map((packageName, index) => (
+                  <View
+                    key={packageName}
+                    style={[
+                      styles.appChip,
+                      index === monitoredApps.length - 1 && styles.appChipLast,
+                    ]}
+                  >
+                    <Text style={styles.appChipText}>{getAppName(packageName)}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
         </View>
 
@@ -882,6 +914,12 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontWeight: '500',
     color: '#52525B',
+  },
+  emptyAppsText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#A1A1AA',
+    fontStyle: 'italic',
   },
   preferenceRow: {
     flexDirection: 'row',

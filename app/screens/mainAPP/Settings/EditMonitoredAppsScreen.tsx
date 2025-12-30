@@ -1,8 +1,11 @@
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Check } from 'lucide-react-native';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,31 +15,20 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { NativeModules } from 'react-native';
+import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/native-modules/AppMonitorModule';
 import { RootStackParamList } from '../../../navigation/RootNavigator';
+
+const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 type TabType = 'apps' | 'websites';
 
-interface AppItem {
-  id: string;
-  name: string;
-  iconColor: string; // Placeholder for app icon color
-}
-
-// Static list of available apps
-const AVAILABLE_APPS: AppItem[] = [
-  { id: 'instagram', name: 'Instagram', iconColor: '#E4405F' },
-  { id: 'tiktok', name: 'TikTok', iconColor: '#000000' },
-  { id: 'x', name: 'X', iconColor: '#000000' },
-  { id: 'facebook', name: 'Facebook', iconColor: '#1877F2' },
-  { id: 'games', name: 'Games', iconColor: '#8B5CF6' },
-];
-
 interface EditMonitoredAppsScreenProps {
   route: {
     params: {
-      initialApps?: string[];
+      initialApps?: string[]; // Now expects package names (e.g., 'com.instagram.android')
       initialWebsites?: string[];
     };
   };
@@ -46,29 +38,88 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
   const navigation = useNavigation<NavigationProp>();
   const { initialApps = [], initialWebsites = [] } = route.params || {};
 
-  // Convert app names to IDs for internal state
-  // SettingsScreen passes app names (e.g., 'Instagram'), but we work with IDs internally
-  const getAppIdFromName = (name: string): string | null => {
-    const app = AVAILABLE_APPS.find((a) => a.name === name);
-    return app ? app.id : null;
-  };
-
-  const initialAppIds = initialApps
-    .map((name) => getAppIdFromName(name))
-    .filter((id): id is string => id !== null);
-
   const [activeTab, setActiveTab] = useState<TabType>('apps');
-  const [selectedApps, setSelectedApps] = useState<string[]>(initialAppIds);
+  const [selectedApps, setSelectedApps] = useState<string[]>(initialApps); // Store package names
   const [websites, setWebsites] = useState<string[]>(initialWebsites);
   const [websiteInput, setWebsiteInput] = useState('');
+  
+  // Real installed apps from device
+  const [installedApps, setInstalledApps] = useState<InstalledApp[]>([]);
+  const [isLoadingApps, setIsLoadingApps] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  // Toggle app selection
-  const handleToggleApp = (appId: string) => {
+  // Fetch installed apps on mount (Android only)
+  useEffect(() => {
+    if (Platform.OS === 'android' && AppMonitorModule && AppMonitorModuleType) {
+      loadInstalledApps();
+    } else {
+      // iOS or module not available - show empty state or fallback
+      setIsLoadingApps(false);
+      if (Platform.OS !== 'android') {
+        Alert.alert(
+          'Not Available',
+          'App list is only available on Android devices.',
+          [{ text: 'OK' }]
+        );
+      }
+    }
+  }, []);
+
+  const loadInstalledApps = async () => {
+    try {
+      setIsLoadingApps(true);
+      const apps = await AppMonitorModuleType.getInstalledApps();
+      
+      console.log(`[EditMonitoredApps] Loaded ${apps.length} apps`);
+      console.log('[EditMonitoredApps] First 10 apps:', apps.slice(0, 10).map(a => a.appName));
+      
+      // Debug: Check if Instagram is in the list
+      const instagram = apps.find(app => 
+        app.packageName.includes('instagram') || 
+        app.appName.toLowerCase().includes('instagram')
+      );
+      console.log('[EditMonitoredApps] Instagram found:', instagram);
+      
+      // Debug: Check if TikTok is in the list
+      const tiktok = apps.find(app => 
+        app.packageName.toLowerCase().includes('tiktok') || 
+        app.packageName.includes('musically') ||
+        app.appName.toLowerCase().includes('tiktok')
+      );
+      console.log('[EditMonitoredApps] TikTok found:', tiktok);
+      
+      // Debug: Log all package names that contain common social media keywords
+      const socialApps = apps.filter(app =>
+        app.packageName.includes('facebook') ||
+        app.packageName.includes('twitter') ||
+        app.packageName.includes('snapchat') ||
+        app.packageName.includes('reddit')
+      );
+      console.log('[EditMonitoredApps] Social apps found:', socialApps.length, socialApps.map(a => a.packageName));
+      
+      // Sort by app name alphabetically
+      apps.sort((a, b) => a.appName.localeCompare(b.appName));
+      
+      setInstalledApps(apps);
+    } catch (error: any) {
+      console.error('Failed to load installed apps:', error);
+      Alert.alert(
+        'Error',
+        'Failed to load installed apps. Please try again.',
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setIsLoadingApps(false);
+    }
+  };
+
+  // Toggle app selection (by package name)
+  const handleToggleApp = (packageName: string) => {
     setSelectedApps((prev) => {
-      if (prev.includes(appId)) {
-        return prev.filter((id) => id !== appId);
+      if (prev.includes(packageName)) {
+        return prev.filter((pkg) => pkg !== packageName);
       } else {
-        return [...prev, appId];
+        return [...prev, packageName];
       }
     });
   };
@@ -89,19 +140,19 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
 
   // Handle Done button
   const handleDone = () => {
-    // Convert app IDs to names for SettingsScreen compatibility
-    const appNames = selectedApps.map((id) => {
-      const app = AVAILABLE_APPS.find((a) => a.id === id);
-      return app ? app.name : id;
+    // Convert package names to app names for display in SettingsScreen
+    // SettingsScreen expects app names for display, but we'll also pass package names
+    const appNames = selectedApps.map((packageName) => {
+      const app = installedApps.find((a) => a.packageName === packageName);
+      return app ? app.appName : packageName;
     });
     
     // Call the callback if it exists (set by SettingsScreen)
-    // This is a simple workaround since React Navigation doesn't support function callbacks in params
-    // In a production app, you might use a state management solution like Context or Redux
-    // Import the callback from SettingsScreen module
+    // Pass both package names (for monitoring) and app names (for display)
     const settingsModule = require('./SettingsScreen');
     if (settingsModule.editAppsCallback) {
-      settingsModule.editAppsCallback(appNames, websites);
+      // Pass package names as the first param (SettingsScreen will need to be updated to handle this)
+      settingsModule.editAppsCallback(selectedApps, websites);
     }
     
     // Go back
@@ -121,29 +172,79 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
     );
   };
 
+  // Filter apps based on search query
+  const filteredApps = installedApps.filter((app) =>
+    app.appName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    app.packageName.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   // Render Apps tab content
   const renderAppsTab = () => {
+    if (isLoadingApps) {
+      return (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading apps...</Text>
+        </View>
+      );
+    }
+
+    if (installedApps.length === 0) {
+      return (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyStateText}>No apps found</Text>
+        </View>
+      );
+    }
+
     return (
-      <ScrollView style={styles.contentScroll} contentContainerStyle={styles.contentContainer}>
-        {AVAILABLE_APPS.map((app) => {
-          const isSelected = selectedApps.includes(app.id);
-          return (
-            <Pressable
-              key={app.id}
-              style={[styles.appItem, isSelected && styles.appItemSelected]}
-              onPress={() => handleToggleApp(app.id)}
-            >
-              <View style={[styles.appIcon, { backgroundColor: app.iconColor }]} />
-              <Text style={styles.appName}>{app.name}</Text>
-              {isSelected && (
-                <View style={styles.checkmarkContainer}>
-                  <Check size={20} color="#007AFF" strokeWidth={3} />
-                </View>
-              )}
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+      <View style={styles.appsTabContainer}>
+        {/* Search input */}
+        <View style={styles.searchContainer}>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search apps..."
+            placeholderTextColor="#A1A1AA"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+
+        {/* Apps list */}
+        <ScrollView style={styles.contentScroll} contentContainerStyle={styles.contentContainer}>
+          {filteredApps.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyStateText}>No apps match your search</Text>
+            </View>
+          ) : (
+            filteredApps.map((app) => {
+              const isSelected = selectedApps.includes(app.packageName);
+              return (
+                <Pressable
+                  key={app.packageName}
+                  style={[styles.appItem, isSelected && styles.appItemSelected]}
+                  onPress={() => handleToggleApp(app.packageName)}
+                >
+                  <View style={styles.appIcon} />
+                  <View style={styles.appInfo}>
+                    <Text style={styles.appName}>{app.appName}</Text>
+                    <Text style={styles.packageName} numberOfLines={1}>
+                      {app.packageName}
+                    </Text>
+                  </View>
+                  {isSelected && (
+                    <View style={styles.checkmarkContainer}>
+                      <Check size={20} color="#007AFF" strokeWidth={3} />
+                    </View>
+                  )}
+                </Pressable>
+              );
+            })
+          )}
+        </ScrollView>
+      </View>
     );
   };
 
@@ -338,18 +439,57 @@ const styles = StyleSheet.create({
     backgroundColor: '#F0F0FF',
     borderColor: '#007AFF',
   },
+  appsTabContainer: {
+    flex: 1,
+  },
+  searchContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  searchInput: {
+    height: 44,
+    borderWidth: 1,
+    borderColor: '#E4E4E7',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 16,
+    lineHeight: 24,
+    color: '#18181B',
+    backgroundColor: '#FFFFFF',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#A1A1AA',
+  },
   appIcon: {
     width: 40,
     height: 40,
     borderRadius: 8,
     marginRight: 12,
+    backgroundColor: '#E4E4E7', // Placeholder color
+  },
+  appInfo: {
+    flex: 1,
   },
   appName: {
-    flex: 1,
     fontSize: 16,
     lineHeight: 24,
     fontWeight: '500',
     color: '#18181B',
+    marginBottom: 2,
+  },
+  packageName: {
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#A1A1AA',
   },
   checkmarkContainer: {
     width: 24,

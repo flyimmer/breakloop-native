@@ -69,7 +69,7 @@ export const InterventionProvider: React.FC<InterventionProviderProps> = ({ chil
   );
 
   const value: InterventionContextValue = {
-    interventionState,
+    interventionState: interventionState as InterventionContextValue['interventionState'],
     dispatchIntervention,
   };
 
