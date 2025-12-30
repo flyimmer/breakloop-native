@@ -126,19 +126,30 @@ function InterventionNavigationHandler() {
       
       // Use previousTargetAppRef because targetApp is cleared when state becomes idle
       const appToLaunch = previousTargetAppRef.current;
+      const previousState = previousStateRef.current;
       
+      console.log('[F3.5] Previous state was:', previousState);
       console.log('[F3.5] App to launch:', appToLaunch);
       
-      // Just finish the InterventionActivity immediately
-      // Android should naturally return to the previously opened app (Instagram/TikTok)
-      console.log('[F3.5] Intervention complete, finishing InterventionActivity');
-      console.log('[F3.5] Target app was:', appToLaunch);
-      
-      try {
-        AppMonitorModule.finishInterventionActivity();
-        console.log('[F3.5] finishInterventionActivity called successfully');
-      } catch (error) {
-        console.error('[F3.5] finishInterventionActivity threw error:', error);
+      // If intervention completed from reflection screen, launch home screen
+      // Otherwise, just finish InterventionActivity (returns to monitored app)
+      if (previousState === 'reflection') {
+        console.log('[F3.5] Intervention completed from reflection screen, launching home screen');
+        try {
+          AppMonitorModule.launchHomeScreen();
+          console.log('[F3.5] launchHomeScreen called successfully');
+        } catch (error) {
+          console.error('[F3.5] launchHomeScreen threw error:', error);
+        }
+      } else {
+        console.log('[F3.5] Intervention complete, finishing InterventionActivity');
+        console.log('[F3.5] Target app was:', appToLaunch);
+        try {
+          AppMonitorModule.finishInterventionActivity();
+          console.log('[F3.5] finishInterventionActivity called successfully');
+        } catch (error) {
+          console.error('[F3.5] finishInterventionActivity threw error:', error);
+        }
       }
     }
   }, [state, targetApp]);

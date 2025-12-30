@@ -158,7 +158,7 @@ export default function ReflectionScreen() {
           <Text style={styles.skipText}>Skip</Text>
         </Pressable>
 
-        {/* Continue - calm, neutral */}
+        {/* Finished - calm, neutral */}
         <Pressable
           onPress={handleFinish}
           style={({ pressed }) => [
@@ -166,7 +166,7 @@ export default function ReflectionScreen() {
             pressed && styles.continueButtonPressed,
           ]}
         >
-          <Text style={styles.continueButtonText}>Continue</Text>
+          <Text style={styles.continueButtonText}>Finished</Text>
         </Pressable>
       </View>
     </SafeAreaView>

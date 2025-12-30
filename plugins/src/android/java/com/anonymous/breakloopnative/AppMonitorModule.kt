@@ -161,6 +161,36 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     }
 
     /**
+     * Launch Android home screen
+     * 
+     * Called by React Native when intervention completes from ReflectionScreen.
+     * Launches the home screen intent, then finishes InterventionActivity.
+     */
+    @ReactMethod
+    fun launchHomeScreen() {
+        try {
+            android.util.Log.i("AppMonitorModule", "Launching home screen")
+            
+            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            reactApplicationContext.startActivity(homeIntent)
+            
+            android.util.Log.i("AppMonitorModule", "Home screen intent launched")
+            
+            // Finish InterventionActivity after launching home screen
+            val activity = reactApplicationContext.currentActivity
+            if (activity is InterventionActivity) {
+                android.util.Log.i("AppMonitorModule", "Finishing InterventionActivity after launching home")
+                activity.finish()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to launch home screen", e)
+        }
+    }
+
+    /**
      * Store intention timer in SharedPreferences
      * This allows ForegroundDetectionService to check if intervention should be skipped
      * 
