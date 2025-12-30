@@ -260,6 +260,7 @@ class ForegroundDetectionService : AccessibilityService() {
      * - User sees ONLY intervention UI, not main app
      * 
      * @param triggeringApp Package name of the app that triggered intervention
+     * @param skipTimerCheck If true, skip the intention timer check (used when timer already expired)
      */
     private fun launchInterventionActivity(triggeringApp: String, skipTimerCheck: Boolean = false) {
         // Check if there's a valid intention timer first (unless we're called from timer expiration check)

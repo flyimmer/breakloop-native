@@ -35,6 +35,22 @@ npm run reset-project
 
 This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
 
+## Development Notes
+
+### Kotlin File Sync
+
+This project uses a custom sync system for Kotlin native modules:
+- Kotlin files in `plugins/src/` automatically sync to `android/` before builds
+- No manual copying needed - just run `npm run android`
+- See [docs/KOTLIN_FILE_SYNC.md](docs/KOTLIN_FILE_SYNC.md) for details
+
+**Quick commands:**
+```bash
+npm run android         # Build (auto-syncs Kotlin files)
+npm run sync:kotlin     # Manually sync files
+npm run validate:kotlin # Verify plugin configuration
+```
+
 ## Learn more
 
 To learn more about developing your project with Expo, look at the following resources:

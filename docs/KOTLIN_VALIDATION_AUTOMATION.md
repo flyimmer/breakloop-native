@@ -1,4 +1,23 @@
-# Kotlin Validation Automation Guide
+# Kotlin Plugin Automation Guide
+
+This guide covers two automated systems:
+1. **Kotlin File Sync** - Automatically copies changed files before builds
+2. **Kotlin Validation** - Verifies all Kotlin files are registered in plugin
+
+## 🔄 Automatic File Sync
+
+Before every build, Kotlin files are automatically synced from `plugins/src/` to `android/app/src/main/`.
+
+**What it does:**
+- Compares source files with destination files
+- Only copies files that have changed (fast!)
+- Shows clear status for each file
+
+**When it runs:**
+- Before every `npm run android` (automatic)
+- When you run `npm run sync:kotlin` (manual)
+
+**See:** [KOTLIN_FILE_SYNC.md](KOTLIN_FILE_SYNC.md) for detailed documentation.
 
 ## ✅ Automatic Validation
 
@@ -14,10 +33,13 @@ npx expo run:android
 
 The `android` script in `package.json` now includes:
 ```json
-"android": "npm run validate:kotlin && expo run:android"
+"android": "npm run sync:kotlin && npm run validate:kotlin && expo run:android"
 ```
 
-**Result:** Validation runs automatically, build fails if validation fails.
+**Result:** 
+1. Kotlin files sync automatically from `plugins/src/` to `android/`
+2. Validation runs automatically
+3. Build fails if validation fails
 
 ### 2. **Before Prebuild** (Automatic)
 When you run:
@@ -100,36 +122,44 @@ git commit --no-verify
 
 ## 📊 Summary Table
 
-| Action | Validation Runs? | How |
-|--------|------------------|-----|
-| `npm run android` | ✅ **Yes** | Automatic (npm script) - **RECOMMENDED** |
-| `npm run android:direct` | ❌ No | Bypasses validation (emergency only) |
-| `npx expo run:android` | ❌ No | Bypasses validation (not recommended) |
-| `npm run prebuild` | ✅ **Yes** | Automatic (npm script) |
-| `npx expo prebuild` | ❌ No | Bypasses npm script |
-| `git commit` | ✅ **Yes** | Automatic (git hook) |
-| `git commit --no-verify` | ❌ No | Skips hook |
-| `npm run validate:kotlin` | ✅ Yes | Manual command |
+| Action | Sync Runs? | Validation Runs? | How |
+|--------|------------|------------------|-----|
+| `npm run android` | ✅ **Yes** | ✅ **Yes** | Automatic (npm script) - **RECOMMENDED** |
+| `npm run android:direct` | ❌ No | ❌ No | Bypasses both (emergency only) |
+| `npx expo run:android` | ❌ No | ❌ No | Bypasses both (not recommended) |
+| `npm run prebuild` | ❌ No | ✅ **Yes** | Automatic (npm script) |
+| `npx expo prebuild` | ❌ No | ❌ No | Bypasses npm script |
+| `git commit` | ❌ No | ✅ **Yes** | Automatic (git hook) |
+| `git commit --no-verify` | ❌ No | ❌ No | Skips hook |
+| `npm run sync:kotlin` | ✅ Yes | ❌ No | Manual sync only |
+| `npm run validate:kotlin` | ❌ No | ✅ Yes | Manual validation only |
 
 ## 💡 Best Practices
 
 1. **ALWAYS use `npm run android`** (never `npx expo run:android`)
+   - ✅ Automatically syncs Kotlin files
    - ✅ Ensures validation runs automatically
    - ✅ Catches mistakes early
    - ✅ Prevents lost changes
-   - ❌ `npx expo run:android` bypasses validation (risky!)
+   - ❌ `npx expo run:android` bypasses both sync and validation (risky!)
 
-2. **Don't skip validation** unless absolutely necessary
-   - It's fast (takes < 1 second)
+2. **Edit Kotlin files in `plugins/src/` (source of truth)**
+   - ✅ Changes automatically sync to `android/` before builds
+   - ✅ Changes are tracked in git
+   - ❌ Never edit files directly in `android/app/src/main/` (will be overwritten!)
+
+3. **Don't skip sync or validation** unless absolutely necessary
+   - Both are fast (< 1 second each)
    - Prevents lost changes and build failures
 
-3. **Fix validation errors immediately**
+4. **Fix validation errors immediately**
    - Don't commit with `--no-verify` to bypass
    - Fix the plugin configuration properly
 
-4. **Run manual validation when in doubt**
-   - After making plugin changes
-   - Before important commits
+5. **Run manual commands when in doubt**
+   - `npm run sync:kotlin` - After editing Kotlin files
+   - `npm run validate:kotlin` - After making plugin changes
+   - Both run automatically with `npm run android`
 
 ## 🔍 Troubleshooting
 
