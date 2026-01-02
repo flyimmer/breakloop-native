@@ -11,7 +11,7 @@ import com.facebook.react.defaults.DefaultReactActivityDelegate
 import expo.modules.ReactActivityDelegateWrapper
 
 /**
- * InterventionActivity - OS-Level System Surface
+ * SystemSurfaceActivity - OS-Level System Surface
  * 
  * CONCEPTUAL ROLE (IMPORTANT):
  * This activity is conceptually a neutral "System Surface" that hosts OS-level UI.
@@ -28,25 +28,25 @@ import expo.modules.ReactActivityDelegateWrapper
  * WHY A DEDICATED ACTIVITY?
  * - Appears on top of other apps with full-screen takeover
  * - Allows the app to wake from killed state directly into OS-level UI
- * - Clean separation: MainActivity = main app UI, InterventionActivity = OS-level UI
+ * - Clean separation: MainActivity = main app UI, SystemSurfaceActivity = OS-level UI
  * - Prevents user from accidentally seeing tabs/settings during interruption
  * 
  * KEY ARCHITECTURAL CHOICES:
  * 
  * 1. launchMode = "singleTask"
- *    - Ensures only one instance of InterventionActivity exists
+ *    - Ensures only one instance of SystemSurfaceActivity exists
  *    - If already running, brings existing instance to foreground instead of creating new one
  *    - Prevents stacking multiple intervention screens
  * 
  * 2. excludeFromRecents = true
  *    - Hides this activity from Android's recent apps list
- *    - Users don't see "Intervention" as a separate app task
+ *    - Users don't see "SystemSurface" as a separate app task
  *    - Reinforces that this is a temporary interruption, not a standalone app
  * 
  * 3. taskAffinity = "" (empty)
- *    - Separates intervention task from main app task
- *    - Prevents intervention from being grouped with MainActivity in task switcher
- *    - Allows intervention to close cleanly without affecting main app state
+ *    - Separates system surface task from main app task
+ *    - Prevents system surface from being grouped with MainActivity in task switcher
+ *    - Allows system surface to close cleanly without affecting main app state
  * 
  * 4. Theme.Intervention (transparent/minimal)
  *    - No splash screen or loading UI flash
@@ -55,7 +55,7 @@ import expo.modules.ReactActivityDelegateWrapper
  * 
  * HOW JS REMAINS THE DECISION AUTHORITY:
  * - Native code ONLY decides WHEN to wake the app (monitored app detected)
- * - Native code launches InterventionActivity with triggering app info
+ * - Native code launches SystemSurfaceActivity with triggering app info
  * - React Native boots and OS Trigger Brain runs as usual
  * - JS decides: Should intervention start? Which screen? What flow?
  * - JS dispatches BEGIN_INTERVENTION and drives the state machine
@@ -74,10 +74,10 @@ import expo.modules.ReactActivityDelegateWrapper
  * - React Native integration (same runtime, intervention-only rendering)
  * - Does NOT include overlay windows or system alert permissions yet
  */
-class InterventionActivity : ReactActivity() {
+class SystemSurfaceActivity : ReactActivity() {
 
     companion object {
-        private const val TAG = "InterventionActivity"
+        private const val TAG = "SystemSurfaceActivity"
         
         /**
          * Intent extra key for the package name that triggered the intervention
@@ -109,7 +109,7 @@ class InterventionActivity : ReactActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        Log.i(TAG, "🎯 InterventionActivity created")
+        Log.i(TAG, "🎯 SystemSurfaceActivity created")
         
         // Log the triggering app if provided
         intent?.getStringExtra(EXTRA_TRIGGERING_APP)?.let { triggeringApp ->
@@ -118,13 +118,13 @@ class InterventionActivity : ReactActivity() {
         
         super.onCreate(savedInstanceState)
         
-        Log.d(TAG, "InterventionActivity initialized - React Native will load intervention UI")
+        Log.d(TAG, "SystemSurfaceActivity initialized - React Native will load intervention UI")
     }
 
     /**
      * Handle new Intent when activity is already running (singleInstance mode)
      * 
-     * When InterventionActivity is already running and AccessibilityService
+     * When SystemSurfaceActivity is already running and AccessibilityService
      * launches it again (e.g., user opens another monitored app), this method
      * is called instead of onCreate().
      * 
@@ -202,7 +202,7 @@ class InterventionActivity : ReactActivity() {
      * Native only handles the final exit when JS finishes the intervention.
      */
     override fun invokeDefaultOnBackPressed() {
-        Log.d(TAG, "Back button pressed in InterventionActivity")
+        Log.d(TAG, "Back button pressed in SystemSurfaceActivity")
         
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.R) {
             // On older Android versions, move task to background
@@ -217,18 +217,17 @@ class InterventionActivity : ReactActivity() {
     }
 
     override fun onDestroy() {
-        Log.i(TAG, "❌ InterventionActivity destroyed")
+        Log.i(TAG, "❌ SystemSurfaceActivity destroyed")
         super.onDestroy()
     }
 
     override fun onPause() {
         super.onPause()
-        Log.d(TAG, "InterventionActivity paused")
+        Log.d(TAG, "SystemSurfaceActivity paused")
     }
 
     override fun onResume() {
         super.onResume()
-        Log.d(TAG, "InterventionActivity resumed")
+        Log.d(TAG, "SystemSurfaceActivity resumed")
     }
 }
-

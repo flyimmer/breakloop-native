@@ -220,11 +220,11 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     }
 
     /**
-     * PHASE F3.5 - Get triggering app from InterventionActivity Intent
+     * PHASE F3.5 - Get triggering app from SystemSurfaceActivity Intent
      * 
      * Called by React Native on mount to determine if this is an intervention launch.
      * Returns the package name of the monitored app that triggered the intervention,
-     * or null if not launched from InterventionActivity or no trigger info available.
+     * or null if not launched from SystemSurfaceActivity or no trigger info available.
      * 
      * Fixed: Use reactApplicationContext.currentActivity instead of currentActivity
      * 
@@ -234,13 +234,13 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     fun getInitialTriggeringApp(promise: Promise) {
         try {
             val activity = reactApplicationContext.currentActivity
-            if (activity is InterventionActivity) {
-                val triggeringApp = activity.intent?.getStringExtra(InterventionActivity.EXTRA_TRIGGERING_APP)
+            if (activity is SystemSurfaceActivity) {
+                val triggeringApp = activity.intent?.getStringExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP)
                 android.util.Log.d("AppMonitorModule", "getInitialTriggeringApp: $triggeringApp")
                 promise.resolve(triggeringApp)
             } else {
-                // Not in InterventionActivity, return null
-                android.util.Log.d("AppMonitorModule", "getInitialTriggeringApp: Not in InterventionActivity")
+                // Not in SystemSurfaceActivity, return null
+                android.util.Log.d("AppMonitorModule", "getInitialTriggeringApp: Not in SystemSurfaceActivity")
                 promise.resolve(null)
             }
         } catch (e: Exception) {
@@ -250,10 +250,10 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     }
 
     /**
-     * PHASE F3.5 - Finish InterventionActivity when intervention completes
+     * PHASE F3.5 - Finish SystemSurfaceActivity when intervention completes
      * 
      * Called by React Native when intervention state transitions to 'idle'.
-     * Explicitly finishes InterventionActivity so user returns to previously opened app
+     * Explicitly finishes SystemSurfaceActivity so user returns to previously opened app
      * without MainActivity being resumed.
      */
     @ReactMethod
@@ -262,12 +262,12 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             android.util.Log.i("AppMonitorModule", "🎯 finishInterventionActivity called!")
             val activity = reactApplicationContext.currentActivity
             android.util.Log.i("AppMonitorModule", "📍 currentActivity: ${activity?.javaClass?.simpleName ?: "null"}")
-            android.util.Log.i("AppMonitorModule", "📍 Is InterventionActivity? ${activity is InterventionActivity}")
-            if (activity is InterventionActivity) {
-                android.util.Log.i("AppMonitorModule", "🔄 Finishing InterventionActivity")
+            android.util.Log.i("AppMonitorModule", "📍 Is SystemSurfaceActivity? ${activity is SystemSurfaceActivity}")
+            if (activity is SystemSurfaceActivity) {
+                android.util.Log.i("AppMonitorModule", "🔄 Finishing SystemSurfaceActivity")
                 
                 // Get the triggering app from the intent using the constant
-                val triggeringApp = activity.intent.getStringExtra(InterventionActivity.EXTRA_TRIGGERING_APP)
+                val triggeringApp = activity.intent.getStringExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP)
                 android.util.Log.i("AppMonitorModule", "📱 Triggering app from Intent: $triggeringApp")
                 
                 // Debug: Log all intent extras
@@ -308,18 +308,18 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
                 
                 // Move to background instead of finishing
                 // This prevents MainActivity from appearing
-                android.util.Log.i("AppMonitorModule", "📤 Moving InterventionActivity to background")
+                android.util.Log.i("AppMonitorModule", "📤 Moving SystemSurfaceActivity to background")
                 activity.moveTaskToBack(true)
             } else {
-                android.util.Log.w("AppMonitorModule", "⚠️ finishInterventionActivity: currentActivity is ${activity?.javaClass?.simpleName ?: "null"}, not InterventionActivity - IGNORING")
+                android.util.Log.w("AppMonitorModule", "⚠️ finishInterventionActivity: currentActivity is ${activity?.javaClass?.simpleName ?: "null"}, not SystemSurfaceActivity - IGNORING")
             }
         } catch (e: Exception) {
-            android.util.Log.e("AppMonitorModule", "❌ Failed to finish InterventionActivity", e)
+            android.util.Log.e("AppMonitorModule", "❌ Failed to finish SystemSurfaceActivity", e)
         }
     }
 
     /**
-     * Get the wake reason from InterventionActivity Intent.
+     * Get the wake reason from SystemSurfaceActivity Intent.
      * 
      * CRITICAL: JavaScript MUST check this FIRST before running any logic.
      * 
@@ -327,7 +327,7 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
      * - "MONITORED_APP_FOREGROUND" - Normal monitored app detected, run priority chain
      * - "QUICK_TASK_EXPIRED" - Quick Task timer expired, show expired screen ONLY
      * - "INTENTION_EXPIRED" - Intention timer expired while app in foreground
-     * - null - Not in InterventionActivity or no wake reason set
+     * - null - Not in SystemSurfaceActivity or no wake reason set
      * 
      * @param promise Resolves with wake reason string or null
      */
@@ -335,12 +335,12 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     fun getWakeReason(promise: Promise) {
         try {
             val activity = reactApplicationContext.currentActivity
-            if (activity is InterventionActivity) {
-                val wakeReason = activity.intent.getStringExtra(InterventionActivity.EXTRA_WAKE_REASON)
+            if (activity is SystemSurfaceActivity) {
+                val wakeReason = activity.intent.getStringExtra(SystemSurfaceActivity.EXTRA_WAKE_REASON)
                 android.util.Log.i("AppMonitorModule", "getWakeReason: $wakeReason")
                 promise.resolve(wakeReason)
             } else {
-                android.util.Log.d("AppMonitorModule", "getWakeReason: Not in InterventionActivity")
+                android.util.Log.d("AppMonitorModule", "getWakeReason: Not in SystemSurfaceActivity")
                 promise.resolve(null)
             }
         } catch (e: Exception) {
@@ -472,10 +472,10 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             
             android.util.Log.i("AppMonitorModule", "✅ Home screen launched")
             
-            // Also finish the InterventionActivity if we're in it
+            // Also finish the SystemSurfaceActivity if we're in it
             val activity = reactApplicationContext.currentActivity
-            if (activity is InterventionActivity) {
-                android.util.Log.i("AppMonitorModule", "🔄 Finishing InterventionActivity after launching home")
+            if (activity is SystemSurfaceActivity) {
+                android.util.Log.i("AppMonitorModule", "🔄 Finishing SystemSurfaceActivity after launching home")
                 activity.finish()
             }
         } catch (e: Exception) {

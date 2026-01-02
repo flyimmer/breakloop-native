@@ -41,6 +41,6 @@
         <data android:scheme="exp+breakloop-native"/>
       </intent-filter>
     </activity>
-    <activity android:name=".InterventionActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode" android:launchMode="singleInstance" android:excludeFromRecents="true" android:taskAffinity="" android:theme="@style/Theme.Intervention" android:exported="false" android:windowSoftInputMode="adjustResize" android:screenOrientation="portrait"/>
+    <activity android:name=".SystemSurfaceActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode" android:launchMode="singleInstance" android:excludeFromRecents="true" android:taskAffinity="" android:theme="@style/Theme.Intervention" android:exported="false" android:windowSoftInputMode="adjustResize" android:screenOrientation="portrait"/>
   </application>
 </manifest>

@@ -38,8 +38,8 @@ import android.view.accessibility.AccessibilityEvent
  * 
  * PHASE F3.5 STATUS:
  * - Detects foreground app changes in real-time
- * - Launches InterventionActivity (NOT MainActivity) when monitored app detected
- * - Passes triggering app package name to InterventionActivity
+ * - Launches SystemSurfaceActivity (NOT MainActivity) when monitored app detected
+ * - Passes triggering app package name to SystemSurfaceActivity
  * - Native code decides WHEN to wake app, JS decides IF and HOW to intervene
  * - Does NOT contain any intervention business logic
  * - Future phases will add monitored apps list checking
@@ -86,7 +86,7 @@ class ForegroundDetectionService : AccessibilityService() {
          * Maps packageName -> expiration timestamp.
          * 
          * Set by JS via AppMonitorModule.storeQuickTaskTimer().
-         * Checked before launching InterventionActivity.
+         * Checked before launching SystemSurfaceActivity.
          */
         private val quickTaskTimers = mutableMapOf<String, Long>()
         
@@ -220,7 +220,7 @@ class ForegroundDetectionService : AccessibilityService() {
      * 
      * PHASE F3.5 BEHAVIOR:
      * - Detects when a MONITORED app comes to foreground
-     * - Launches InterventionActivity (NOT MainActivity)
+     * - Launches SystemSurfaceActivity (NOT MainActivity)
      * - Passes triggering app package name via Intent extra
      * - Native code decides WHEN to wake app
      * - JS (OS Trigger Brain) decides IF and HOW to intervene
@@ -229,7 +229,7 @@ class ForegroundDetectionService : AccessibilityService() {
      * - Detect raw OS-level foreground changes
      * - Suppress duplicate consecutive events (same package repeatedly)
      * - Check if package is in monitored list
-     * - Launch InterventionActivity if monitored app detected
+     * - Launch SystemSurfaceActivity if monitored app detected
      * 
      * JavaScript responsibility:
      * - Evaluate if intervention should occur (Quick Task window, etc.)
@@ -318,7 +318,7 @@ class ForegroundDetectionService : AccessibilityService() {
     }
     
     /**
-     * Launch InterventionActivity to show intervention UI
+     * Launch SystemSurfaceActivity to show intervention UI
      * 
      * INTENT FLAGS EXPLAINED:
      * 
@@ -327,7 +327,7 @@ class ForegroundDetectionService : AccessibilityService() {
      * - Creates activity in a new task (required for non-activity contexts)
      * 
      * FLAG_ACTIVITY_CLEAR_TOP:
-     * - If InterventionActivity already exists, brings it to front
+     * - If SystemSurfaceActivity already exists, brings it to front
      * - Clears any activities above it in the stack
      * - Combined with singleInstance launchMode, ensures clean state
      * 
@@ -347,7 +347,7 @@ class ForegroundDetectionService : AccessibilityService() {
      */
     private fun launchInterventionActivity(triggeringApp: String, skipTimerCheck: Boolean = false) {
         // HIGHEST PRIORITY: Check Quick Task timer FIRST
-        // If Quick Task is active for this app, do NOT launch InterventionActivity
+        // If Quick Task is active for this app, do NOT launch SystemSurfaceActivity
         if (hasValidQuickTaskTimer(triggeringApp)) {
             Log.i(TAG, "⏭️ Skipping intervention - Quick Task timer ACTIVE for $triggeringApp")
             return
@@ -359,29 +359,29 @@ class ForegroundDetectionService : AccessibilityService() {
             return
         }
         
-        Log.i(TAG, "[Accessibility] Launching InterventionActivity with WAKE_REASON=MONITORED_APP_FOREGROUND for $triggeringApp")
+        Log.i(TAG, "[Accessibility] Launching SystemSurfaceActivity with WAKE_REASON=MONITORED_APP_FOREGROUND for $triggeringApp")
         
         try {
-            val intent = Intent(this, InterventionActivity::class.java).apply {
+            val intent = Intent(this, SystemSurfaceActivity::class.java).apply {
                 // Pass the triggering app to JS
-                putExtra(InterventionActivity.EXTRA_TRIGGERING_APP, triggeringApp)
+                putExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP, triggeringApp)
                 
                 // Set wake reason - this tells JS to run normal priority chain
-                putExtra(InterventionActivity.EXTRA_WAKE_REASON, InterventionActivity.WAKE_REASON_MONITORED_APP)
+                putExtra(SystemSurfaceActivity.EXTRA_WAKE_REASON, SystemSurfaceActivity.WAKE_REASON_MONITORED_APP)
                 
                 // Required flags for launching from Service context
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT) // Ensure InterventionActivity appears on top
+                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT) // Ensure SystemSurfaceActivity appears on top
                 addFlags(Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT) // Force activity to foreground
             }
             
             startActivity(intent)
-            Log.d(TAG, "  └─ InterventionActivity launched successfully")
+            Log.d(TAG, "  └─ SystemSurfaceActivity launched successfully")
             
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Failed to launch InterventionActivity", e)
+            Log.e(TAG, "❌ Failed to launch SystemSurfaceActivity", e)
         }
     }
 
@@ -460,7 +460,7 @@ class ForegroundDetectionService : AccessibilityService() {
     }
     
     /**
-     * Launch InterventionActivity specifically for Quick Task expiration.
+     * Launch SystemSurfaceActivity specifically for Quick Task expiration.
      * 
      * CRITICAL: Sets WAKE_REASON = QUICK_TASK_EXPIRED
      * JavaScript MUST check this and bypass the normal priority chain.
@@ -468,15 +468,15 @@ class ForegroundDetectionService : AccessibilityService() {
      * @param packageName Package name of the app whose Quick Task expired
      */
     private fun launchInterventionActivityForQuickTaskExpired(packageName: String) {
-        Log.i(TAG, "[Quick Task Expired] Launching InterventionActivity with WAKE_REASON=QUICK_TASK_EXPIRED")
+        Log.i(TAG, "[Quick Task Expired] Launching SystemSurfaceActivity with WAKE_REASON=QUICK_TASK_EXPIRED")
         
         try {
-            val intent = Intent(this, InterventionActivity::class.java).apply {
+            val intent = Intent(this, SystemSurfaceActivity::class.java).apply {
                 // Pass the package name (for reference only)
-                putExtra(InterventionActivity.EXTRA_TRIGGERING_APP, packageName)
+                putExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP, packageName)
                 
                 // CRITICAL: Set wake reason so JS knows to bypass priority chain
-                putExtra(InterventionActivity.EXTRA_WAKE_REASON, InterventionActivity.WAKE_REASON_QUICK_TASK_EXPIRED)
+                putExtra(SystemSurfaceActivity.EXTRA_WAKE_REASON, SystemSurfaceActivity.WAKE_REASON_QUICK_TASK_EXPIRED)
                 
                 // Required flags for launching from Service context
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -487,17 +487,17 @@ class ForegroundDetectionService : AccessibilityService() {
             }
             
             startActivity(intent)
-            Log.d(TAG, "  └─ InterventionActivity launched for Quick Task expiration")
+            Log.d(TAG, "  └─ SystemSurfaceActivity launched for Quick Task expiration")
             
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Failed to launch InterventionActivity for Quick Task expiration", e)
+            Log.e(TAG, "❌ Failed to launch SystemSurfaceActivity for Quick Task expiration", e)
         }
     }
     
     /**
      * Check if any Quick Task timers have expired.
      * Called periodically (every 1 second) to detect expiration.
-     * When expired, launches InterventionActivity to show QuickTaskExpiredScreen.
+     * When expired, launches SystemSurfaceActivity to show QuickTaskExpiredScreen.
      */
     private fun checkQuickTaskTimerExpirations() {
         try {
@@ -518,9 +518,9 @@ class ForegroundDetectionService : AccessibilityService() {
                 // Remove from map
                 quickTaskTimers.remove(packageName)
                 
-                // Launch InterventionActivity with Quick Task expired flag
+                // Launch SystemSurfaceActivity with Quick Task expired flag
                 // The React Native layer will detect this and navigate to QuickTaskExpiredScreen
-                Log.i(TAG, "🚨 Launching InterventionActivity for expired Quick Task: $packageName")
+                Log.i(TAG, "🚨 Launching SystemSurfaceActivity for expired Quick Task: $packageName")
                 launchInterventionActivityForQuickTaskExpired(packageName)
             }
             

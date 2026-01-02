@@ -53,6 +53,7 @@ function getSourcePaths(projectRoot) {
     appMonitorModule: path.join(javaPath, 'AppMonitorModule.kt'),
     appMonitorPackage: path.join(javaPath, 'AppMonitorPackage.kt'),
     appMonitorService: path.join(javaPath, 'AppMonitorService.kt'),
+    systemSurfaceActivity: path.join(javaPath, 'SystemSurfaceActivity.kt'),
     accessibilityXml: path.join(pluginSrcPath, 'res', 'xml', 'accessibility_service.xml'),
     stringsXml: path.join(pluginSrcPath, 'res', 'values', 'strings.xml'),
     stylesXml: path.join(pluginSrcPath, 'res', 'values', 'styles.xml'),
@@ -71,6 +72,7 @@ function getDestinationPaths(projectRoot) {
     appMonitorModule: path.join(javaPath, 'AppMonitorModule.kt'),
     appMonitorPackage: path.join(javaPath, 'AppMonitorPackage.kt'),
     appMonitorService: path.join(javaPath, 'AppMonitorService.kt'),
+    systemSurfaceActivity: path.join(javaPath, 'SystemSurfaceActivity.kt'),
     accessibilityXml: path.join(androidMainPath, 'res', 'xml', 'accessibility_service.xml'),
   };
 }
@@ -126,6 +128,14 @@ function copyKotlinFiles(projectRoot) {
     console.log(`[${PLUGIN_NAME}] Copied AppMonitorService.kt`);
   } else {
     console.warn(`[${PLUGIN_NAME}] AppMonitorService.kt not found, skipping (optional)`);
+  }
+  
+  // Copy SystemSurfaceActivity.kt
+  if (fs.existsSync(sourcePaths.systemSurfaceActivity)) {
+    fs.copyFileSync(sourcePaths.systemSurfaceActivity, destPaths.systemSurfaceActivity);
+    console.log(`[${PLUGIN_NAME}] Copied SystemSurfaceActivity.kt`);
+  } else {
+    console.warn(`[${PLUGIN_NAME}] SystemSurfaceActivity.kt not found, skipping (optional)`);
   }
 }
 
