@@ -19,6 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeModules } from 'react-native';
 import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/native-modules/AppMonitorModule';
 import { RootStackParamList } from '../../../navigation/RootNavigator';
+import { matchesAppSearch } from '@/constants/appAliases';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -173,11 +174,10 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
     );
   };
 
-  // Filter apps based on search query
+  // Filter apps based on search query (including aliases)
   const filteredApps = installedApps
     .filter((app) =>
-      app.appName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      app.packageName.toLowerCase().includes(searchQuery.toLowerCase())
+      matchesAppSearch(app.appName, app.packageName, searchQuery)
     )
     .sort((a, b) => {
       const aIsSelected = selectedApps.includes(a.packageName);
