@@ -217,7 +217,7 @@ export default function QuickTaskDialogScreen() {
         {/* Usage limit info */}
         <View style={styles.infoSection}>
           <Text style={styles.infoText}>
-            {quickTaskRemaining} left in this {quickTaskWindowMinutes}-minute window.
+            {quickTaskRemaining >= 1000 ? 'Unlimited' : quickTaskRemaining} left in this {quickTaskWindowMinutes}-minute window.
           </Text>
         </View>
 

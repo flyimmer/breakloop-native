@@ -261,13 +261,19 @@ function InterventionNavigationHandler() {
   }, [state, targetApp]);
 
   /**
-   * Finish InterventionActivity when Quick Task is hidden
+   * Finish InterventionActivity when Quick Task is activated (not when Conscious Process is chosen)
    * 
-   * When user activates Quick Task, the Quick Task state changes to hidden.
-   * At that point, we need to finish InterventionActivity to return to the monitored app.
+   * CRITICAL: Only finish activity when user chose "Quick Task", NOT "Conscious Process"
    * 
-   * The native code will get the triggering app from the Intent and launch it
-   * BEFORE finishing the activity, ensuring the monitored app comes to foreground.
+   * When user activates Quick Task:
+   * - Quick Task state changes to hidden (visible: false)
+   * - Intervention state remains idle (state: 'idle')
+   * - We should finish InterventionActivity to return to monitored app
+   * 
+   * When user chooses Conscious Process:
+   * - Quick Task state changes to hidden (visible: false)
+   * - Intervention state changes to breathing (state: 'breathing')
+   * - We should NOT finish InterventionActivity, stay and show intervention screens
    */
   const previousQuickTaskVisibleRef = useRef<boolean>(quickTaskState.visible);
   
@@ -278,7 +284,17 @@ function InterventionNavigationHandler() {
 
     // Check if Quick Task was just hidden (visible changed from true to false)
     if (previousQuickTaskVisibleRef.current === true && quickTaskState.visible === false) {
-      console.log('[Quick Task] Quick Task hidden, finishing InterventionActivity');
+      // CRITICAL: Check if intervention has started
+      // If intervention state is NOT idle, user chose "Conscious Process" - don't finish activity
+      if (state !== 'idle') {
+        console.log('[Quick Task] Quick Task hidden but intervention started, NOT finishing activity');
+        console.log('[Quick Task] Intervention state:', state);
+        previousQuickTaskVisibleRef.current = quickTaskState.visible;
+        return;
+      }
+      
+      // User chose "Quick Task" - finish activity and return to monitored app
+      console.log('[Quick Task] Quick Task activated, finishing InterventionActivity');
       
       try {
         // Native code will launch the monitored app from Intent, then finish the activity
@@ -291,7 +307,7 @@ function InterventionNavigationHandler() {
 
     // Update ref
     previousQuickTaskVisibleRef.current = quickTaskState.visible;
-  }, [quickTaskState.visible]);
+  }, [quickTaskState.visible, state]);
 
   /**
    * Navigation based on Quick Task and Intervention state

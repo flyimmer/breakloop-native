@@ -1,5 +1,8 @@
 package com.anonymous.breakloopnative
 
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
@@ -9,6 +12,7 @@ import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.provider.Settings
+import android.view.accessibility.AccessibilityManager
 import android.util.Base64
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -153,6 +157,65 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("ERROR", "Failed to open Usage Access settings: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Check if the accessibility service (ForegroundDetectionService) is enabled
+     * 
+     * This checks if the user has enabled BreakLoop's accessibility service in Android Settings.
+     * The service must be manually enabled by the user in Settings > Accessibility.
+     * 
+     * @param promise Resolves with boolean indicating if service is enabled
+     */
+    @ReactMethod
+    fun isAccessibilityServiceEnabled(promise: Promise) {
+        try {
+            val accessibilityManager = reactApplicationContext.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+            val enabledServices = Settings.Secure.getString(
+                reactApplicationContext.contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            )
+            
+            if (enabledServices.isNullOrEmpty()) {
+                promise.resolve(false)
+                return
+            }
+            
+            // Build the component name for our accessibility service
+            val serviceComponentName = ComponentName(
+                reactApplicationContext.packageName,
+                ForegroundDetectionService::class.java.name
+            )
+            val serviceId = serviceComponentName.flattenToString()
+            
+            // Check if our service is in the enabled services list
+            val isEnabled = enabledServices.split(':').contains(serviceId)
+            
+            android.util.Log.d("AppMonitorModule", "Accessibility service enabled: $isEnabled (serviceId: $serviceId)")
+            promise.resolve(isEnabled)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to check accessibility service status", e)
+            promise.reject("ERROR", "Failed to check accessibility service status: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Open the Accessibility Settings screen
+     * 
+     * Opens Android's Accessibility Settings where the user can enable BreakLoop's service.
+     * 
+     * @param promise Resolves with true if settings screen was opened successfully
+     */
+    @ReactMethod
+    fun openAccessibilitySettings(promise: Promise) {
+        try {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            reactApplicationContext.startActivity(intent)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("ERROR", "Failed to open Accessibility settings: ${e.message}", e)
         }
     }
 

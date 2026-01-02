@@ -93,6 +93,24 @@ interface IAppMonitorModule {
   openUsageAccessSettings(): Promise<boolean>;
 
   /**
+   * Check if the accessibility service (ForegroundDetectionService) is enabled
+   * 
+   * This checks if the user has enabled BreakLoop's accessibility service in Android Settings.
+   * 
+   * @returns Promise resolving to boolean indicating if service is enabled
+   */
+  isAccessibilityServiceEnabled(): Promise<boolean>;
+
+  /**
+   * Open the Accessibility Settings screen
+   * 
+   * Opens Android's Accessibility Settings where the user can enable BreakLoop's service.
+   * 
+   * @returns Promise resolving to true if settings screen was opened successfully
+   */
+  openAccessibilitySettings(): Promise<boolean>;
+
+  /**
    * Get list of all installed apps on the device
    * 
    * Returns user-installable apps (excludes system apps) with package names, display names, and icons.

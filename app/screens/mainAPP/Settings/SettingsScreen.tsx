@@ -96,6 +96,10 @@ const SettingsScreen = () => {
   const [quickTaskUsesPerWindow, setQuickTaskUsesPerWindow] = useState<number>(1); // Default: 1 use
   const [isPremium, setIsPremium] = useState<boolean>(false); // Default: free
   
+  // Accessibility service status
+  const [isAccessibilityEnabled, setIsAccessibilityEnabled] = useState<boolean>(false);
+  const [isCheckingAccessibility, setIsCheckingAccessibility] = useState<boolean>(false);
+  
   // Storage key for Quick Task settings
   const QUICK_TASK_SETTINGS_STORAGE_KEY = 'quick_task_settings_v1';
 
@@ -103,7 +107,34 @@ const SettingsScreen = () => {
   useEffect(() => {
     loadMonitoredApps();
     loadQuickTaskSettings();
+    checkAccessibilityStatus();
   }, []);
+
+  // Check accessibility status when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      checkAccessibilityStatus();
+    }, [])
+  );
+
+  // Check if accessibility service is enabled
+  const checkAccessibilityStatus = async () => {
+    if (Platform.OS !== 'android' || !AppMonitorModuleType) {
+      return;
+    }
+
+    try {
+      setIsCheckingAccessibility(true);
+      const enabled = await AppMonitorModuleType.isAccessibilityServiceEnabled();
+      setIsAccessibilityEnabled(enabled);
+      console.log('[SettingsScreen] Accessibility service enabled:', enabled);
+    } catch (error) {
+      console.error('[SettingsScreen] Failed to check accessibility status:', error);
+      setIsAccessibilityEnabled(false);
+    } finally {
+      setIsCheckingAccessibility(false);
+    }
+  };
 
   // Load installed apps cache on mount (for display name lookup)
   useEffect(() => {
@@ -191,6 +222,8 @@ const SettingsScreen = () => {
   };
 
   // Save Quick Task settings to storage
+  // NOTE: Changes apply immediately - setQuickTaskConfig() updates in-memory config
+  // The next Quick Task availability check will use the new value
   const saveQuickTaskSettings = async (durationMs: number, usesPerWindow: number, isPremium: boolean) => {
     try {
       const settings = {
@@ -200,9 +233,9 @@ const SettingsScreen = () => {
       };
       console.log('[SettingsScreen] 💾 Saving Quick Task settings:', settings);
       await AsyncStorage.setItem(QUICK_TASK_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-      // Update osConfig immediately
+      // Update osConfig immediately - applies to next Quick Task check
       setQuickTaskConfig(durationMs, usesPerWindow, isPremium);
-      console.log('[SettingsScreen] ✅ Successfully saved Quick Task settings');
+      console.log('[SettingsScreen] ✅ Successfully saved Quick Task settings (applied immediately)');
     } catch (error) {
       console.error('[SettingsScreen] ❌ Failed to save Quick Task settings:', error);
       Alert.alert('Error', 'Failed to save Quick Task settings. Please try again.');
@@ -220,12 +253,16 @@ const SettingsScreen = () => {
   };
 
   // Handle uses per window selection
+  // -1 represents unlimited (for testing purposes)
+  // Changes apply immediately - no restart needed
   const handleUsesSelect = (uses: number) => {
     if (!isPremium) {
       Alert.alert('Premium Feature', 'Upgrade to Premium to customize Quick Task uses.');
       return;
     }
     setQuickTaskUsesPerWindow(uses);
+    // This updates the in-memory config immediately via setQuickTaskConfig()
+    // The next Quick Task check will use the new value
     saveQuickTaskSettings(quickTaskDuration, uses, isPremium);
   };
 
@@ -798,6 +835,22 @@ const SettingsScreen = () => {
                       2 uses
                     </Text>
                   </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.quickTaskButton,
+                      quickTaskUsesPerWindow === -1 && styles.quickTaskButtonSelected,
+                    ]}
+                    onPress={() => handleUsesSelect(-1)}
+                  >
+                    <Text
+                      style={[
+                        styles.quickTaskButtonText,
+                        quickTaskUsesPerWindow === -1 && styles.quickTaskButtonTextSelected,
+                      ]}
+                    >
+                      Unlimited
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               </>
             ) : (
@@ -808,7 +861,9 @@ const SettingsScreen = () => {
                 </View>
                 <View style={[styles.preferenceRow, styles.preferenceRowLast]}>
                   <Text style={styles.preferenceLabel}>Uses per 15 minutes</Text>
-                  <Text style={styles.preferenceValue}>{quickTaskUsesPerWindow}</Text>
+                  <Text style={styles.preferenceValue}>
+                    {quickTaskUsesPerWindow === -1 ? 'Unlimited' : quickTaskUsesPerWindow}
+                  </Text>
                 </View>
                 <Text style={styles.upgradeHint}>Upgrade to Premium to customize these.</Text>
                 <TouchableOpacity style={styles.upgradeButton}>
@@ -831,37 +886,45 @@ const SettingsScreen = () => {
           </Text>
 
           <View style={styles.card}>
+            {/* Status indicator */}
+            <View style={styles.accessibilityStatusRow}>
+              <View style={[styles.statusIndicator, isAccessibilityEnabled ? styles.statusIndicatorEnabled : styles.statusIndicatorDisabled]} />
+              <Text style={styles.accessibilityStatusText}>
+                {isCheckingAccessibility 
+                  ? 'Checking status...' 
+                  : isAccessibilityEnabled 
+                    ? 'Accessibility service is enabled' 
+                    : 'Accessibility service is disabled'}
+              </Text>
+            </View>
+
             <TouchableOpacity
-              style={styles.accessibilityButton}
-              onPress={() => {
-                Alert.alert(
-                  'Enable Accessibility Service',
-                  'To detect when you open monitored apps, BreakLoop needs accessibility permission.\n\n' +
-                  'Steps:\n' +
-                  '1. Tap "Open Settings" below\n' +
-                  '2. Find "BreakLoop" in the list\n' +
-                  '3. Turn ON the switch\n' +
-                  '4. Confirm the permission dialog\n\n' +
-                  'This allows BreakLoop to show interventions when you open monitored apps.',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    {
-                      text: 'Open Settings',
-                      onPress: () => {
-                        if (Platform.OS === 'android') {
-                          const { Linking } = require('react-native');
-                          Linking.sendIntent('android.settings.ACCESSIBILITY_SETTINGS');
-                        }
-                      },
-                    },
-                  ]
-                );
+              style={[
+                styles.accessibilityButton,
+                isAccessibilityEnabled && styles.accessibilityButtonEnabled
+              ]}
+              onPress={async () => {
+                if (Platform.OS === 'android' && AppMonitorModuleType) {
+                  // Open accessibility settings
+                  try {
+                    await AppMonitorModuleType.openAccessibilitySettings();
+                    // Status will be checked when screen refocuses
+                  } catch (error) {
+                    console.error('[SettingsScreen] Failed to open accessibility settings:', error);
+                    Alert.alert('Error', 'Failed to open Accessibility settings. Please go to Settings > Accessibility manually.');
+                  }
+                }
               }}
+              disabled={isCheckingAccessibility}
             >
-              <Text style={styles.accessibilityButtonText}>Enable Accessibility Service</Text>
+              <Text style={styles.accessibilityButtonText}>
+                {isAccessibilityEnabled ? 'Open Accessibility Settings' : 'Enable Accessibility Service'}
+              </Text>
             </TouchableOpacity>
             <Text style={styles.accessibilityHint}>
-              Required for interventions to work. You only need to do this once.
+              {isAccessibilityEnabled 
+                ? 'Service is active. Tap above to open settings if you need to disable it.'
+                : 'Required for interventions to work. Enable it once and it should persist across app updates.'}
             </Text>
           </View>
         </View>
@@ -1452,6 +1515,33 @@ const styles = StyleSheet.create({
     color: '#A1A1AA',
     fontStyle: 'italic',
   },
+  accessibilityStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#27272A',
+    borderRadius: 8,
+  },
+  statusIndicator: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 10,
+  },
+  statusIndicatorEnabled: {
+    backgroundColor: '#10B981',
+  },
+  statusIndicatorDisabled: {
+    backgroundColor: '#EF4444',
+  },
+  accessibilityStatusText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#F4F4F5',
+    fontWeight: '500',
+  },
   accessibilityButton: {
     height: 50,
     borderRadius: 8,
@@ -1459,6 +1549,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 12,
+  },
+  accessibilityButtonEnabled: {
+    backgroundColor: '#3F3F46',
+    borderWidth: 1,
+    borderColor: '#52525B',
   },
   accessibilityButtonText: {
     fontSize: 16,

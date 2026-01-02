@@ -174,6 +174,22 @@ export function getQuickTaskRemaining(packageName: string, currentTimestamp: num
     quickTaskUsageHistory.push(...recentUsages);
   }
   
+  // Handle unlimited case (-1 represents unlimited for testing)
+  if (maxUses === -1) {
+    if (__DEV__) {
+      console.log('[OS Trigger Brain] Quick Task availability check (GLOBAL):', {
+        packageName,
+        maxUses: 'Unlimited',
+        recentUsagesGlobal: recentUsages.length,
+        remaining: 'Unlimited',
+        windowMinutes: windowMs / (60 * 1000),
+        note: 'Usage is GLOBAL across all apps - UNLIMITED MODE (testing)',
+      });
+    }
+    // Return a very large number to represent unlimited
+    return Number.MAX_SAFE_INTEGER;
+  }
+  
   // Calculate remaining uses GLOBALLY
   const remaining = Math.max(0, maxUses - recentUsages.length);
   
@@ -1029,7 +1045,10 @@ export function resetTrackingState(): void {
   intentionTimers.clear();
   interventionsInProgress.clear();
   quickTaskTimers.clear();
-  quickTaskUsageHistory.length = 0; // Clear global usage history
-  console.log('[OS Trigger Brain] Tracking state reset (including Quick Task state)');
+  // NOTE: Do NOT clear quickTaskUsageHistory!
+  // Usage quota is time-based (15-minute rolling window) and should persist
+  // until timestamps naturally expire. Clearing it would incorrectly reset
+  // the usage count and allow users to bypass the quota limit.
+  console.log('[OS Trigger Brain] Tracking state reset (timers cleared, usage history preserved)');
 }
 
