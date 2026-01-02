@@ -806,6 +806,22 @@ const SettingsScreen = () => {
                   <TouchableOpacity
                     style={[
                       styles.quickTaskButton,
+                      quickTaskUsesPerWindow === 0 && styles.quickTaskButtonSelected,
+                    ]}
+                    onPress={() => handleUsesSelect(0)}
+                  >
+                    <Text
+                      style={[
+                        styles.quickTaskButtonText,
+                        quickTaskUsesPerWindow === 0 && styles.quickTaskButtonTextSelected,
+                      ]}
+                    >
+                      No
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.quickTaskButton,
                       quickTaskUsesPerWindow === 1 && styles.quickTaskButtonSelected,
                     ]}
                     onPress={() => handleUsesSelect(1)}
@@ -862,7 +878,11 @@ const SettingsScreen = () => {
                 <View style={[styles.preferenceRow, styles.preferenceRowLast]}>
                   <Text style={styles.preferenceLabel}>Uses per 15 minutes</Text>
                   <Text style={styles.preferenceValue}>
-                    {quickTaskUsesPerWindow === -1 ? 'Unlimited' : quickTaskUsesPerWindow}
+                    {quickTaskUsesPerWindow === -1 
+                      ? 'Unlimited' 
+                      : quickTaskUsesPerWindow === 0 
+                        ? 'No' 
+                        : quickTaskUsesPerWindow}
                   </Text>
                 </View>
                 <Text style={styles.upgradeHint}>Upgrade to Premium to customize these.</Text>
