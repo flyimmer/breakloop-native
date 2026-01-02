@@ -29,9 +29,43 @@ const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorMod
  * - All timers reset to 0
  */
 
+/**
+ * Get friendly app name from package name
+ * Maps common package names to readable names
+ */
+const getAppDisplayName = (packageName: string | null): string => {
+  if (!packageName) return 'Unknown App';
+  
+  // Common app mappings
+  const appMappings: Record<string, string> = {
+    'com.instagram.android': 'Instagram',
+    'com.zhiliaoapp.musically': 'TikTok',
+    'com.twitter.android': 'Twitter',
+    'com.facebook.katana': 'Facebook',
+    'com.snapchat.android': 'Snapchat',
+    'com.reddit.frontpage': 'Reddit',
+    'com.youtube': 'YouTube',
+    'com.whatsapp': 'WhatsApp',
+  };
+  
+  // Return mapped name if available
+  if (appMappings[packageName]) {
+    return appMappings[packageName];
+  }
+  
+  // Fallback: Extract readable name from package name
+  // e.g., "com.example.myapp" -> "Myapp"
+  const parts = packageName.split('.');
+  const lastPart = parts[parts.length - 1];
+  return lastPart.charAt(0).toUpperCase() + lastPart.slice(1);
+};
+
 export default function QuickTaskExpiredScreen() {
   const navigation = useNavigation();
-  const { dispatchQuickTask } = useQuickTask();
+  const { quickTaskState, dispatchQuickTask } = useQuickTask();
+  
+  // Get friendly app name
+  const appName = getAppDisplayName(quickTaskState.expiredApp);
 
   const handleClose = () => {
     console.log('[QuickTaskExpired] User clicked Close & Go Home');
@@ -69,6 +103,9 @@ export default function QuickTaskExpiredScreen() {
       <View style={styles.contentContainer}>
         {/* Title */}
         <Text style={styles.titleText}>Quick Task Ended</Text>
+        
+        {/* App Name */}
+        <Text style={styles.appNameText}>for {appName}</Text>
 
         {/* Description */}
         <Text style={styles.descriptionText}>
@@ -126,6 +163,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: -0.4,
     color: '#FAFAFA', // textPrimary
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  appNameText: {
+    fontSize: 18, // h3
+    lineHeight: 28,
+    fontWeight: '600',
+    color: '#6558B8', // accent color
     textAlign: 'center',
     marginBottom: 16,
   },
