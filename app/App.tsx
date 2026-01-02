@@ -193,15 +193,17 @@ function InterventionNavigationHandler() {
             });
         }
         
-        // No wake reason or unknown - likely launched from MainActivity, do nothing
+        // No wake reason or unknown - likely launched from MainActivity
+        // Reset Quick Task state to prevent stale expired screens
         if (__DEV__) {
-          console.log('[F3.5] No wake reason or unknown wake reason, skipping');
+          console.log('[F3.5] No wake reason - likely MainActivity launch, resetting Quick Task state');
         }
+        dispatchQuickTask({ type: 'HIDE_EXPIRED' });
       })
       .catch((error: any) => {
         console.error('[F3.5] Failed to get wake reason:', error);
       });
-  }, [dispatchIntervention]);
+  }, [dispatchIntervention, dispatchQuickTask]);
 
   /**
    * PHASE F3.5 - Fix #4: Finish InterventionActivity when intervention completes
@@ -331,9 +333,12 @@ function InterventionNavigationHandler() {
 
     // HIGHEST PRIORITY: Check Quick Task expired state first
     // This is a terminal boundary event - show ONLY expired screen
-    if (quickTaskState.showExpired) {
+    // IMPORTANT: Only show if we have an expired app (not null)
+    // This prevents showing "Unknown App" when state persists incorrectly
+    if (quickTaskState.showExpired && quickTaskState.expiredApp) {
       if (__DEV__) {
         console.log('[Navigation] Quick Task expired, navigating to QuickTaskExpired');
+        console.log('[Navigation] Expired app:', quickTaskState.expiredApp);
       }
       navigationRef.current.navigate('QuickTaskExpired');
       // Update refs
