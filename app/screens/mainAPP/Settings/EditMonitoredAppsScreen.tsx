@@ -19,7 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeModules } from 'react-native';
 import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/native-modules/AppMonitorModule';
 import { RootStackParamList } from '../../../navigation/RootNavigator';
-import { matchesAppSearch } from '@/constants/appAliases';
+import { matchesAppSearch, getMatchScore } from '@/constants/appAliases';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -183,11 +183,19 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
       const aIsSelected = selectedApps.includes(a.packageName);
       const bIsSelected = selectedApps.includes(b.packageName);
       
-      // Monitored apps first
+      // 1. Monitored apps first (selected apps appear before unselected)
       if (aIsSelected && !bIsSelected) return -1;
       if (!aIsSelected && bIsSelected) return 1;
       
-      // Within each group, sort alphabetically by app name
+      // 2. Then sort by match relevance (exact matches first, then word-start, then partial)
+      const aMatch = getMatchScore(a.appName, a.packageName, searchQuery);
+      const bMatch = getMatchScore(b.appName, b.packageName, searchQuery);
+      
+      if (aMatch.score !== bMatch.score) {
+        return bMatch.score - aMatch.score; // Higher score first
+      }
+      
+      // 3. Within same match type, sort alphabetically by app name
       return a.appName.localeCompare(b.appName);
     });
 
