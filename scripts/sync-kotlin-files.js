@@ -16,10 +16,10 @@ const PROJECT_ROOT = path.join(__dirname, '..');
 
 const KOTLIN_FILES = [
   'ForegroundDetectionService.kt',
-  'InterventionActivity.kt',
   'AppMonitorModule.kt',
   'AppMonitorPackage.kt',
   'AppMonitorService.kt',
+  'SystemSurfaceActivity.kt',
 ];
 
 function syncKotlinFiles() {

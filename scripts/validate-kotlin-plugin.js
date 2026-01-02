@@ -23,12 +23,13 @@ const PLUGIN_FILE = path.join(__dirname, '..', 'plugins', 'withForegroundService
 const PLUGIN_SRC_DIR = path.join(__dirname, '..', 'plugins', 'src', 'android', 'java', 'com', 'anonymous', 'breakloopnative');
 
 // Kotlin files that should be copied by plugin
+// Note: This list is for documentation only - validation dynamically reads files from directory
 const REQUIRED_KOTLIN_FILES = [
   'ForegroundDetectionService.kt',
-  'InterventionActivity.kt',
   'AppMonitorModule.kt',
   'AppMonitorPackage.kt',
   'AppMonitorService.kt',
+  'SystemSurfaceActivity.kt',
 ];
 
 // Files that are native-only (not in plugin, safe to ignore)
