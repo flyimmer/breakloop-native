@@ -20,7 +20,15 @@
  * - Easier to maintain launcher list in JS than in multiple native platforms
  */
 
-import { getAppSwitchIntervalMs, isMonitoredApp, getInterventionDurationSec, getMonitoredAppsList } from './osConfig';
+import { 
+  getAppSwitchIntervalMs, 
+  isMonitoredApp, 
+  getInterventionDurationSec, 
+  getMonitoredAppsList,
+  getQuickTaskDurationMs,
+  getQuickTaskUsesPerWindow,
+  getQuickTaskWindowMs
+} from './osConfig';
 
 // ============================================================================
 // Launcher Filtering
@@ -118,39 +126,179 @@ const intentionTimers: Map<string, { expiresAt: number }> = new Map();
 const interventionsInProgress: Set<string> = new Set();
 
 /**
+ * Quick Task usage history GLOBAL across all apps.
+ * Array of timestamps when Quick Task was used (any app).
+ * Used to enforce the "N uses per 15-minute window" limit GLOBALLY.
+ * 
+ * IMPORTANT: This is NOT per-app. Using Quick Task on Instagram
+ * consumes the same quota as using it on TikTok.
+ * Example: If limit is 2 uses per 15min, user can use Quick Task
+ * twice total across ALL monitored apps, not 2 times per app.
+ */
+const quickTaskUsageHistory: number[] = [];
+
+/**
+ * Active Quick Task timers per app.
+ * Maps packageName -> { expiresAt: timestamp }
+ * When a Quick Task timer is active, the app can be used without intervention.
+ */
+const quickTaskTimers: Map<string, { expiresAt: number }> = new Map();
+
+/**
  * Dispatch function for triggering interventions in React layer.
  * Set by setInterventionDispatcher() from App.tsx.
  */
 let interventionDispatcher: ((action: any) => void) | null = null;
 
 /**
- * Trigger intervention for a monitored app (Step 5F).
- * Dispatches exactly ONE intervention and prevents repeated triggers.
+ * Calculate remaining Quick Task uses GLOBALLY in the current 15-minute window.
+ * Filters out timestamps older than 15 minutes.
  * 
- * IMPORTANT: Each app gets its own independent intervention flow.
- * If user switches apps during an active intervention, the old intervention
- * is abandoned and a new one starts for the new app.
+ * IMPORTANT: This is GLOBAL across all apps, not per-app.
+ * Using Quick Task on Instagram consumes the same quota as TikTok.
+ * 
+ * @param packageName - App package name (for logging only)
+ * @param currentTimestamp - Current timestamp
+ * @returns Number of Quick Task uses remaining GLOBALLY
+ */
+export function getQuickTaskRemaining(packageName: string, currentTimestamp: number): number {
+  const windowMs = getQuickTaskWindowMs();
+  const maxUses = getQuickTaskUsesPerWindow();
+  
+  // Filter out timestamps older than 15 minutes from GLOBAL history
+  const recentUsages = quickTaskUsageHistory.filter(ts => currentTimestamp - ts < windowMs);
+  
+  // Update global history with filtered timestamps
+  if (recentUsages.length !== quickTaskUsageHistory.length) {
+    quickTaskUsageHistory.length = 0;
+    quickTaskUsageHistory.push(...recentUsages);
+  }
+  
+  // Calculate remaining uses GLOBALLY
+  const remaining = Math.max(0, maxUses - recentUsages.length);
+  
+  if (__DEV__) {
+    console.log('[OS Trigger Brain] Quick Task availability check (GLOBAL):', {
+      packageName,
+      maxUses,
+      recentUsagesGlobal: recentUsages.length,
+      remaining,
+      windowMinutes: windowMs / (60 * 1000),
+      note: 'Usage is GLOBAL across all apps',
+    });
+  }
+  
+  return remaining;
+}
+
+/**
+ * Record a Quick Task usage GLOBALLY.
+ * Adds current timestamp to GLOBAL usage history.
+ * 
+ * IMPORTANT: This is GLOBAL, not per-app.
+ * 
+ * @param packageName - App package name (for logging only)
+ * @param timestamp - Current timestamp
+ */
+function recordQuickTaskUsage(packageName: string, timestamp: number): void {
+  quickTaskUsageHistory.push(timestamp);
+  
+  console.log('[OS Trigger Brain] Quick Task usage recorded (GLOBAL)', {
+    packageName,
+    timestamp,
+    totalUsagesGlobal: quickTaskUsageHistory.length,
+    note: 'Usage is GLOBAL across all apps',
+  });
+}
+
+/**
+ * Trigger intervention for a monitored app (Step 5F).
+ * 
+ * ARCHITECTURE: Implements the LOCKED priority chain from SYSTEM_SURFACE_ARCHITECTURE.md
+ * 
+ * Priority Order (MUST NOT CHANGE):
+ * 1. Quick Task ACTIVE (global)        → Suppress everything
+ * 2. Alternative Activity RUNNING      → Suppress everything
+ * 3. t_intention VALID (per-app)       → Suppress everything
+ * 4. n_quickTask > 0 (global)          → Show Quick Task dialog
+ * 5. Else                              → Start Intervention Flow
  * 
  * @param packageName - App package name requiring intervention
  * @param timestamp - Current timestamp
  */
 function triggerIntervention(packageName: string, timestamp: number): void {
-  // ALWAYS clear any previous intervention for this app when triggering new one
-  // This handles the case where user abandoned intervention and is returning
-  if (interventionsInProgress.has(packageName)) {
-    console.log('[OS Trigger Brain] Clearing abandoned intervention for same app', {
-      packageName,
-      reason: 'User returned after abandoning intervention',
-    });
-    interventionsInProgress.delete(packageName);
+  console.log('[OS Trigger Brain] ========================================');
+  console.log('[OS Trigger Brain] Evaluating priority chain for:', packageName);
+  console.log('[OS Trigger Brain] Timestamp:', new Date(timestamp).toISOString());
+
+  if (!interventionDispatcher) {
+    console.warn('[OS Trigger Brain] No intervention dispatcher set - cannot trigger');
+    return;
   }
 
-  // If there's an intervention in progress for a DIFFERENT app, clear it
-  // This ensures each app gets its own independent intervention
+  // ============================================================================
+  // PRIORITY 1: Quick Task ACTIVE (per-app)
+  // ============================================================================
+  // NOTE: Quick Task timer is PER-APP, not global
+  // Check if THIS SPECIFIC APP has an active Quick Task timer
+  if (hasActiveQuickTaskTimer(packageName, timestamp)) {
+    console.log('[OS Trigger Brain] ✓ Priority 1: Quick Task ACTIVE (per-app)');
+    console.log('[OS Trigger Brain] → SUPPRESS EVERYTHING for this app');
+    console.log('[OS Trigger Brain] → User can use this app freely');
+    return; // Do nothing
+  }
+  console.log('[OS Trigger Brain] ✗ Priority 1: No active Quick Task timer for this app');
+
+  // ============================================================================
+  // PRIORITY 2: Alternative Activity RUNNING (per-app)
+  // ============================================================================
+  // TODO: Check if alternative activity is running for this app
+  // This should check the intervention state for 'action_timer' state
+  // For now, we'll skip this check and implement it when we have access to intervention state
+  console.log('[OS Trigger Brain] ✗ Priority 2: No alternative activity running (check not implemented yet)');
+
+  // ============================================================================
+  // PRIORITY 3: t_intention VALID (per-app)
+  // ============================================================================
+  if (hasValidIntentionTimer(packageName, timestamp)) {
+    console.log('[OS Trigger Brain] ✓ Priority 3: t_intention VALID (per-app)');
+    console.log('[OS Trigger Brain] → SUPPRESS EVERYTHING');
+    console.log('[OS Trigger Brain] → Quick Task dialog MUST NOT appear');
+    console.log('[OS Trigger Brain] → User allowed to use app freely');
+    return; // Do nothing
+  }
+  console.log('[OS Trigger Brain] ✗ Priority 3: No valid intention timer');
+
+  // ============================================================================
+  // PRIORITY 4: n_quickTask > 0 (global)
+  // ============================================================================
+  const quickTaskRemaining = getQuickTaskRemaining(packageName, timestamp);
+  if (quickTaskRemaining > 0) {
+    console.log('[OS Trigger Brain] ✓ Priority 4: n_quickTask > 0 (global)');
+    console.log('[OS Trigger Brain] → SHOW QUICK TASK DIALOG');
+    console.log('[OS Trigger Brain] Quick Task remaining:', quickTaskRemaining);
+    
+    // NOTE: We do NOT set interventionsInProgress flag here
+    // Quick Task is separate from intervention
+    interventionDispatcher({
+      type: 'SHOW_QUICK_TASK',
+      app: packageName,
+      remaining: quickTaskRemaining,
+    });
+    return;
+  }
+  console.log('[OS Trigger Brain] ✗ Priority 4: No Quick Task remaining');
+
+  // ============================================================================
+  // PRIORITY 5: Else → Start Intervention Flow
+  // ============================================================================
+  console.log('[OS Trigger Brain] ✓ Priority 5: START INTERVENTION FLOW');
+  
+  // Clear any previous interventions
   if (interventionsInProgress.size > 0) {
     const oldApps = Array.from(interventionsInProgress);
     interventionsInProgress.clear();
-    console.log('[OS Trigger Brain] Clearing previous intervention(s) for app switch', {
+    console.log('[OS Trigger Brain] Clearing previous intervention(s)', {
       oldApps,
       newApp: packageName,
     });
@@ -159,7 +307,7 @@ function triggerIntervention(packageName: string, timestamp: number): void {
   // Mark intervention as in-progress for this app
   interventionsInProgress.add(packageName);
 
-  // Reset/overwrite intention timer for this app (will be set again after intervention completes)
+  // Reset intention timer (will be set again if user chooses "I really need to use it")
   intentionTimers.delete(packageName);
 
   console.log('[OS Trigger Brain] BEGIN_INTERVENTION dispatched', {
@@ -168,16 +316,13 @@ function triggerIntervention(packageName: string, timestamp: number): void {
     time: new Date(timestamp).toISOString(),
   });
 
-  // Dispatch to intervention state machine (React layer)
-  if (interventionDispatcher) {
-    interventionDispatcher({
-      type: 'BEGIN_INTERVENTION',
-      app: packageName,
-      breathingDuration: getInterventionDurationSec(),
-    });
-  } else {
-    console.warn('[OS Trigger Brain] No intervention dispatcher set - intervention not triggered');
-  }
+  interventionDispatcher({
+    type: 'BEGIN_INTERVENTION',
+    app: packageName,
+    breathingDuration: getInterventionDurationSec(),
+  });
+  
+  console.log('[OS Trigger Brain] ========================================');
 }
 
 /**
@@ -194,6 +339,27 @@ export function setInterventionDispatcher(dispatcher: (action: any) => void): vo
 }
 
 /**
+ * Dispatch SHOW_EXPIRED action to show Quick Task expired screen.
+ * This bypasses the priority chain and shows ONLY the expired screen.
+ * 
+ * Called when native layer detects Quick Task timer expiration.
+ * 
+ * @param packageName - App package name whose Quick Task expired
+ */
+export function dispatchQuickTaskExpired(packageName: string): void {
+  if (!interventionDispatcher) {
+    console.error('[OS Trigger Brain] Cannot dispatch SHOW_EXPIRED - dispatcher not connected');
+    return;
+  }
+  
+  console.log('[OS Trigger Brain] Dispatching SHOW_EXPIRED for app:', packageName);
+  interventionDispatcher({
+    type: 'SHOW_EXPIRED',
+    app: packageName,
+  });
+}
+
+/**
  * Mark intervention as completed for an app.
  * Clears the in-progress flag so future expirations can trigger new interventions.
  * 
@@ -201,6 +367,31 @@ export function setInterventionDispatcher(dispatcher: (action: any) => void): vo
  * 
  * @param packageName - App package name
  */
+/**
+ * Mark intervention as started for a package.
+ * Called when user chooses "Continue" from Quick Task dialog to start intervention.
+ */
+export function onInterventionStarted(packageName: string): void {
+  // Clear any existing interventions (only one at a time)
+  if (interventionsInProgress.size > 0) {
+    const oldApps = Array.from(interventionsInProgress);
+    interventionsInProgress.clear();
+    console.log('[OS Trigger Brain] Clearing previous intervention(s) for new intervention', {
+      oldApps,
+      newApp: packageName,
+    });
+  }
+
+  interventionsInProgress.add(packageName);
+  
+  // Reset intention timer for this app (will be set again after intervention completes)
+  intentionTimers.delete(packageName);
+  
+  console.log('[OS Trigger Brain] Intervention started, set in-progress flag', {
+    packageName,
+  });
+}
+
 export function onInterventionCompleted(packageName: string): void {
   interventionsInProgress.delete(packageName);
   console.log('[OS Trigger Brain] Intervention completed, cleared in-progress flag', {
@@ -347,6 +538,52 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
       });
     }
 
+    // ============================================================================
+    // Step 4A: Check Quick Task timer (HIGHEST PRIORITY)
+    // ============================================================================
+    // Quick Task timer takes priority over intention timer and app switch interval
+    const quickTaskTimer = quickTaskTimers.get(packageName);
+    if (quickTaskTimer && timestamp < quickTaskTimer.expiresAt) {
+      const remainingSec = Math.round((quickTaskTimer.expiresAt - timestamp) / 1000);
+      console.log('[OS Trigger Brain] Valid Quick Task timer exists — allowing app usage', {
+        packageName,
+        expiresAt: quickTaskTimer.expiresAt,
+        expiresAtTime: new Date(quickTaskTimer.expiresAt).toISOString(),
+        currentTimestamp: timestamp,
+        currentTime: new Date(timestamp).toISOString(),
+        remainingMs: quickTaskTimer.expiresAt - timestamp,
+        remainingSec: `${remainingSec}s remaining`,
+      });
+      
+      // Update tracking and return (no intervention)
+      lastForegroundApp = packageName;
+      lastMeaningfulApp = packageName;
+      return;
+    }
+    
+    // If Quick Task timer expired, remove it from both JS and native
+    if (quickTaskTimer && timestamp >= quickTaskTimer.expiresAt) {
+      quickTaskTimers.delete(packageName);
+      
+      // Also clear from native layer
+      try {
+        const { NativeModules, Platform } = require('react-native');
+        if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
+          NativeModules.AppMonitorModule.clearQuickTaskTimer(packageName);
+        }
+      } catch (e) {
+        // Ignore errors - native layer will handle its own expiration
+      }
+      
+      console.log('[OS Trigger Brain] Quick Task timer expired and removed', {
+        packageName,
+        expiresAt: quickTaskTimer.expiresAt,
+      });
+    }
+
+    // ============================================================================
+    // Step 4B: Check intention timer
+    // ============================================================================
     // ALWAYS check if intention timer exists and its status (even on heartbeat events)
     const intentionTimer = intentionTimers.get(packageName);
     
@@ -557,6 +794,143 @@ export function getIntentionTimer(packageName: string): { expiresAt: number } | 
 }
 
 /**
+ * Check if an app has a valid (not expired) intention timer.
+ * Used by priority chain to determine if intervention should be suppressed.
+ * 
+ * @param packageName - App package name
+ * @param timestamp - Current timestamp
+ * @returns true if intention timer exists and hasn't expired
+ */
+function hasValidIntentionTimer(packageName: string, timestamp: number): boolean {
+  const timer = intentionTimers.get(packageName);
+  if (!timer) {
+    return false;
+  }
+  return timestamp < timer.expiresAt;
+}
+
+/**
+ * Set Quick Task timer for an app (called when user activates Quick Task).
+ * 
+ * This function:
+ * 1. Sets the timer in JavaScript memory (for JS-side checks)
+ * 2. Calls native module to store timer (for native-side checks)
+ * 
+ * The native layer needs the timer so it can skip launching InterventionActivity
+ * when the user returns to the monitored app during the Quick Task window.
+ * 
+ * @param packageName - App package name
+ * @param durationMs - Duration in milliseconds (t_quickTask)
+ * @param currentTimestamp - Current timestamp
+ */
+export function setQuickTaskTimer(packageName: string, durationMs: number, currentTimestamp: number): void {
+  // Check if timer already exists and is still valid
+  const existingTimer = quickTaskTimers.get(packageName);
+  if (existingTimer && currentTimestamp < existingTimer.expiresAt) {
+    const remainingSec = Math.round((existingTimer.expiresAt - currentTimestamp) / 1000);
+    console.log('[OS Trigger Brain] Quick Task timer already active, skipping', {
+      packageName,
+      existingExpiresAt: existingTimer.expiresAt,
+      remainingSec: `${remainingSec}s remaining`,
+    });
+    return; // Don't set a new timer or record usage
+  }
+  
+  const expiresAt = currentTimestamp + durationMs;
+  const durationMin = Math.round(durationMs / (60 * 1000));
+  quickTaskTimers.set(packageName, { expiresAt });
+  
+  // Record usage
+  recordQuickTaskUsage(packageName, currentTimestamp);
+  
+  // Store timer in native layer so ForegroundDetectionService can check it
+  // This prevents InterventionActivity from being launched during Quick Task
+  try {
+    const { NativeModules, Platform } = require('react-native');
+    if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
+      NativeModules.AppMonitorModule.storeQuickTaskTimer(packageName, expiresAt);
+      console.log('[OS Trigger Brain] Quick Task timer stored in native layer');
+    }
+  } catch (e) {
+    console.warn('[OS Trigger Brain] Failed to store Quick Task timer in native layer:', e);
+  }
+  
+  console.log('[OS Trigger Brain] Quick Task timer set', {
+    packageName,
+    durationMs,
+    durationMin: `${durationMin}min`,
+    expiresAt,
+    expiresAtTime: new Date(expiresAt).toISOString(),
+  });
+}
+
+/**
+ * Get Quick Task timer for an app (for debugging/testing).
+ */
+export function getQuickTaskTimer(packageName: string): { expiresAt: number } | undefined {
+  return quickTaskTimers.get(packageName);
+}
+
+/**
+ * Check if a specific app has an active Quick Task timer (per-app check).
+ * Used by priority chain to determine if intervention should be suppressed for this app.
+ * 
+ * NOTE: Quick Task timers are PER-APP, not global.
+ * Each app has its own independent Quick Task timer.
+ * Only n_quickTask (usage count) is global.
+ * 
+ * @param packageName - App package name to check
+ * @param timestamp - Current timestamp
+ * @returns true if this specific app has an active Quick Task timer
+ */
+function hasActiveQuickTaskTimer(packageName: string, timestamp: number): boolean {
+  const timer = quickTaskTimers.get(packageName);
+  if (!timer) {
+    return false;
+  }
+  return timestamp < timer.expiresAt;
+}
+
+/**
+ * Check if any Quick Task timer has expired.
+ * Should be called periodically to detect expiration and show QuickTaskExpired screen.
+ * 
+ * @param currentTimestamp - Current timestamp
+ * @returns Package name of app whose Quick Task expired, or null if none expired
+ */
+export function checkQuickTaskExpiration(currentTimestamp: number): string | null {
+  for (const [packageName, timer] of quickTaskTimers.entries()) {
+    if (currentTimestamp >= timer.expiresAt) {
+      // Quick Task expired!
+      console.log('[OS Trigger Brain] Quick Task timer expired!', {
+        packageName,
+        expiresAt: timer.expiresAt,
+        expiresAtTime: new Date(timer.expiresAt).toISOString(),
+        currentTime: new Date(currentTimestamp).toISOString(),
+      });
+      
+      // Remove the expired timer from JS memory
+      quickTaskTimers.delete(packageName);
+      
+      // Also clear from native layer
+      try {
+        const { NativeModules, Platform } = require('react-native');
+        if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
+          NativeModules.AppMonitorModule.clearQuickTaskTimer(packageName);
+          console.log('[OS Trigger Brain] Quick Task timer cleared from native layer');
+        }
+      } catch (e) {
+        console.warn('[OS Trigger Brain] Failed to clear Quick Task timer from native layer:', e);
+      }
+      
+      return packageName;
+    }
+  }
+  
+  return null;
+}
+
+/**
  * Check if intention timer has expired for the current foreground app.
  * Should be called periodically (e.g., every 10 seconds) to detect in-app expiration.
  * 
@@ -654,6 +1028,8 @@ export function resetTrackingState(): void {
   lastMeaningfulExitTimestamps.clear();
   intentionTimers.clear();
   interventionsInProgress.clear();
-  console.log('[OS Trigger Brain] Tracking state reset');
+  quickTaskTimers.clear();
+  quickTaskUsageHistory.length = 0; // Clear global usage history
+  console.log('[OS Trigger Brain] Tracking state reset (including Quick Task state)');
 }
 

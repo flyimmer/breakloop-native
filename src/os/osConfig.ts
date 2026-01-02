@@ -36,6 +36,14 @@ const INTERVENTION_DURATION_SEC = 5; // 5 seconds
  */
 const INTENTION_TIMER_DURATION_MS = 2* 60 * 1000; // 2 minutes
 
+/**
+ * Quick Task feature configuration
+ */
+let QUICK_TASK_DURATION_MS = 3 * 60 * 1000; // Default: 3 minutes
+let QUICK_TASK_USES_PER_WINDOW = 1; // Default: 1 use per window
+const QUICK_TASK_WINDOW_MS = 15 * 60 * 1000; // Fixed: 15 minutes
+let IS_PREMIUM_CUSTOMER = true; // Default: true (for now, assume premium)
+
 // ============================================================================
 // PUBLIC API
 // ============================================================================
@@ -131,6 +139,71 @@ export function setMonitoredApps(packageNames: string[]): void {
     } catch (error) {
       console.error('[osConfig] Failed to update native monitored apps:', error);
     }
+  }
+}
+
+// ============================================================================
+// QUICK TASK CONFIGURATION
+// ============================================================================
+
+/**
+ * Get the Quick Task duration in milliseconds.
+ * 
+ * @returns Duration in milliseconds (default: 3 minutes)
+ */
+export function getQuickTaskDurationMs(): number {
+  return QUICK_TASK_DURATION_MS;
+}
+
+/**
+ * Get the number of Quick Task uses allowed per 15-minute window.
+ * 
+ * @returns Number of uses (default: 1)
+ */
+export function getQuickTaskUsesPerWindow(): number {
+  return QUICK_TASK_USES_PER_WINDOW;
+}
+
+/**
+ * Get the Quick Task window duration in milliseconds.
+ * 
+ * @returns Window duration in milliseconds (fixed: 15 minutes)
+ */
+export function getQuickTaskWindowMs(): number {
+  return QUICK_TASK_WINDOW_MS;
+}
+
+/**
+ * Check if the user is a premium customer.
+ * 
+ * @returns true if premium, false otherwise
+ */
+export function getIsPremiumCustomer(): boolean {
+  return IS_PREMIUM_CUSTOMER;
+}
+
+/**
+ * Update Quick Task configuration.
+ * Called when user saves Quick Task settings in Settings.
+ * 
+ * @param durationMs - Quick Task duration in milliseconds
+ * @param usesPerWindow - Number of uses per 15-minute window
+ * @param isPremium - Whether user is premium customer
+ */
+export function setQuickTaskConfig(
+  durationMs: number,
+  usesPerWindow: number,
+  isPremium: boolean
+): void {
+  QUICK_TASK_DURATION_MS = durationMs;
+  QUICK_TASK_USES_PER_WINDOW = usesPerWindow;
+  IS_PREMIUM_CUSTOMER = isPremium;
+  if (__DEV__) {
+    console.log('[osConfig] Updated Quick Task config:', {
+      durationMs,
+      usesPerWindow,
+      isPremium,
+    });
   }
 }
 

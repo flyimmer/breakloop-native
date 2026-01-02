@@ -24,6 +24,8 @@ export const interventionReducer = (context, action) => {
       // This ensures each app gets its own independent intervention flow
       const isDifferentApp = context.targetApp && context.targetApp !== action.app;
       
+      // ARCHITECTURE: Quick Task is now separate from intervention
+      // Intervention ALWAYS starts with breathing (no Quick Task logic here)
       return {
         ...context,
         state: 'breathing',
@@ -174,6 +176,10 @@ export const interventionReducer = (context, action) => {
         selectedAlternative: null,
         actionTimer: 0,
       };
+
+    // REMOVED: PROCEED_TO_BREATHING and ACTIVATE_QUICK_TASK
+    // Quick Task is now handled by separate QuickTaskProvider
+    // These actions are no longer part of intervention flow
 
     default:
       return context;

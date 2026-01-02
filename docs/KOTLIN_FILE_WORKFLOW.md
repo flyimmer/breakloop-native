@@ -1,5 +1,16 @@
 # Kotlin File Workflow Guide
 
+## 🚨 CRITICAL WARNING FOR AI ASSISTANTS 🚨
+
+**BEFORE EDITING ANY `.kt` FILE:**
+1. ❌ **STOP if path contains `android/app/src/main/`** - This is WRONG!
+2. ✅ **ONLY edit files in `plugins/src/android/`** - This is CORRECT!
+3. ⚠️ Files in `android/app/` are AUTO-GENERATED and will be OVERWRITTEN!
+
+**Rule: If you're about to edit a `.kt` file, check the path FIRST!**
+
+---
+
 ## Directory Structure
 
 ```

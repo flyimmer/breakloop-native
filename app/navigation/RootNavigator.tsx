@@ -7,6 +7,8 @@
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import React from 'react';
 import MainNavigation from './MainNavigation';
+import QuickTaskDialogScreen from '../screens/conscious_process/QuickTaskDialogScreen';
+import QuickTaskExpiredScreen from '../screens/conscious_process/QuickTaskExpiredScreen';
 import BreathingScreen from '../screens/conscious_process/BreathingScreen';
 import RootCauseScreen from '../screens/conscious_process/RootCauseScreen';
 import AlternativesScreen from '../screens/conscious_process/AlternativesScreen';
@@ -18,6 +20,8 @@ import EditMonitoredAppsScreen from '../screens/mainAPP/Settings/EditMonitoredAp
 
 export type RootStackParamList = {
   MainTabs: undefined;
+  QuickTaskDialog: undefined;
+  QuickTaskExpired: undefined;
   Breathing: undefined;
   RootCause: undefined;
   Alternatives: undefined;
@@ -43,6 +47,22 @@ export default function RootNavigator() {
       }}
     >
       <Stack.Screen name="MainTabs" component={MainNavigation} />
+      <Stack.Screen 
+        name="QuickTaskDialog" 
+        component={QuickTaskDialogScreen}
+        options={{
+          presentation: 'fullScreenModal',
+          animation: 'none',
+        }}
+      />
+      <Stack.Screen 
+        name="QuickTaskExpired" 
+        component={QuickTaskExpiredScreen}
+        options={{
+          presentation: 'fullScreenModal',
+          animation: 'none',
+        }}
+      />
       <Stack.Screen name="Breathing" component={BreathingScreen} />
       <Stack.Screen name="RootCause" component={RootCauseScreen} />
       <Stack.Screen name="Alternatives" component={AlternativesScreen} />

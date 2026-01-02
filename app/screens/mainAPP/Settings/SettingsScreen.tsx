@@ -21,7 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/native-modules/AppMonitorModule';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { completeInterventionDEV } from '@/src/os/osTriggerBrain';
-import { setMonitoredApps as updateOsConfigMonitoredApps } from '@/src/os/osConfig';
+import { setMonitoredApps as updateOsConfigMonitoredApps, setQuickTaskConfig, getQuickTaskDurationMs, getQuickTaskUsesPerWindow, getIsPremiumCustomer } from '@/src/os/osConfig';
 import { RootStackParamList } from '../../../navigation/RootNavigator';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
@@ -90,10 +90,19 @@ const SettingsScreen = () => {
 
   // Storage key for monitored apps
   const MONITORED_APPS_STORAGE_KEY = 'monitored_apps_v1';
+  
+  // Quick Task settings state
+  const [quickTaskDuration, setQuickTaskDuration] = useState<number>(3 * 60 * 1000); // Default: 3 minutes in ms
+  const [quickTaskUsesPerWindow, setQuickTaskUsesPerWindow] = useState<number>(1); // Default: 1 use
+  const [isPremium, setIsPremium] = useState<boolean>(false); // Default: free
+  
+  // Storage key for Quick Task settings
+  const QUICK_TASK_SETTINGS_STORAGE_KEY = 'quick_task_settings_v1';
 
   // Load monitored apps from storage on mount
   useEffect(() => {
     loadMonitoredApps();
+    loadQuickTaskSettings();
   }, []);
 
   // Load installed apps cache on mount (for display name lookup)
@@ -142,6 +151,92 @@ const SettingsScreen = () => {
       console.error('Failed to load installed apps cache:', error);
       // Non-critical error - continue without cache
     }
+  };
+
+  // Load Quick Task settings from storage
+  const loadQuickTaskSettings = async () => {
+    try {
+      const stored = await AsyncStorage.getItem(QUICK_TASK_SETTINGS_STORAGE_KEY);
+      if (stored) {
+        const settings = JSON.parse(stored);
+        console.log('[SettingsScreen] 📥 Loaded Quick Task settings from storage:', settings);
+        const durationMs = settings.durationMs || getQuickTaskDurationMs();
+        const usesPerWindow = settings.usesPerWindow || getQuickTaskUsesPerWindow();
+        const isPremiumCustomer = settings.isPremium !== undefined ? settings.isPremium : getIsPremiumCustomer();
+        setQuickTaskDuration(durationMs);
+        setQuickTaskUsesPerWindow(usesPerWindow);
+        setIsPremium(isPremiumCustomer);
+        // Update osConfig with loaded settings
+        setQuickTaskConfig(durationMs, usesPerWindow, isPremiumCustomer);
+      } else {
+        // Load from osConfig defaults
+        const durationMs = getQuickTaskDurationMs();
+        const usesPerWindow = getQuickTaskUsesPerWindow();
+        const isPremiumCustomer = getIsPremiumCustomer();
+        setQuickTaskDuration(durationMs);
+        setQuickTaskUsesPerWindow(usesPerWindow);
+        setIsPremium(isPremiumCustomer);
+        console.log('[SettingsScreen] ℹ️ No Quick Task settings in storage, using osConfig defaults');
+      }
+    } catch (error) {
+      console.error('[SettingsScreen] ❌ Failed to load Quick Task settings:', error);
+      // Use osConfig defaults
+      const durationMs = getQuickTaskDurationMs();
+      const usesPerWindow = getQuickTaskUsesPerWindow();
+      const isPremiumCustomer = getIsPremiumCustomer();
+      setQuickTaskDuration(durationMs);
+      setQuickTaskUsesPerWindow(usesPerWindow);
+      setIsPremium(isPremiumCustomer);
+    }
+  };
+
+  // Save Quick Task settings to storage
+  const saveQuickTaskSettings = async (durationMs: number, usesPerWindow: number, isPremium: boolean) => {
+    try {
+      const settings = {
+        durationMs,
+        usesPerWindow,
+        isPremium,
+      };
+      console.log('[SettingsScreen] 💾 Saving Quick Task settings:', settings);
+      await AsyncStorage.setItem(QUICK_TASK_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+      // Update osConfig immediately
+      setQuickTaskConfig(durationMs, usesPerWindow, isPremium);
+      console.log('[SettingsScreen] ✅ Successfully saved Quick Task settings');
+    } catch (error) {
+      console.error('[SettingsScreen] ❌ Failed to save Quick Task settings:', error);
+      Alert.alert('Error', 'Failed to save Quick Task settings. Please try again.');
+    }
+  };
+
+  // Handle duration selection
+  const handleDurationSelect = (durationMs: number) => {
+    if (!isPremium) {
+      Alert.alert('Premium Feature', 'Upgrade to Premium to customize Quick Task duration.');
+      return;
+    }
+    setQuickTaskDuration(durationMs);
+    saveQuickTaskSettings(durationMs, quickTaskUsesPerWindow, isPremium);
+  };
+
+  // Handle uses per window selection
+  const handleUsesSelect = (uses: number) => {
+    if (!isPremium) {
+      Alert.alert('Premium Feature', 'Upgrade to Premium to customize Quick Task uses.');
+      return;
+    }
+    setQuickTaskUsesPerWindow(uses);
+    saveQuickTaskSettings(quickTaskDuration, uses, isPremium);
+  };
+
+  // Format duration for display
+  const formatDuration = (ms: number): string => {
+    const seconds = ms / 1000;
+    if (seconds < 60) {
+      return `${seconds}s`;
+    }
+    const minutes = seconds / 60;
+    return `${minutes}m`;
   };
 
   // Helper function to get app name from package name
@@ -585,24 +680,142 @@ const SettingsScreen = () => {
               <Zap size={16} color="#52525B" style={styles.sectionIcon} />
               <Text style={styles.sectionTitle}>Quick Task (Emergency)</Text>
             </View>
-            <View style={styles.freeBadge}>
-              <Text style={styles.freeBadgeText}>Free</Text>
-            </View>
+            {isPremium ? (
+              <View style={styles.premiumBadge}>
+                <Text style={styles.premiumBadgeText}>Premium</Text>
+              </View>
+            ) : (
+              <View style={styles.freeBadge}>
+                <Text style={styles.freeBadgeText}>Free</Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.card}>
-            <View style={styles.preferenceRow}>
-              <Text style={styles.preferenceLabel}>Duration</Text>
-              <Text style={styles.preferenceValue}>3 min</Text>
-            </View>
-            <View style={[styles.preferenceRow, styles.preferenceRowLast]}>
-              <Text style={styles.preferenceLabel}>Uses per 15 minutes</Text>
-              <Text style={styles.preferenceValue}>1</Text>
-            </View>
-            <Text style={styles.upgradeHint}>Upgrade to Premium to customize these.</Text>
-            <TouchableOpacity style={styles.upgradeButton}>
-              <Text style={styles.upgradeButtonText}>Upgrade to Premium</Text>
-            </TouchableOpacity>
+            {isPremium ? (
+              <>
+                {/* Duration Selection */}
+                <Text style={styles.quickTaskLabel}>Duration</Text>
+                <View style={styles.quickTaskButtonRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.quickTaskButton,
+                      quickTaskDuration === 10 * 1000 && styles.quickTaskButtonSelected,
+                    ]}
+                    onPress={() => handleDurationSelect(10 * 1000)}
+                  >
+                    <Text
+                      style={[
+                        styles.quickTaskButtonText,
+                        quickTaskDuration === 10 * 1000 && styles.quickTaskButtonTextSelected,
+                      ]}
+                    >
+                      Testing (10 s)
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.quickTaskButton,
+                      quickTaskDuration === 2 * 60 * 1000 && styles.quickTaskButtonSelected,
+                    ]}
+                    onPress={() => handleDurationSelect(2 * 60 * 1000)}
+                  >
+                    <Text
+                      style={[
+                        styles.quickTaskButtonText,
+                        quickTaskDuration === 2 * 60 * 1000 && styles.quickTaskButtonTextSelected,
+                      ]}
+                    >
+                      Short (2m)
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.quickTaskButton,
+                      quickTaskDuration === 3 * 60 * 1000 && styles.quickTaskButtonSelected,
+                    ]}
+                    onPress={() => handleDurationSelect(3 * 60 * 1000)}
+                  >
+                    <Text
+                      style={[
+                        styles.quickTaskButtonText,
+                        quickTaskDuration === 3 * 60 * 1000 && styles.quickTaskButtonTextSelected,
+                      ]}
+                    >
+                      Standard (3m)
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.quickTaskButton,
+                      quickTaskDuration === 5 * 60 * 1000 && styles.quickTaskButtonSelected,
+                    ]}
+                    onPress={() => handleDurationSelect(5 * 60 * 1000)}
+                  >
+                    <Text
+                      style={[
+                        styles.quickTaskButtonText,
+                        quickTaskDuration === 5 * 60 * 1000 && styles.quickTaskButtonTextSelected,
+                      ]}
+                    >
+                      Longer (5m)
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Uses per 15 minutes Selection */}
+                <Text style={[styles.quickTaskLabel, { marginTop: 20 }]}>Quick tasks per 15 minutes</Text>
+                <View style={styles.quickTaskButtonRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.quickTaskButton,
+                      quickTaskUsesPerWindow === 1 && styles.quickTaskButtonSelected,
+                    ]}
+                    onPress={() => handleUsesSelect(1)}
+                  >
+                    <Text
+                      style={[
+                        styles.quickTaskButtonText,
+                        quickTaskUsesPerWindow === 1 && styles.quickTaskButtonTextSelected,
+                      ]}
+                    >
+                      1 use
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.quickTaskButton,
+                      quickTaskUsesPerWindow === 2 && styles.quickTaskButtonSelected,
+                    ]}
+                    onPress={() => handleUsesSelect(2)}
+                  >
+                    <Text
+                      style={[
+                        styles.quickTaskButtonText,
+                        quickTaskUsesPerWindow === 2 && styles.quickTaskButtonTextSelected,
+                      ]}
+                    >
+                      2 uses
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={styles.preferenceRow}>
+                  <Text style={styles.preferenceLabel}>Duration</Text>
+                  <Text style={styles.preferenceValue}>{formatDuration(quickTaskDuration)}</Text>
+                </View>
+                <View style={[styles.preferenceRow, styles.preferenceRowLast]}>
+                  <Text style={styles.preferenceLabel}>Uses per 15 minutes</Text>
+                  <Text style={styles.preferenceValue}>{quickTaskUsesPerWindow}</Text>
+                </View>
+                <Text style={styles.upgradeHint}>Upgrade to Premium to customize these.</Text>
+                <TouchableOpacity style={styles.upgradeButton}>
+                  <Text style={styles.upgradeButtonText}>Upgrade to Premium</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
 
@@ -1045,6 +1258,54 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     fontWeight: '500',
     color: '#52525B',
+  },
+  premiumBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: '#E0DCFC',
+  },
+  premiumBadgeText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+    color: '#7C6FD9',
+  },
+  quickTaskLabel: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: '#18181B',
+    marginBottom: 12,
+  },
+  quickTaskButtonRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 4,
+  },
+  quickTaskButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E4E4E7',
+    backgroundColor: '#FFFFFF',
+    minWidth: 100,
+  },
+  quickTaskButtonSelected: {
+    borderColor: '#22C55E',
+    backgroundColor: '#F0FDF4',
+  },
+  quickTaskButtonText: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+    color: '#52525B',
+    textAlign: 'center',
+  },
+  quickTaskButtonTextSelected: {
+    color: '#22C55E',
+    fontWeight: '600',
   },
   upgradeHint: {
     fontSize: 14,

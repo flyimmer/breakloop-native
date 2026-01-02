@@ -3,8 +3,13 @@ package com.anonymous.breakloopnative
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.os.Build
 import android.provider.Settings
+import android.util.Base64
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
@@ -12,6 +17,7 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.Arguments
+import java.io.ByteArrayOutputStream
 
 class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
     
@@ -22,6 +28,48 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     
     override fun getName(): String {
         return "AppMonitorModule"
+    }
+
+    /**
+     * Convert Drawable to base64 string for React Native Image component
+     * 
+     * @param drawable The app icon drawable
+     * @param size The desired size in pixels (default: 48dp converted to px)
+     * @return Base64 encoded PNG string, or null if conversion fails
+     */
+    private fun drawableToBase64(drawable: Drawable?, size: Int = 192): String? {
+        if (drawable == null) return null
+        
+        return try {
+            // Convert dp to px (assuming ~3x density)
+            val bitmap = when (drawable) {
+                is BitmapDrawable -> drawable.bitmap
+                else -> {
+                    // Create a bitmap from the drawable
+                    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bitmap)
+                    drawable.setBounds(0, 0, canvas.width, canvas.height)
+                    drawable.draw(canvas)
+                    bitmap
+                }
+            }
+            
+            // Resize if needed
+            val resizedBitmap = if (bitmap.width != size || bitmap.height != size) {
+                Bitmap.createScaledBitmap(bitmap, size, size, true)
+            } else {
+                bitmap
+            }
+            
+            // Convert to PNG and encode as base64
+            val outputStream = ByteArrayOutputStream()
+            resizedBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+            val byteArray = outputStream.toByteArray()
+            Base64.encodeToString(byteArray, Base64.NO_WRAP)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to convert drawable to base64: ${e.message}")
+            null
+        }
     }
 
     @ReactMethod
@@ -148,45 +196,123 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     @ReactMethod
     fun finishInterventionActivity() {
         try {
+            android.util.Log.i("AppMonitorModule", "🎯 finishInterventionActivity called!")
             val activity = reactApplicationContext.currentActivity
+            android.util.Log.i("AppMonitorModule", "📍 currentActivity: ${activity?.javaClass?.simpleName ?: "null"}")
+            android.util.Log.i("AppMonitorModule", "📍 Is InterventionActivity? ${activity is InterventionActivity}")
             if (activity is InterventionActivity) {
-                android.util.Log.i("AppMonitorModule", "Finishing InterventionActivity")
-                activity.finish()
+                android.util.Log.i("AppMonitorModule", "🔄 Finishing InterventionActivity")
+                
+                // Get the triggering app from the intent using the constant
+                val triggeringApp = activity.intent.getStringExtra(InterventionActivity.EXTRA_TRIGGERING_APP)
+                android.util.Log.i("AppMonitorModule", "📱 Triggering app from Intent: $triggeringApp")
+                
+                // Debug: Log all intent extras
+                val extras = activity.intent.extras
+                if (extras != null) {
+                    android.util.Log.d("AppMonitorModule", "Intent extras keys: ${extras.keySet()}")
+                    for (key in extras.keySet()) {
+                        android.util.Log.d("AppMonitorModule", "  - $key: ${extras.get(key)}")
+                    }
+                } else {
+                    android.util.Log.w("AppMonitorModule", "⚠️ Intent has NO extras!")
+                }
+                
+                // Launch the monitored app FIRST, before finishing the activity
+                // This ensures the monitored app comes to foreground, not MainActivity
+                if (triggeringApp != null && triggeringApp.isNotEmpty()) {
+                    try {
+                        android.util.Log.i("AppMonitorModule", "🚀 Attempting to launch: $triggeringApp")
+                        val launchIntent = reactApplicationContext.packageManager.getLaunchIntentForPackage(triggeringApp)
+                        if (launchIntent != null) {
+                            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            launchIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                            reactApplicationContext.startActivity(launchIntent)
+                            android.util.Log.i("AppMonitorModule", "✅ Launched monitored app: $triggeringApp")
+                            
+                            // Small delay to ensure the app launches before we finish
+                            Thread.sleep(100)
+                        } else {
+                            android.util.Log.w("AppMonitorModule", "❌ Could not get launch intent for: $triggeringApp")
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("AppMonitorModule", "❌ Failed to launch monitored app: $triggeringApp", e)
+                    }
+                } else {
+                    android.util.Log.w("AppMonitorModule", "⚠️ No triggering app specified, not launching anything")
+                }
+                
+                // Move to background instead of finishing
+                // This prevents MainActivity from appearing
+                android.util.Log.i("AppMonitorModule", "📤 Moving InterventionActivity to background")
+                activity.moveTaskToBack(true)
             } else {
-                android.util.Log.d("AppMonitorModule", "finishInterventionActivity: Not in InterventionActivity, ignoring")
+                android.util.Log.w("AppMonitorModule", "⚠️ finishInterventionActivity: currentActivity is ${activity?.javaClass?.simpleName ?: "null"}, not InterventionActivity - IGNORING")
             }
         } catch (e: Exception) {
-            android.util.Log.e("AppMonitorModule", "Failed to finish InterventionActivity", e)
+            android.util.Log.e("AppMonitorModule", "❌ Failed to finish InterventionActivity", e)
         }
     }
 
     /**
-     * Launch Android home screen
+     * Get the wake reason from InterventionActivity Intent.
      * 
-     * Called by React Native when intervention completes from ReflectionScreen.
-     * Launches the home screen intent, then finishes InterventionActivity.
+     * CRITICAL: JavaScript MUST check this FIRST before running any logic.
+     * 
+     * Possible return values:
+     * - "MONITORED_APP_FOREGROUND" - Normal monitored app detected, run priority chain
+     * - "QUICK_TASK_EXPIRED" - Quick Task timer expired, show expired screen ONLY
+     * - "INTENTION_EXPIRED" - Intention timer expired while app in foreground
+     * - null - Not in InterventionActivity or no wake reason set
+     * 
+     * @param promise Resolves with wake reason string or null
      */
     @ReactMethod
-    fun launchHomeScreen() {
+    fun getWakeReason(promise: Promise) {
         try {
-            android.util.Log.i("AppMonitorModule", "Launching home screen")
-            
-            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-                addCategory(Intent.CATEGORY_HOME)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            reactApplicationContext.startActivity(homeIntent)
-            
-            android.util.Log.i("AppMonitorModule", "Home screen intent launched")
-            
-            // Finish InterventionActivity after launching home screen
             val activity = reactApplicationContext.currentActivity
             if (activity is InterventionActivity) {
-                android.util.Log.i("AppMonitorModule", "Finishing InterventionActivity after launching home")
-                activity.finish()
+                val wakeReason = activity.intent.getStringExtra(InterventionActivity.EXTRA_WAKE_REASON)
+                android.util.Log.i("AppMonitorModule", "getWakeReason: $wakeReason")
+                promise.resolve(wakeReason)
+            } else {
+                android.util.Log.d("AppMonitorModule", "getWakeReason: Not in InterventionActivity")
+                promise.resolve(null)
             }
         } catch (e: Exception) {
-            android.util.Log.e("AppMonitorModule", "Failed to launch home screen", e)
+            android.util.Log.e("AppMonitorModule", "Failed to get wake reason", e)
+            promise.resolve(null)
+        }
+    }
+
+    /**
+     * Update monitored apps list in ForegroundDetectionService
+     * 
+     * Called from React Native when user changes monitored apps in Settings.
+     * Updates the native service's monitored apps list so it knows which apps to intercept.
+     * 
+     * @param packageNames Array of package names to monitor
+     * @param promise Promise to resolve when update is complete
+     */
+    @ReactMethod
+    fun setMonitoredApps(packageNames: com.facebook.react.bridge.ReadableArray, promise: Promise) {
+        try {
+            val apps = mutableSetOf<String>()
+            for (i in 0 until packageNames.size()) {
+                packageNames.getString(i)?.let { apps.add(it) }
+            }
+            
+            android.util.Log.i("AppMonitorModule", "Updating monitored apps list: $apps")
+            ForegroundDetectionService.updateMonitoredApps(apps)
+            
+            val result: WritableMap = Arguments.createMap()
+            result.putBoolean("success", true)
+            result.putInt("count", apps.size)
+            promise.resolve(result)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to update monitored apps", e)
+            promise.reject("UPDATE_FAILED", "Failed to update monitored apps: ${e.message}", e)
         }
     }
 
@@ -212,7 +338,88 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             android.util.Log.e("AppMonitorModule", "Failed to store intention timer", e)
         }
     }
+
+    /**
+     * Store Quick Task timer in SharedPreferences
+     * This allows ForegroundDetectionService to check if Quick Task is active
+     * and skip launching InterventionActivity.
+     * 
+     * IMPORTANT: Quick Task timer is stored per-app. When active, the native layer
+     * should NOT launch InterventionActivity for that app.
+     * 
+     * @param packageName Package name of the app (e.g., "com.instagram.android")
+     * @param expiresAt Timestamp when timer expires (milliseconds since epoch)
+     */
+    @ReactMethod
+    fun storeQuickTaskTimer(packageName: String, expiresAt: Double) {
+        try {
+            val prefs = reactApplicationContext.getSharedPreferences("quick_task_timers", android.content.Context.MODE_PRIVATE)
+            val key = "quick_task_timer_$packageName"
+            val expiresAtLong = expiresAt.toLong()
+            
+            prefs.edit().putLong(key, expiresAtLong).apply()
+            
+            // Also notify the ForegroundDetectionService
+            ForegroundDetectionService.setQuickTaskTimer(packageName, expiresAtLong)
+            
+            val remainingSec = (expiresAtLong - System.currentTimeMillis()) / 1000
+            android.util.Log.i("AppMonitorModule", "🚀 Stored Quick Task timer for $packageName (expires in ${remainingSec}s)")
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to store Quick Task timer", e)
+        }
+    }
+
+    /**
+     * Clear Quick Task timer from SharedPreferences
+     * Called when Quick Task expires or is cancelled.
+     * 
+     * @param packageName Package name of the app
+     */
+    @ReactMethod
+    fun clearQuickTaskTimer(packageName: String) {
+        try {
+            val prefs = reactApplicationContext.getSharedPreferences("quick_task_timers", android.content.Context.MODE_PRIVATE)
+            val key = "quick_task_timer_$packageName"
+            
+            prefs.edit().remove(key).apply()
+            
+            // Also notify the ForegroundDetectionService
+            ForegroundDetectionService.clearQuickTaskTimer(packageName)
+            
+            android.util.Log.i("AppMonitorModule", "🧹 Cleared Quick Task timer for $packageName")
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to clear Quick Task timer", e)
+        }
+    }
     
+    /**
+     * Launch the Android Home screen
+     * Used when Quick Task expires to send user back to home
+     */
+    @ReactMethod
+    fun launchHomeScreen() {
+        try {
+            android.util.Log.i("AppMonitorModule", "🏠 Launching home screen")
+            
+            // Create intent to launch home screen
+            val homeIntent = Intent(Intent.ACTION_MAIN)
+            homeIntent.addCategory(Intent.CATEGORY_HOME)
+            homeIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            reactApplicationContext.startActivity(homeIntent)
+            
+            android.util.Log.i("AppMonitorModule", "✅ Home screen launched")
+            
+            // Also finish the InterventionActivity if we're in it
+            val activity = reactApplicationContext.currentActivity
+            if (activity is InterventionActivity) {
+                android.util.Log.i("AppMonitorModule", "🔄 Finishing InterventionActivity after launching home")
+                activity.finish()
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "❌ Failed to launch home screen", e)
+        }
+    }
+
     /**
      * Launch a specific app by package name
      * Used to return user to monitored app after intervention completes
@@ -316,10 +523,22 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
                     pkgName
                 }
                 
+                // Get app icon and convert to base64
+                val iconBase64 = try {
+                    val icon = packageManager.getApplicationIcon(appInfo)
+                    drawableToBase64(icon)
+                } catch (e: Exception) {
+                    android.util.Log.w("AppMonitorModule", "Failed to get icon for $pkgName: ${e.message}")
+                    null
+                }
+                
                 // Create app object
                 val appMap: WritableMap = Arguments.createMap()
                 appMap.putString("packageName", pkgName)
                 appMap.putString("appName", appName)
+                if (iconBase64 != null) {
+                    appMap.putString("icon", iconBase64)
+                }
                 
                 appsArray.pushMap(appMap)
                 processedCount++
@@ -338,9 +557,18 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
                     val instagramAppInfo = instagramInfo.applicationInfo
                     if (instagramAppInfo != null) {
                         val appName = packageManager.getApplicationLabel(instagramAppInfo).toString()
+                        val iconBase64 = try {
+                            val icon = packageManager.getApplicationIcon(instagramAppInfo)
+                            drawableToBase64(icon)
+                        } catch (e: Exception) {
+                            null
+                        }
                         val appMap: WritableMap = Arguments.createMap()
                         appMap.putString("packageName", "com.instagram.android")
                         appMap.putString("appName", appName)
+                        if (iconBase64 != null) {
+                            appMap.putString("icon", iconBase64)
+                        }
                         appsArray.pushMap(appMap)
                         android.util.Log.e("AppMonitorModule", "✅ Instagram MANUALLY ADDED: $appName")
                     }
@@ -359,9 +587,18 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
                         val tiktokAppInfo = tiktokInfo.applicationInfo
                         if (tiktokAppInfo != null) {
                             val appName = packageManager.getApplicationLabel(tiktokAppInfo).toString()
+                            val iconBase64 = try {
+                                val icon = packageManager.getApplicationIcon(tiktokAppInfo)
+                                drawableToBase64(icon)
+                            } catch (e: Exception) {
+                                null
+                            }
                             val appMap: WritableMap = Arguments.createMap()
                             appMap.putString("packageName", pkg)
                             appMap.putString("appName", appName)
+                            if (iconBase64 != null) {
+                                appMap.putString("icon", iconBase64)
+                            }
                             appsArray.pushMap(appMap)
                             android.util.Log.e("AppMonitorModule", "✅ TikTok MANUALLY ADDED: $appName")
                             break

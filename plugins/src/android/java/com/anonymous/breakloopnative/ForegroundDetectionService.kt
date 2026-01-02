@@ -1,5 +1,16 @@
 package com.anonymous.breakloopnative
 
+/**
+ * ⚠️ SOURCE FILE LOCATION ⚠️
+ * 
+ * This file is located in: plugins/src/android/java/com/anonymous/breakloopnative/
+ * 
+ * DO NOT EDIT the copy in android/app/src/main/java/ - it will be overwritten!
+ * ALWAYS edit this file in the plugins/ directory.
+ * 
+ * The Expo build process copies this file to android/app/ automatically.
+ */
+
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
@@ -69,6 +80,77 @@ class ForegroundDetectionService : AccessibilityService() {
             "com.snapchat.android",
             "com.youtube.android"
         )
+        
+        /**
+         * In-memory Quick Task timers per app.
+         * Maps packageName -> expiration timestamp.
+         * 
+         * Set by JS via AppMonitorModule.storeQuickTaskTimer().
+         * Checked before launching InterventionActivity.
+         */
+        private val quickTaskTimers = mutableMapOf<String, Long>()
+        
+        /**
+         * Set Quick Task timer for an app.
+         * Called from AppMonitorModule when user activates Quick Task.
+         */
+        @JvmStatic
+        fun setQuickTaskTimer(packageName: String, expiresAt: Long) {
+            quickTaskTimers[packageName] = expiresAt
+            val remainingSec = (expiresAt - System.currentTimeMillis()) / 1000
+            Log.i(TAG, "🚀 Quick Task timer set for $packageName (${remainingSec}s remaining)")
+        }
+        
+        /**
+         * Clear Quick Task timer for an app.
+         * Called from AppMonitorModule when Quick Task expires or is cancelled.
+         */
+        @JvmStatic
+        fun clearQuickTaskTimer(packageName: String) {
+            quickTaskTimers.remove(packageName)
+            Log.i(TAG, "🧹 Quick Task timer cleared for $packageName")
+        }
+        
+        /**
+         * Check if there's a valid Quick Task timer for the given app.
+         * 
+         * @param packageName Package name to check
+         * @return true if valid timer exists (not expired), false otherwise
+         */
+        @JvmStatic
+        fun hasValidQuickTaskTimer(packageName: String): Boolean {
+            val expiresAt = quickTaskTimers[packageName] ?: return false
+            val now = System.currentTimeMillis()
+            val isValid = now < expiresAt
+            
+            if (isValid) {
+                val remainingSec = (expiresAt - now) / 1000
+                Log.i(TAG, "✅ Valid Quick Task timer for $packageName (${remainingSec}s remaining)")
+            } else {
+                // Clean up expired timer
+                quickTaskTimers.remove(packageName)
+                Log.d(TAG, "⏰ Quick Task timer expired for $packageName")
+            }
+            
+            return isValid
+        }
+        
+        /**
+         * Dynamic list of monitored apps (synced from React Native).
+         * Used to check if an app should trigger intervention.
+         */
+        private var dynamicMonitoredApps = mutableSetOf<String>()
+        
+        /**
+         * Update the dynamic monitored apps list.
+         * Called from AppMonitorModule when user changes monitored apps in Settings.
+         */
+        @JvmStatic
+        fun updateMonitoredApps(apps: Set<String>) {
+            dynamicMonitoredApps.clear()
+            dynamicMonitoredApps.addAll(apps)
+            Log.i(TAG, "📱 Monitored apps updated: $dynamicMonitoredApps")
+        }
     }
 
     /**
@@ -88,8 +170,9 @@ class ForegroundDetectionService : AccessibilityService() {
     private val timerCheckRunnable = object : Runnable {
         override fun run() {
             checkIntentionTimerExpirations()
-            // Schedule next check in 5 seconds
-            handler.postDelayed(this, 5000)
+            checkQuickTaskTimerExpirations()
+            // Schedule next check in 1 second for accurate Quick Task expiration
+            handler.postDelayed(this, 1000)
         }
     }
 
@@ -128,7 +211,7 @@ class ForegroundDetectionService : AccessibilityService() {
         
         // Start periodic timer expiration checks
         handler.post(timerCheckRunnable)
-        Log.d(TAG, "Started periodic intention timer expiration checks (every 5 seconds)")
+        Log.d(TAG, "Started periodic timer expiration checks (every 1 second)")
     }
 
     /**
@@ -263,23 +346,35 @@ class ForegroundDetectionService : AccessibilityService() {
      * @param skipTimerCheck If true, skip the intention timer check (used when timer already expired)
      */
     private fun launchInterventionActivity(triggeringApp: String, skipTimerCheck: Boolean = false) {
+        // HIGHEST PRIORITY: Check Quick Task timer FIRST
+        // If Quick Task is active for this app, do NOT launch InterventionActivity
+        if (hasValidQuickTaskTimer(triggeringApp)) {
+            Log.i(TAG, "⏭️ Skipping intervention - Quick Task timer ACTIVE for $triggeringApp")
+            return
+        }
+        
         // Check if there's a valid intention timer first (unless we're called from timer expiration check)
         if (!skipTimerCheck && hasValidIntentionTimer(triggeringApp)) {
             Log.i(TAG, "⏭️ Skipping intervention - valid intention timer exists for $triggeringApp")
             return
         }
         
-        Log.i(TAG, "[Accessibility] Launching InterventionActivity for $triggeringApp")
+        Log.i(TAG, "[Accessibility] Launching InterventionActivity with WAKE_REASON=MONITORED_APP_FOREGROUND for $triggeringApp")
         
         try {
             val intent = Intent(this, InterventionActivity::class.java).apply {
                 // Pass the triggering app to JS
                 putExtra(InterventionActivity.EXTRA_TRIGGERING_APP, triggeringApp)
                 
+                // Set wake reason - this tells JS to run normal priority chain
+                putExtra(InterventionActivity.EXTRA_WAKE_REASON, InterventionActivity.WAKE_REASON_MONITORED_APP)
+                
                 // Required flags for launching from Service context
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT) // Ensure InterventionActivity appears on top
+                addFlags(Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT) // Force activity to foreground
             }
             
             startActivity(intent)
@@ -336,6 +431,76 @@ class ForegroundDetectionService : AccessibilityService() {
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error checking intention timer expirations", e)
+        }
+    }
+    
+    /**
+     * Launch InterventionActivity specifically for Quick Task expiration.
+     * 
+     * CRITICAL: Sets WAKE_REASON = QUICK_TASK_EXPIRED
+     * JavaScript MUST check this and bypass the normal priority chain.
+     * 
+     * @param packageName Package name of the app whose Quick Task expired
+     */
+    private fun launchInterventionActivityForQuickTaskExpired(packageName: String) {
+        Log.i(TAG, "[Quick Task Expired] Launching InterventionActivity with WAKE_REASON=QUICK_TASK_EXPIRED")
+        
+        try {
+            val intent = Intent(this, InterventionActivity::class.java).apply {
+                // Pass the package name (for reference only)
+                putExtra(InterventionActivity.EXTRA_TRIGGERING_APP, packageName)
+                
+                // CRITICAL: Set wake reason so JS knows to bypass priority chain
+                putExtra(InterventionActivity.EXTRA_WAKE_REASON, InterventionActivity.WAKE_REASON_QUICK_TASK_EXPIRED)
+                
+                // Required flags for launching from Service context
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                addFlags(Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT)
+            }
+            
+            startActivity(intent)
+            Log.d(TAG, "  └─ InterventionActivity launched for Quick Task expiration")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to launch InterventionActivity for Quick Task expiration", e)
+        }
+    }
+    
+    /**
+     * Check if any Quick Task timers have expired.
+     * Called periodically (every 1 second) to detect expiration.
+     * When expired, launches InterventionActivity to show QuickTaskExpiredScreen.
+     */
+    private fun checkQuickTaskTimerExpirations() {
+        try {
+            val now = System.currentTimeMillis()
+            val expiredApps = mutableListOf<String>()
+            
+            // Find all expired timers
+            for ((packageName, expiresAt) in quickTaskTimers) {
+                if (now >= expiresAt) {
+                    expiredApps.add(packageName)
+                    val expiredSec = (now - expiresAt) / 1000
+                    Log.i(TAG, "⏰ Quick Task timer EXPIRED for $packageName (expired ${expiredSec}s ago)")
+                }
+            }
+            
+            // Process expired timers
+            for (packageName in expiredApps) {
+                // Remove from map
+                quickTaskTimers.remove(packageName)
+                
+                // Launch InterventionActivity with Quick Task expired flag
+                // The React Native layer will detect this and navigate to QuickTaskExpiredScreen
+                Log.i(TAG, "🚨 Launching InterventionActivity for expired Quick Task: $packageName")
+                launchInterventionActivityForQuickTaskExpired(packageName)
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error checking Quick Task timer expirations", e)
         }
     }
     

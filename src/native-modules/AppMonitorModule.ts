@@ -112,6 +112,67 @@ interface IAppMonitorModule {
    * @returns Promise with success status and count of apps
    */
   setMonitoredApps(packageNames: string[]): Promise<{ success: boolean; count: number }>;
+
+  /**
+   * Store Quick Task timer in native layer
+   * 
+   * When called, the native ForegroundDetectionService will NOT launch InterventionActivity
+   * for this app until the timer expires.
+   * 
+   * @param packageName - Package name of the app (e.g., "com.instagram.android")
+   * @param expiresAt - Timestamp when timer expires (milliseconds since epoch)
+   */
+  storeQuickTaskTimer(packageName: string, expiresAt: number): void;
+
+  /**
+   * Clear Quick Task timer from native layer
+   * 
+   * @param packageName - Package name of the app
+   */
+  clearQuickTaskTimer(packageName: string): void;
+
+  /**
+   * Finish InterventionActivity and return to the monitored app
+   * 
+   * Called when user completes Quick Task or intervention.
+   * The native code will launch the monitored app and move InterventionActivity to background.
+   */
+  finishInterventionActivity(): void;
+
+  /**
+   * Launch Android home screen and finish InterventionActivity
+   */
+  launchHomeScreen(): void;
+
+  /**
+   * Launch a specific app by package name
+   * 
+   * @param packageName - Package name to launch
+   */
+  launchApp(packageName: string): void;
+
+  /**
+   * Get the initial triggering app from InterventionActivity Intent.
+   * Returns the package name of the app that triggered the intervention, or null.
+   * 
+   * @returns Promise resolving to package name or null
+   */
+  getInitialTriggeringApp(): Promise<string | null>;
+
+  /**
+   * Get the wake reason from InterventionActivity Intent.
+   * 
+   * CRITICAL: JavaScript MUST check this FIRST before running any logic.
+   * 
+   * Possible return values:
+   * - "MONITORED_APP_FOREGROUND" - Normal monitored app detected, run priority chain
+   * - "QUICK_TASK_EXPIRED" - Quick Task timer expired, show expired screen ONLY
+   * - "INTENTION_EXPIRED" - Intention timer expired while app in foreground
+   * - null - Not in InterventionActivity or no wake reason set
+   * 
+   * @returns Promise resolving to wake reason string or null
+   */
+  getWakeReason(): Promise<string | null>;
 }
 
 /**

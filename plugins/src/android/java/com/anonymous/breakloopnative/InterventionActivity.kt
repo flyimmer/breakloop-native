@@ -11,13 +11,25 @@ import com.facebook.react.defaults.DefaultReactActivityDelegate
 import expo.modules.ReactActivityDelegateWrapper
 
 /**
- * InterventionActivity - Dedicated Activity for Intervention UI Only
+ * InterventionActivity - OS-Level System Surface
+ * 
+ * CONCEPTUAL ROLE (IMPORTANT):
+ * This activity is conceptually a neutral "System Surface" that hosts OS-level UI.
+ * It is NOT exclusively for interventions - it hosts MULTIPLE independent flows:
+ * 
+ * 1. Quick Task Flow (Emergency bypass)
+ * 2. Intervention Flow (Conscious process)
+ * 
+ * The activity itself is INFRASTRUCTURE, not semantics.
+ * JavaScript (OS Trigger Brain) decides which flow to render inside this surface.
+ * 
+ * For full architecture, see: docs/SYSTEM_SURFACE_ARCHITECTURE.md
  * 
  * WHY A DEDICATED ACTIVITY?
- * - Ensures ONLY the intervention experience is shown (no main app UI flash)
- * - Allows the app to wake from killed state directly into intervention
- * - Provides clean separation: MainActivity = main app UI, InterventionActivity = intervention only
- * - Prevents user from accidentally seeing tabs/settings when being interrupted
+ * - Appears on top of other apps with full-screen takeover
+ * - Allows the app to wake from killed state directly into OS-level UI
+ * - Clean separation: MainActivity = main app UI, InterventionActivity = OS-level UI
+ * - Prevents user from accidentally seeing tabs/settings during interruption
  * 
  * KEY ARCHITECTURAL CHOICES:
  * 
@@ -72,6 +84,28 @@ class InterventionActivity : ReactActivity() {
          * Used by JS to identify which monitored app was detected
          */
         const val EXTRA_TRIGGERING_APP = "triggeringApp"
+        
+        /**
+         * Intent extra key for WAKE REASON.
+         * 
+         * This is the CRITICAL mechanism for semantic separation.
+         * Native code sets WHY the System Surface is being launched.
+         * JavaScript reads this to decide WHAT to do.
+         * 
+         * Possible values:
+         * - "MONITORED_APP_FOREGROUND" - Normal monitored app detected, run priority chain
+         * - "QUICK_TASK_EXPIRED" - Quick Task timer expired, show expired screen ONLY
+         * - "INTENTION_EXPIRED" - Intention timer expired while app in foreground
+         * 
+         * IMPORTANT: JavaScript MUST check this FIRST before running any logic.
+         * If wake reason is QUICK_TASK_EXPIRED, the priority chain MUST NOT run.
+         */
+        const val EXTRA_WAKE_REASON = "wakeReason"
+        
+        // Wake reason values
+        const val WAKE_REASON_MONITORED_APP = "MONITORED_APP_FOREGROUND"
+        const val WAKE_REASON_QUICK_TASK_EXPIRED = "QUICK_TASK_EXPIRED"
+        const val WAKE_REASON_INTENTION_EXPIRED = "INTENTION_EXPIRED"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -101,29 +135,32 @@ class InterventionActivity : ReactActivity() {
         super.onNewIntent(intent)
         setIntent(intent) // Update Intent for subsequent getIntent() calls
         
-        intent.getStringExtra(EXTRA_TRIGGERING_APP)?.let { triggeringApp ->
-            Log.i(TAG, "🔄 onNewIntent - New trigger: $triggeringApp")
-            
-            // Send event to React Native to trigger new intervention
-            val reactContext = AppMonitorService.getReactContext()
-            if (reactContext != null && reactContext.hasActiveReactInstance()) {
-                try {
-                    val params = com.facebook.react.bridge.Arguments.createMap().apply {
-                        putString("packageName", triggeringApp)
-                        putDouble("timestamp", System.currentTimeMillis().toDouble())
-                    }
-                    
-                    reactContext
-                        .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                        .emit("onNewInterventionTrigger", params)
-                    
-                    Log.i(TAG, "  └─ Sent onNewInterventionTrigger event to React Native")
-                } catch (e: Exception) {
-                    Log.e(TAG, "  └─ Failed to send event to React Native", e)
+        val triggeringApp = intent.getStringExtra(EXTRA_TRIGGERING_APP)
+        val wakeReason = intent.getStringExtra(EXTRA_WAKE_REASON)
+        
+        Log.i(TAG, "🔄 onNewIntent - Trigger: $triggeringApp, WakeReason: $wakeReason")
+        
+        // Send event to React Native with wake reason
+        // JavaScript will decide what to do based on wake reason
+        val reactContext = AppMonitorService.getReactContext()
+        if (reactContext != null && reactContext.hasActiveReactInstance()) {
+            try {
+                val params = com.facebook.react.bridge.Arguments.createMap().apply {
+                    putString("packageName", triggeringApp ?: "")
+                    putDouble("timestamp", System.currentTimeMillis().toDouble())
+                    putString("wakeReason", wakeReason ?: WAKE_REASON_MONITORED_APP)
                 }
-            } else {
-                Log.w(TAG, "  └─ React context not available, cannot notify React Native")
+                
+                reactContext
+                    .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                    .emit("onNewInterventionTrigger", params)
+                
+                Log.i(TAG, "  └─ Sent onNewInterventionTrigger event with wakeReason=$wakeReason")
+            } catch (e: Exception) {
+                Log.e(TAG, "  └─ Failed to send event to React Native", e)
             }
+        } else {
+            Log.w(TAG, "  └─ React context not available, cannot notify React Native")
         }
     }
 

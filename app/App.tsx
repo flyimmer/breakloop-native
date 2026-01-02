@@ -1,5 +1,27 @@
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { InterventionProvider, useIntervention } from '@/src/contexts/InterventionProvider';
+import { QuickTaskProvider, useQuickTask } from '@/src/contexts/QuickTaskProvider';
+import { 
+  getInterventionDurationSec, 
+  isMonitoredApp, 
+  setMonitoredApps,
+  setQuickTaskConfig,
+  getQuickTaskDurationMs,
+  getQuickTaskUsesPerWindow,
+  getIsPremiumCustomer
+} from '@/src/os/osConfig';
+import {
+  checkBackgroundIntentionExpiration,
+  checkForegroundIntentionExpiration,
+  checkQuickTaskExpiration,
+  dispatchQuickTaskExpired,
+  getIntentionTimer,
+  getQuickTaskRemaining,
+  getQuickTaskTimer,
+  handleForegroundAppChange,
+  setInterventionDispatcher
+} from '@/src/os/osTriggerBrain';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   DarkTheme,
   DefaultTheme,
@@ -11,15 +33,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import RootNavigator from './navigation/RootNavigator';
-import { 
-  handleForegroundAppChange, 
-  checkForegroundIntentionExpiration,
-  checkBackgroundIntentionExpiration,
-  setInterventionDispatcher,
-  getIntentionTimer
-} from '@/src/os/osTriggerBrain';
-import { isMonitoredApp, getInterventionDurationSec, setMonitoredApps } from '@/src/os/osConfig';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -34,18 +47,34 @@ function InterventionNavigationHandler() {
   const navigationRef = useRef<NavigationContainerRef<any>>(null);
   const colorScheme = useColorScheme();
   const { interventionState, dispatchIntervention } = useIntervention();
+  const { quickTaskState, dispatchQuickTask } = useQuickTask();
   const { state, targetApp } = interventionState;
   const previousStateRef = useRef<string>(state);
   const previousTargetAppRef = useRef<any>(targetApp);
   const hasCheckedInitialTrigger = useRef<boolean>(false);
 
   /**
-   * Connect OS Trigger Brain to React intervention system
+   * Connect OS Trigger Brain to React system
+   * Creates a unified dispatcher that routes to Quick Task or Intervention
    * This must run ONCE on mount to wire up the dispatcher.
    */
   useEffect(() => {
-    setInterventionDispatcher(dispatchIntervention);
-  }, [dispatchIntervention]);
+    // Unified dispatcher: routes Quick Task actions to Quick Task, others to Intervention
+    const unifiedDispatcher = (action: any) => {
+      // Route Quick Task actions to QuickTaskProvider
+      if (action.type === 'SHOW_QUICK_TASK' || 
+          action.type === 'HIDE_QUICK_TASK' ||
+          action.type === 'SHOW_EXPIRED' ||
+          action.type === 'HIDE_EXPIRED') {
+        dispatchQuickTask(action);
+      } else {
+        // Route all other actions to InterventionProvider
+        dispatchIntervention(action);
+      }
+    };
+    
+    setInterventionDispatcher(unifiedDispatcher);
+  }, [dispatchIntervention, dispatchQuickTask]);
 
   /**
    * PHASE F3.5 - Fix #3: Check for initial triggering app
@@ -63,38 +92,114 @@ function InterventionNavigationHandler() {
 
     hasCheckedInitialTrigger.current = true;
 
-    AppMonitorModule.getInitialTriggeringApp()
-      .then((triggeringApp: string | null) => {
-        if (triggeringApp && isMonitoredApp(triggeringApp)) {
-          // Check if a valid intention timer exists before triggering intervention
-          const intentionTimer = getIntentionTimer(triggeringApp);
-          const now = Date.now();
+    // CRITICAL: Check wake reason FIRST before any other logic
+    // This determines WHY the System Surface was launched
+    AppMonitorModule.getWakeReason()
+      .then((wakeReason: string | null) => {
+        if (__DEV__) {
+          console.log('[F3.5] Wake reason:', wakeReason);
+        }
+        
+        // ================================================================
+        // QUICK_TASK_EXPIRED: Terminal boundary event
+        // DO NOT run priority chain, DO NOT evaluate n_quickTask
+        // ================================================================
+        if (wakeReason === 'QUICK_TASK_EXPIRED') {
+          console.log('[F3.5] ⏰ QUICK_TASK_EXPIRED - Bypassing priority chain');
+          console.log('[F3.5] Dispatching SHOW_EXPIRED action');
           
-          if (intentionTimer && now <= intentionTimer.expiresAt) {
-            // Valid timer exists - don't trigger intervention
-            const remainingSec = Math.round((intentionTimer.expiresAt - now) / 1000);
-            if (__DEV__) {
-              console.log(`[F3.5] Triggering app ${triggeringApp} has valid intention timer (${remainingSec}s remaining), skipping intervention`);
-            }
-            return;
-          }
-          
-          if (__DEV__) {
-            console.log(`[F3.5] Triggering app received: ${triggeringApp}`);
-            console.log('[F3.5] Dispatching BEGIN_INTERVENTION');
-          }
-          
-          dispatchIntervention({
-            type: 'BEGIN_INTERVENTION',
-            app: triggeringApp,
-            breathingDuration: getInterventionDurationSec(),
-          });
-        } else if (__DEV__ && triggeringApp) {
-          console.log(`[F3.5] Triggering app ${triggeringApp} is not monitored, ignoring`);
+          // Get the triggering app and dispatch SHOW_EXPIRED
+          return AppMonitorModule.getInitialTriggeringApp()
+            .then((triggeringApp: string | null) => {
+              if (!triggeringApp) {
+                console.error('[F3.5] No triggering app found for QUICK_TASK_EXPIRED');
+                return;
+              }
+              
+              console.log('[F3.5] Dispatching SHOW_EXPIRED for app:', triggeringApp);
+              dispatchQuickTask({
+                type: 'SHOW_EXPIRED',
+                app: triggeringApp,
+              });
+            })
+            .catch((error: any) => {
+              console.error('[F3.5] Failed to get triggering app for QUICK_TASK_EXPIRED:', error);
+            });
+        }
+        
+        // ================================================================
+        // MONITORED_APP_FOREGROUND: Normal wake - run priority chain
+        // ================================================================
+        if (wakeReason === 'MONITORED_APP_FOREGROUND') {
+          return AppMonitorModule.getInitialTriggeringApp()
+            .then((triggeringApp: string | null) => {
+              if (!triggeringApp || !isMonitoredApp(triggeringApp)) {
+                if (__DEV__ && triggeringApp) {
+                  console.log(`[F3.5] Triggering app ${triggeringApp} is not monitored, ignoring`);
+                }
+                return;
+              }
+              
+              const now = Date.now();
+              
+              // Check if a valid Quick Task timer exists (HIGHEST PRIORITY)
+              const quickTaskTimer = getQuickTaskTimer(triggeringApp);
+              if (quickTaskTimer && now < quickTaskTimer.expiresAt) {
+                const remainingSec = Math.round((quickTaskTimer.expiresAt - now) / 1000);
+                if (__DEV__) {
+                  console.log(`[F3.5] Triggering app ${triggeringApp} has valid Quick Task timer (${remainingSec}s remaining), skipping intervention`);
+                }
+                return;
+              }
+              
+              // Check if a valid intention timer exists before triggering intervention
+              const intentionTimer = getIntentionTimer(triggeringApp);
+              if (intentionTimer && now <= intentionTimer.expiresAt) {
+                const remainingSec = Math.round((intentionTimer.expiresAt - now) / 1000);
+                if (__DEV__) {
+                  console.log(`[F3.5] Triggering app ${triggeringApp} has valid intention timer (${remainingSec}s remaining), skipping intervention`);
+                }
+                return;
+              }
+              
+              if (__DEV__) {
+                console.log(`[F3.5] Triggering app received: ${triggeringApp}`);
+              }
+              
+              // Check Quick Task availability (run priority chain)
+              const quickTaskRemaining = getQuickTaskRemaining(triggeringApp, now);
+              
+              if (quickTaskRemaining > 0) {
+                // Show Quick Task decision screen
+                if (__DEV__) {
+                  console.log('[F3.5] Dispatching SHOW_QUICK_TASK');
+                }
+                dispatchQuickTask({
+                  type: 'SHOW_QUICK_TASK',
+                  app: triggeringApp,
+                  remaining: quickTaskRemaining,
+                });
+              } else {
+                // Start intervention directly
+                if (__DEV__) {
+                  console.log('[F3.5] Dispatching BEGIN_INTERVENTION (no Quick Task available)');
+                }
+                dispatchIntervention({
+                  type: 'BEGIN_INTERVENTION',
+                  app: triggeringApp,
+                  breathingDuration: getInterventionDurationSec(),
+                });
+              }
+            });
+        }
+        
+        // No wake reason or unknown - likely launched from MainActivity, do nothing
+        if (__DEV__) {
+          console.log('[F3.5] No wake reason or unknown wake reason, skipping');
         }
       })
       .catch((error: any) => {
-        console.error('[F3.5] Failed to get initial triggering app:', error);
+        console.error('[F3.5] Failed to get wake reason:', error);
       });
   }, [dispatchIntervention]);
 
@@ -132,7 +237,6 @@ function InterventionNavigationHandler() {
       console.log('[F3.5] App to launch:', appToLaunch);
       
       // If intervention completed from reflection screen, launch home screen
-      // Otherwise, just finish InterventionActivity (returns to monitored app)
       if (previousState === 'reflection') {
         console.log('[F3.5] Intervention completed from reflection screen, launching home screen');
         try {
@@ -141,12 +245,14 @@ function InterventionNavigationHandler() {
         } catch (error) {
           console.error('[F3.5] launchHomeScreen threw error:', error);
         }
-      } else {
-        console.log('[F3.5] Intervention complete, finishing InterventionActivity');
-        console.log('[F3.5] Target app was:', appToLaunch);
+      } 
+      // For all other cases, just finish InterventionActivity
+      // This closes the intervention and returns to the previously foreground app
+      else {
+        console.log('[F3.5] Finishing InterventionActivity (previous state:', previousState, ')');
         try {
           AppMonitorModule.finishInterventionActivity();
-          console.log('[F3.5] finishInterventionActivity called successfully');
+          console.log('[F3.5] finishInterventionActivity called - monitored app should return to foreground');
         } catch (error) {
           console.error('[F3.5] finishInterventionActivity threw error:', error);
         }
@@ -155,7 +261,45 @@ function InterventionNavigationHandler() {
   }, [state, targetApp]);
 
   /**
-   * Navigation based on intervention state
+   * Finish InterventionActivity when Quick Task is hidden
+   * 
+   * When user activates Quick Task, the Quick Task state changes to hidden.
+   * At that point, we need to finish InterventionActivity to return to the monitored app.
+   * 
+   * The native code will get the triggering app from the Intent and launch it
+   * BEFORE finishing the activity, ensuring the monitored app comes to foreground.
+   */
+  const previousQuickTaskVisibleRef = useRef<boolean>(quickTaskState.visible);
+  
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !AppMonitorModule) {
+      return;
+    }
+
+    // Check if Quick Task was just hidden (visible changed from true to false)
+    if (previousQuickTaskVisibleRef.current === true && quickTaskState.visible === false) {
+      console.log('[Quick Task] Quick Task hidden, finishing InterventionActivity');
+      
+      try {
+        // Native code will launch the monitored app from Intent, then finish the activity
+        AppMonitorModule.finishInterventionActivity();
+        console.log('[Quick Task] finishInterventionActivity called - monitored app should return to foreground');
+      } catch (error) {
+        console.error('[Quick Task] finishInterventionActivity threw error:', error);
+      }
+    }
+
+    // Update ref
+    previousQuickTaskVisibleRef.current = quickTaskState.visible;
+  }, [quickTaskState.visible]);
+
+  /**
+   * Navigation based on Quick Task and Intervention state
+   * 
+   * ARCHITECTURE: Quick Task has HIGHER PRIORITY
+   * - Check Quick Task state first
+   * - If Quick Task visible, show Quick Task screen
+   * - Otherwise, use intervention state for navigation
    * 
    * IMPORTANT: Also watches targetApp to detect app switches.
    * When targetApp changes (user switches from Instagram to TikTok during intervention),
@@ -168,6 +312,46 @@ function InterventionNavigationHandler() {
 
     const stateChanged = state !== previousStateRef.current;
     const appChanged = targetApp !== previousTargetAppRef.current;
+
+    // HIGHEST PRIORITY: Check Quick Task expired state first
+    // This is a terminal boundary event - show ONLY expired screen
+    if (quickTaskState.showExpired) {
+      if (__DEV__) {
+        console.log('[Navigation] Quick Task expired, navigating to QuickTaskExpired');
+      }
+      navigationRef.current.navigate('QuickTaskExpired');
+      // Update refs
+      previousStateRef.current = state;
+      previousTargetAppRef.current = targetApp;
+      return;
+    }
+
+    // SECOND PRIORITY: Check Quick Task visible state
+    // This must be checked BEFORE the early return, because quickTaskState.visible
+    // can change independently of intervention state/targetApp
+    if (quickTaskState.visible) {
+      if (__DEV__) {
+        console.log('[Navigation] Quick Task visible, navigating to QuickTaskDialog');
+      }
+      navigationRef.current.navigate('QuickTaskDialog');
+      // Update refs
+      previousStateRef.current = state;
+      previousTargetAppRef.current = targetApp;
+      return;
+    }
+
+    // If Quick Task was just hidden (user activated Quick Task), the screen should close
+    // The finishInterventionActivity useEffect will handle closing the activity
+    // We don't need to navigate anywhere - just let the activity close
+    if (previousQuickTaskVisibleRef.current === true && !quickTaskState.visible) {
+      if (__DEV__) {
+        console.log('[Navigation] Quick Task hidden, waiting for InterventionActivity to finish');
+      }
+      // Update refs
+      previousStateRef.current = state;
+      previousTargetAppRef.current = targetApp;
+      return;
+    }
 
     // If neither state nor app changed, do nothing
     if (!stateChanged && !appChanged) {
@@ -190,7 +374,7 @@ function InterventionNavigationHandler() {
       return;
     }
 
-    // Normal state-based navigation
+    // Normal intervention state-based navigation
     if (state === 'breathing') {
       navigationRef.current.navigate('Breathing');
     } else if (state === 'root-cause') {
@@ -213,12 +397,41 @@ function InterventionNavigationHandler() {
         console.log('[Navigation] State is idle - InterventionActivity will finish via separate useEffect');
       }
     }
-  }, [state, targetApp]);
+  }, [state, targetApp, quickTaskState.visible, quickTaskState.showExpired]);
+
+  /**
+   * Check for Quick Task expiration
+   * When Quick Task timer expires, navigate to QuickTaskExpired screen
+   */
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      const now = Date.now();
+      
+      // Check for Quick Task expiration
+      const expiredApp = checkQuickTaskExpiration(now);
+      if (expiredApp) {
+        console.log('[App] Quick Task expired for:', expiredApp);
+        console.log('[App] Navigating to QuickTaskExpired screen');
+        
+        // Navigate to QuickTaskExpired screen
+        if (navigationRef.current?.isReady()) {
+          navigationRef.current.navigate('QuickTaskExpired');
+        }
+      }
+    }, 5000); // Check every 5 seconds
+
+    return () => clearInterval(intervalId);
+  }, []);
 
   return (
     <NavigationContainer
       ref={navigationRef}
       theme={colorScheme === 'dark' ? DarkTheme : DefaultTheme}
+      onReady={() => {
+        console.log('[Navigation] ✅ NavigationContainer is READY');
+        console.log('[Navigation] Current state:', state);
+        console.log('[Navigation] Current targetApp:', targetApp);
+      }}
     >
       <RootNavigator />
     </NavigationContainer>
@@ -260,6 +473,57 @@ const App = () => {
     loadMonitoredApps();
   }, []);
 
+  // Load Quick Task settings from storage on app startup
+  useEffect(() => {
+    const loadQuickTaskSettings = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('quick_task_settings_v1');
+        if (stored) {
+          const settings = JSON.parse(stored);
+          const durationMs = settings.durationMs || getQuickTaskDurationMs();
+          const usesPerWindow = settings.usesPerWindow || getQuickTaskUsesPerWindow();
+          const isPremium = settings.isPremium !== undefined ? settings.isPremium : getIsPremiumCustomer();
+          
+          // Update osConfig with loaded settings
+          setQuickTaskConfig(durationMs, usesPerWindow, isPremium);
+          
+          if (__DEV__) {
+            console.log('[App] ✅ Loaded Quick Task settings from storage:', {
+              durationMs,
+              durationMin: Math.round(durationMs / (60 * 1000)),
+              usesPerWindow,
+              isPremium,
+            });
+          }
+        } else {
+          // Use defaults from osConfig
+          const durationMs = getQuickTaskDurationMs();
+          const usesPerWindow = getQuickTaskUsesPerWindow();
+          const isPremium = getIsPremiumCustomer();
+          setQuickTaskConfig(durationMs, usesPerWindow, isPremium);
+          
+          if (__DEV__) {
+            console.log('[App] ℹ️ No Quick Task settings in storage, using defaults:', {
+              durationMs,
+              durationMin: Math.round(durationMs / (60 * 1000)),
+              usesPerWindow,
+              isPremium,
+            });
+          }
+        }
+      } catch (error) {
+        console.error('[App] ❌ Failed to load Quick Task settings:', error);
+        // Use defaults on error
+        const durationMs = getQuickTaskDurationMs();
+        const usesPerWindow = getQuickTaskUsesPerWindow();
+        const isPremium = getIsPremiumCustomer();
+        setQuickTaskConfig(durationMs, usesPerWindow, isPremium);
+      }
+    };
+
+    loadQuickTaskSettings();
+  }, []);
+
   /**
    * STEP 5E — Intention timer expiration checking
    * Periodically checks if intention timers have expired for foreground/background apps.
@@ -271,6 +535,28 @@ const App = () => {
       checkForegroundIntentionExpiration(now);
       checkBackgroundIntentionExpiration(now);
     }, 5000); // Check every 5 seconds
+
+    return () => clearInterval(intervalId);
+  }, []);
+
+  /**
+   * Quick Task timer cleanup (JavaScript memory only)
+   * 
+   * ARCHITECTURE NOTE:
+   * - Native ForegroundDetectionService handles Quick Task expiration detection
+   * - Native launches InterventionActivity with WAKE_REASON = QUICK_TASK_EXPIRED
+   * - JavaScript checks wake reason on mount and navigates directly to QuickTaskExpiredScreen
+   * - This interval ONLY cleans up expired timers from JavaScript memory
+   * - This interval MUST NOT trigger navigation or run priority chain
+   */
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      const now = Date.now();
+      
+      // CLEANUP ONLY - remove expired timers from JS memory
+      // Navigation is handled by native wake reason mechanism
+      checkQuickTaskExpiration(now);
+    }, 5000); // Check every 5 seconds for cleanup
 
     return () => clearInterval(intervalId);
   }, []);
@@ -331,11 +617,28 @@ const App = () => {
     // Listen for new intervention triggers when InterventionActivity gets new intent
     const newTriggerSubscription = emitter.addListener(
       'onNewInterventionTrigger',
-      (event: { packageName: string; timestamp: number }) => {
+      (event: { packageName: string; timestamp: number; wakeReason?: string }) => {
         if (__DEV__) {
-          console.log('[OS] New intervention trigger received:', event.packageName);
+          console.log('[OS] New intervention trigger received:', {
+            packageName: event.packageName,
+            wakeReason: event.wakeReason,
+          });
         }
-        // Pass to OS Trigger Brain to handle intervention
+        
+        // CRITICAL: Check wake reason FIRST
+        // If QUICK_TASK_EXPIRED, dispatch SHOW_EXPIRED action
+        // DO NOT run priority chain
+        if (event.wakeReason === 'QUICK_TASK_EXPIRED') {
+          console.log('[OS] ⏰ QUICK_TASK_EXPIRED - Bypassing priority chain');
+          console.log('[OS] Dispatching SHOW_EXPIRED action');
+          
+          // Dispatch SHOW_EXPIRED action through OS Trigger Brain
+          // This will route to QuickTaskProvider and trigger navigation
+          dispatchQuickTaskExpired(event.packageName);
+          return; // STOP HERE - do not run priority chain
+        }
+        
+        // Normal wake reason - run priority chain
         handleForegroundAppChange({
           packageName: event.packageName,
           timestamp: event.timestamp,
@@ -356,10 +659,12 @@ const App = () => {
 
   return (
     <SafeAreaProvider>
-      <InterventionProvider>
-        <InterventionNavigationHandler />
-        <StatusBar style="auto" />
-      </InterventionProvider>
+      <QuickTaskProvider>
+        <InterventionProvider>
+          <InterventionNavigationHandler />
+          <StatusBar style="auto" />
+        </InterventionProvider>
+      </QuickTaskProvider>
     </SafeAreaProvider>
   );
 };

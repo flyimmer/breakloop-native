@@ -1,0 +1,167 @@
+import React from 'react';
+import { Pressable, StyleSheet, Text, View, Platform, NativeModules } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Clock } from 'lucide-react-native';
+import { useNavigation } from '@react-navigation/native';
+import { resetTrackingState } from '@/src/os/osTriggerBrain';
+import { useQuickTask } from '@/src/contexts/QuickTaskProvider';
+
+const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
+
+/**
+ * QuickTaskExpiredScreen
+ * 
+ * Shown when Quick Task timer expires.
+ * Provides explicit boundary and clean exit from emergency mode.
+ * 
+ * Architecture: Part of Quick Task Flow (Emergency Bypass)
+ * See: docs/SYSTEM_SURFACE_ARCHITECTURE.md - Quick Task Flow
+ * 
+ * Purpose:
+ * - Inform user that emergency window has ended
+ * - Provide explicit "Go Home" action
+ * - Reset timers (t_intention, t_appSwitchInterval)
+ * - Navigate to Home screen
+ * 
+ * Behavior:
+ * - User MUST explicitly close (no auto-dismiss)
+ * - Closing navigates to Home screen
+ * - All timers reset to 0
+ */
+
+export default function QuickTaskExpiredScreen() {
+  const navigation = useNavigation();
+  const { dispatchQuickTask } = useQuickTask();
+
+  const handleClose = () => {
+    console.log('[QuickTaskExpired] User clicked Close & Go Home');
+    
+    // Reset all tracking state (t_intention, t_appSwitchInterval, Quick Task timers)
+    console.log('[QuickTaskExpired] Resetting all tracking state');
+    resetTrackingState();
+    
+    // Reset Quick Task state (hide the expired screen state)
+    console.log('[QuickTaskExpired] Dispatching HIDE_EXPIRED');
+    dispatchQuickTask({ type: 'HIDE_EXPIRED' });
+    
+    // Finish InterventionActivity and launch home screen
+    if (Platform.OS === 'android' && AppMonitorModule) {
+      try {
+        console.log('[QuickTaskExpired] Launching home screen');
+        AppMonitorModule.launchHomeScreen();
+        console.log('[QuickTaskExpired] Home screen launched');
+      } catch (error) {
+        console.error('[QuickTaskExpired] Error launching home screen:', error);
+      }
+    }
+  };
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
+      {/* Icon */}
+      <View style={styles.iconContainer}>
+        <View style={styles.iconCircle}>
+          <Clock size={48} color="#71717A" strokeWidth={1.5} />
+        </View>
+      </View>
+
+      {/* Content */}
+      <View style={styles.contentContainer}>
+        {/* Title */}
+        <Text style={styles.titleText}>Quick Task Ended</Text>
+
+        {/* Description */}
+        <Text style={styles.descriptionText}>
+          Your emergency window is over.{'\n'}
+          It's time to return to what matters.
+        </Text>
+      </View>
+
+      {/* Action */}
+      <View style={styles.actionContainer}>
+        <Pressable
+          onPress={handleClose}
+          style={({ pressed }) => [
+            styles.button,
+            pressed && styles.buttonPressed,
+          ]}
+        >
+          <Text style={styles.buttonText}>Close & Go Home</Text>
+        </Pressable>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0A0A0B', // background (dark mode)
+    paddingHorizontal: 24,
+  },
+  iconContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  iconCircle: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: '#18181B', // surfaceSecondary
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#27272A', // border
+  },
+  contentContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+  },
+  titleText: {
+    fontSize: 28, // h1
+    lineHeight: 36,
+    fontWeight: '700',
+    letterSpacing: -0.4,
+    color: '#FAFAFA', // textPrimary
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  descriptionText: {
+    fontSize: 16, // body
+    lineHeight: 24,
+    fontWeight: '400',
+    color: '#A1A1AA', // textSecondary
+    textAlign: 'center',
+  },
+  actionContainer: {
+    paddingBottom: 32,
+  },
+  button: {
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 8, // radius_8
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#6558B8', // Steady accent color
+    // elevation_1
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  buttonPressed: {
+    opacity: 0.85,
+  },
+  buttonText: {
+    fontSize: 16, // button
+    lineHeight: 24,
+    fontWeight: '600',
+    letterSpacing: 0.1,
+    color: '#FAFAFA', // textPrimary
+  },
+});
+
