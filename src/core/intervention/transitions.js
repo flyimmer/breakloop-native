@@ -18,6 +18,15 @@
  * @returns {Object} New intervention context
  */
 export const interventionReducer = (context, action) => {
+  // Log all actions for debugging
+  if (__DEV__) {
+    console.log('[Intervention Reducer] Action:', action.type, {
+      currentState: context.state,
+      currentBreathingCount: context.breathingCount,
+      action,
+    });
+  }
+
   switch (action.type) {
     case 'BEGIN_INTERVENTION':
       // If intervention is already active for a DIFFERENT app, reset and start fresh
@@ -26,7 +35,7 @@ export const interventionReducer = (context, action) => {
       
       // ARCHITECTURE: Quick Task is now separate from intervention
       // Intervention ALWAYS starts with breathing (no Quick Task logic here)
-      return {
+      const newState = {
         ...context,
         state: 'breathing',
         targetApp: action.app,
@@ -35,10 +44,36 @@ export const interventionReducer = (context, action) => {
         selectedAlternative: null,
         actionTimer: 0,
       };
+      
+      if (__DEV__) {
+        console.log('[Intervention Reducer] BEGIN_INTERVENTION result:', {
+          newState: newState.state,
+          newBreathingCount: newState.breathingCount,
+          targetApp: newState.targetApp,
+        });
+      }
+      
+      return newState;
 
     case 'BREATHING_TICK':
-      if (context.state !== 'breathing') return context;
+      if (context.state !== 'breathing') {
+        if (__DEV__) {
+          console.log('[Intervention Reducer] BREATHING_TICK ignored - not in breathing state');
+        }
+        return context;
+      }
       const newCount = Math.max(0, context.breathingCount - 1);
+      const willTransition = newCount === 0;
+      
+      if (__DEV__) {
+        console.log('[Intervention Reducer] BREATHING_TICK:', {
+          oldCount: context.breathingCount,
+          newCount,
+          willTransition,
+          nextState: willTransition ? 'root-cause' : 'breathing',
+        });
+      }
+      
       return {
         ...context,
         breathingCount: newCount,

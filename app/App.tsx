@@ -396,9 +396,24 @@ function InterventionNavigationHandler() {
     }
 
     // Normal intervention state-based navigation
+    if (__DEV__) {
+      console.log('[Navigation] Navigating based on state:', {
+        state,
+        targetApp,
+        stateChanged,
+        appChanged,
+      });
+    }
+    
     if (state === 'breathing') {
+      if (__DEV__) {
+        console.log('[Navigation] → Breathing screen');
+      }
       navigationRef.current.navigate('Breathing');
     } else if (state === 'root-cause') {
+      if (__DEV__) {
+        console.log('[Navigation] → RootCause screen');
+      }
       navigationRef.current.navigate('RootCause');
     } else if (state === 'alternatives') {
       navigationRef.current.navigate('Alternatives');

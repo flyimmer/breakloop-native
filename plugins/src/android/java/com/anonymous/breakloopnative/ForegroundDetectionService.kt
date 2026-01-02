@@ -400,14 +400,24 @@ class ForegroundDetectionService : AccessibilityService() {
     /**
      * Check if any intention timers have expired and trigger interventions
      * 
-     * This runs periodically (every 5 seconds) to catch timer expirations
+     * This runs periodically (every 1 second) to catch timer expirations
      * even when the React Native app is backgrounded (JS timers don't fire reliably)
+     * 
+     * CRITICAL FIX: Only trigger intervention if the expired timer is for the
+     * CURRENTLY FOREGROUND app. For background apps, just delete the timer -
+     * intervention will trigger when user returns to that app.
+     * 
+     * This prevents cross-app interference where App A's expired timer
+     * would trigger intervention while user is using App B.
      */
     private fun checkIntentionTimerExpirations() {
         try {
             val prefs = getSharedPreferences("intention_timers", MODE_PRIVATE)
             val allPrefs = prefs.all
             val now = System.currentTimeMillis()
+            
+            // Get the currently foreground app
+            val currentForegroundApp = lastPackageName
             
             for ((key, value) in allPrefs) {
                 if (!key.startsWith("intention_timer_")) {
@@ -419,13 +429,28 @@ class ForegroundDetectionService : AccessibilityService() {
                 
                 if (now > expiresAt) {
                     val expiredSec = (now - expiresAt) / 1000
-                    Log.i(TAG, "⏰ Intention timer EXPIRED for $packageName (${expiredSec}s ago) — launching intervention")
                     
-                    // Clear expired timer
-                    prefs.edit().remove(key).apply()
+                    // CRITICAL CHECK: Only trigger intervention if this is the CURRENT foreground app
+                    val isForeground = packageName == currentForegroundApp
                     
-                    // Launch intervention immediately
-                    launchInterventionActivity(packageName, skipTimerCheck = true)
+                    if (isForeground) {
+                        Log.i(TAG, "⏰ Intention timer EXPIRED for FOREGROUND app $packageName (${expiredSec}s ago) — launching intervention")
+                        
+                        // Clear expired timer
+                        prefs.edit().remove(key).apply()
+                        
+                        // Launch intervention for foreground app
+                        launchInterventionActivity(packageName, skipTimerCheck = true)
+                    } else {
+                        Log.i(TAG, "⏰ Intention timer EXPIRED for BACKGROUND app $packageName (${expiredSec}s ago)")
+                        Log.i(TAG, "  └─ Current foreground: $currentForegroundApp")
+                        Log.i(TAG, "  └─ Deleting timer - intervention will trigger when user returns to $packageName")
+                        
+                        // Just delete the timer - DO NOT launch intervention
+                        // When user returns to this app, launchInterventionActivity() will be called
+                        // from onAccessibilityEvent() and will trigger intervention then
+                        prefs.edit().remove(key).apply()
+                    }
                 }
             }
             

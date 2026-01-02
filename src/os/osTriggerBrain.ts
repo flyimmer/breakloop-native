@@ -310,13 +310,32 @@ function triggerIntervention(packageName: string, timestamp: number): void {
   // ============================================================================
   console.log('[OS Trigger Brain] ✓ Priority 5: START INTERVENTION FLOW');
   
-  // Clear any previous interventions
+  // CRITICAL CHECK: If there's already an intervention in progress for a DIFFERENT app,
+  // DO NOT trigger a new intervention. This prevents cross-app interference.
+  // Each app should have its own independent intervention flow.
   if (interventionsInProgress.size > 0) {
     const oldApps = Array.from(interventionsInProgress);
+    const isDifferentApp = !oldApps.includes(packageName);
+    
+    if (isDifferentApp) {
+      console.log('[OS Trigger Brain] ⚠️  Intervention already in progress for different app — BLOCKING new intervention', {
+        requestedApp: packageName,
+        appsInProgress: oldApps,
+        reason: 'Prevent cross-app interference',
+        note: 'Intervention will trigger when user returns to this app',
+      });
+      
+      // DO NOT trigger intervention
+      // DO NOT clear interventionsInProgress
+      // DO NOT dispatch BEGIN_INTERVENTION
+      console.log('[OS Trigger Brain] ========================================');
+      return;
+    }
+    
+    // Same app - clear and restart (this shouldn't happen normally, but handle it)
     interventionsInProgress.clear();
-    console.log('[OS Trigger Brain] Clearing previous intervention(s)', {
-      oldApps,
-      newApp: packageName,
+    console.log('[OS Trigger Brain] Clearing previous intervention for same app', {
+      app: packageName,
     });
   }
 
@@ -954,7 +973,8 @@ export function checkQuickTaskExpiration(currentTimestamp: number): string | nul
  */
 export function checkForegroundIntentionExpiration(currentTimestamp: number): void {
   // Check ALL monitored apps with active intention timers
-  // This works even if we don't have recent foreground events (due to Android task switching quirks)
+  // IMPORTANT: Only trigger intervention for the CURRENT foreground app
+  // For background apps, just delete the expired timer - intervention will trigger on next entry
   
   // Debug: Always log that the check is running
   if (__DEV__ && intentionTimers.size > 0) {
@@ -962,6 +982,7 @@ export function checkForegroundIntentionExpiration(currentTimestamp: number): vo
       currentTimestamp,
       currentTime: new Date(currentTimestamp).toISOString(),
       activeTimers: intentionTimers.size,
+      currentForegroundApp: lastMeaningfulApp,
     });
   }
   
@@ -983,6 +1004,7 @@ export function checkForegroundIntentionExpiration(currentTimestamp: number): vo
         remainingMs,
         remainingSec: `${remainingSec}s`,
         expired: currentTimestamp > timer.expiresAt,
+        isForeground: packageName === lastMeaningfulApp,
       });
     }
     
@@ -990,24 +1012,48 @@ export function checkForegroundIntentionExpiration(currentTimestamp: number): vo
       const expiredMs = currentTimestamp - timer.expiresAt;
       const expiredSec = Math.round(expiredMs / 1000);
       
-      console.log('[OS Trigger Brain] Intention timer expired — triggering intervention', {
-        packageName,
-        expiresAt: timer.expiresAt,
-        expiresAtTime: new Date(timer.expiresAt).toISOString(),
-        currentTimestamp,
-        currentTime: new Date(currentTimestamp).toISOString(),
-        expiredMs,
-        expiredSec: `${expiredSec}s`,
-        assumption: 'User likely still on this app (timer was active)',
-      });
+      // CRITICAL FIX: Only trigger intervention if this is the CURRENT foreground app
+      // For background apps, just delete the timer - intervention will trigger on next entry
+      const isForeground = packageName === lastMeaningfulApp;
       
-      // Clear the expired timer
-      intentionTimers.delete(packageName);
-      
-      // Trigger intervention (Step 5F)
-      // If user is still on this app, InterventionActivity will show immediately
-      // If user switched away, intervention will trigger on next entry
-      triggerIntervention(packageName, currentTimestamp);
+      if (isForeground) {
+        console.log('[OS Trigger Brain] Intention timer expired for FOREGROUND app — triggering intervention', {
+          packageName,
+          expiresAt: timer.expiresAt,
+          expiresAtTime: new Date(timer.expiresAt).toISOString(),
+          currentTimestamp,
+          currentTime: new Date(currentTimestamp).toISOString(),
+          expiredMs,
+          expiredSec: `${expiredSec}s`,
+        });
+        
+        // Clear the expired timer
+        intentionTimers.delete(packageName);
+        
+        // Trigger intervention for foreground app
+        triggerIntervention(packageName, currentTimestamp);
+      } else {
+        console.log('[OS Trigger Brain] Intention timer expired for BACKGROUND app — deleting timer', {
+          packageName,
+          currentForegroundApp: lastMeaningfulApp,
+          expiresAt: timer.expiresAt,
+          expiresAtTime: new Date(timer.expiresAt).toISOString(),
+          currentTimestamp,
+          currentTime: new Date(currentTimestamp).toISOString(),
+          expiredMs,
+          expiredSec: `${expiredSec}s`,
+          note: 'Timer deleted - intervention will trigger when user returns to this app',
+        });
+        
+        // DELETE the expired timer for background app
+        // When user returns to this app, handleForegroundAppChange() will see:
+        // 1. No intention timer exists
+        // 2. App switch interval has elapsed (because timer was set long ago)
+        // 3. Will trigger new intervention at that time
+        intentionTimers.delete(packageName);
+        
+        // DO NOT trigger intervention - wait for user to return to this app
+      }
     }
   }
 }
