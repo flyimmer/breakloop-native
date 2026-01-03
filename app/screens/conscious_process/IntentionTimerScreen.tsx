@@ -1,5 +1,5 @@
-import React from 'react';
-import { NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect } from 'react';
+import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useNavigation } from '@react-navigation/native';
@@ -47,6 +47,17 @@ const DURATION_OPTIONS = [
 export default function IntentionTimerScreen() {
   const { interventionState, dispatchIntervention } = useIntervention();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+
+  // Disable Android hardware back button during intervention
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Return true to prevent default back behavior
+      // User must select a duration to proceed
+      return true;
+    });
+
+    return () => backHandler.remove();
+  }, []);
 
   // Handle duration selection - starts timer immediately
   const handleSelectDuration = (durationMinutes: number) => {

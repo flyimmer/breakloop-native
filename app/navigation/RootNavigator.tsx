@@ -53,6 +53,7 @@ export default function RootNavigator() {
         options={{
           presentation: 'fullScreenModal',
           animation: 'none',
+          gestureEnabled: false, // Disable swipe back gesture
         }}
       />
       <Stack.Screen 
@@ -61,15 +62,58 @@ export default function RootNavigator() {
         options={{
           presentation: 'fullScreenModal',
           animation: 'none',
+          gestureEnabled: false, // Disable swipe back gesture
         }}
       />
-      <Stack.Screen name="Breathing" component={BreathingScreen} />
-      <Stack.Screen name="RootCause" component={RootCauseScreen} />
-      <Stack.Screen name="Alternatives" component={AlternativesScreen} />
-      <Stack.Screen name="ActionConfirmation" component={ActionConfirmationScreen} />
-      <Stack.Screen name="ActivityTimer" component={ActivityTimerScreen} />
-      <Stack.Screen name="Reflection" component={ReflectionScreen} />
-      <Stack.Screen name="IntentionTimer" component={IntentionTimerScreen} />
+      <Stack.Screen 
+        name="Breathing" 
+        component={BreathingScreen}
+        options={{
+          gestureEnabled: false, // Disable swipe back gesture
+        }}
+      />
+      <Stack.Screen 
+        name="RootCause" 
+        component={RootCauseScreen}
+        options={{
+          gestureEnabled: false, // Disable swipe back gesture
+        }}
+      />
+      <Stack.Screen 
+        name="Alternatives" 
+        component={AlternativesScreen}
+        options={{
+          gestureEnabled: false, // Disable swipe back gesture
+        }}
+      />
+      <Stack.Screen 
+        name="ActionConfirmation" 
+        component={ActionConfirmationScreen}
+        options={{
+          gestureEnabled: false, // Disable swipe back gesture
+        }}
+      />
+      <Stack.Screen 
+        name="ActivityTimer" 
+        component={ActivityTimerScreen}
+        options={{
+          gestureEnabled: false, // Disable swipe back gesture
+        }}
+      />
+      <Stack.Screen 
+        name="Reflection" 
+        component={ReflectionScreen}
+        options={{
+          gestureEnabled: false, // Disable swipe back gesture
+        }}
+      />
+      <Stack.Screen 
+        name="IntentionTimer" 
+        component={IntentionTimerScreen}
+        options={{
+          gestureEnabled: false, // Disable swipe back gesture
+        }}
+      />
       <Stack.Screen
         name="EditMonitoredApps"
         component={EditMonitoredAppsScreen}

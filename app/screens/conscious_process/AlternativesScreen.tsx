@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useNavigation } from '@react-navigation/native';
@@ -103,6 +103,17 @@ export default function AlternativesScreen() {
   const { interventionState, dispatchIntervention } = useIntervention();
   const { selectedCauses, selectedAlternative } = interventionState;
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+
+  // Disable Android hardware back button during intervention
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Return true to prevent default back behavior
+      // User must use the close button (X) or "I really need to use it" to exit
+      return true;
+    });
+
+    return () => backHandler.remove();
+  }, []);
 
   // Local state for tabs and saved activities (not in intervention context)
   const [activeTab, setActiveTab] = useState<TabId>('discover');

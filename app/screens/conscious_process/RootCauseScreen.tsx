@@ -1,5 +1,5 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect } from 'react';
+import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { canProceedToAlternatives } from '@/src/core/intervention';
@@ -39,6 +39,17 @@ export default function RootCauseScreen() {
   const { interventionState, dispatchIntervention } = useIntervention();
   const { selectedCauses } = interventionState;
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+
+  // Disable Android hardware back button during intervention
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Return true to prevent default back behavior
+      // User must use the close button (X) to exit intervention
+      return true;
+    });
+
+    return () => backHandler.remove();
+  }, []);
 
   // Check if cause is selected (from intervention context)
   const isCauseSelected = (causeId: string) => {

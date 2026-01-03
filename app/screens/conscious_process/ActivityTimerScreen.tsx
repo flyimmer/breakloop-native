@@ -5,7 +5,7 @@ import {
   shouldTickActionTimer,
 } from '@/src/core/intervention';
 import React, { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 /**
@@ -46,6 +46,17 @@ export default function ActivityTimerScreen() {
   // Intervention state from context
   const { interventionState, dispatchIntervention } = useIntervention();
   const { state, selectedAlternative, actionTimer } = interventionState;
+
+  // Disable Android hardware back button during intervention
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Return true to prevent default back behavior
+      // User must use the "Finish" or "Go back" buttons to navigate
+      return true;
+    });
+
+    return () => backHandler.remove();
+  }, []);
 
   // Only render when in 'action_timer' state
   if (state !== 'action_timer' || !selectedAlternative) {

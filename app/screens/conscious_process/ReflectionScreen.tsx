@@ -1,6 +1,6 @@
 import { useIntervention } from '@/src/contexts/InterventionProvider';
-import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 /**
@@ -37,6 +37,17 @@ export default function ReflectionScreen() {
   const { interventionState, dispatchIntervention } = useIntervention();
   const { state, selectedAlternative } = interventionState;
   const [selectedOption, setSelectedOption] = useState<ReflectionOption>(null);
+
+  // Disable Android hardware back button during intervention
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Return true to prevent default back behavior
+      // User must use the "Continue" button to complete intervention
+      return true;
+    });
+
+    return () => backHandler.remove();
+  }, []);
 
   // Only render when in 'reflection' state
   if (state !== 'reflection') {

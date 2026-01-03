@@ -1,7 +1,7 @@
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { shouldTickBreathing } from '@/src/core/intervention';
 import React, { useEffect, useRef } from 'react';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { Animated, BackHandler, Easing, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 /**
@@ -26,6 +26,17 @@ export default function BreathingScreen() {
 
   // Soft breathing animation (opacity-based, organic feel)
   const breatheAnim = useRef(new Animated.Value(1)).current;
+
+  // Disable Android hardware back button during intervention
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Return true to prevent default back behavior
+      // User cannot exit breathing screen - must complete countdown
+      return true;
+    });
+
+    return () => backHandler.remove();
+  }, []);
 
   // Continuous breathing rhythm animation
   useEffect(() => {

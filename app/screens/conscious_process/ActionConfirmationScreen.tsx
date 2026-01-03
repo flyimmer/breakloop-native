@@ -1,7 +1,7 @@
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { parseDurationToMinutes } from '@/src/core/intervention';
-import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect } from 'react';
+import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 /**
@@ -30,6 +30,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 export default function ActionConfirmationScreen() {
   const { interventionState, dispatchIntervention } = useIntervention();
   const { state, selectedAlternative, selectedCauses } = interventionState;
+
+  // Disable Android hardware back button during intervention
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Return true to prevent default back behavior
+      // User must use the close button (X) or action buttons to navigate
+      return true;
+    });
+
+    return () => backHandler.remove();
+  }, []);
 
   // Only render when in 'action' state
   if (state !== 'action' || !selectedAlternative) {

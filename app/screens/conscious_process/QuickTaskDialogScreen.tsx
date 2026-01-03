@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Pressable, StyleSheet, Text, View, Platform, NativeModules } from 'react-native';
+import { BackHandler, Pressable, StyleSheet, Text, View, Platform, NativeModules } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useQuickTask } from '@/src/contexts/QuickTaskProvider';
@@ -42,9 +42,20 @@ export default function QuickTaskDialogScreen() {
   const { dispatchIntervention } = useIntervention();
   const { quickTaskState, dispatchQuickTask } = useQuickTask();
   const [isProcessing, setIsProcessing] = useState(false);
-  
+
   const { targetApp, remaining: quickTaskRemaining } = quickTaskState;
   const quickTaskWindowMinutes = Math.round(getQuickTaskWindowMs() / (60 * 1000));
+
+  // Disable Android hardware back button during Quick Task decision
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Return true to prevent default back behavior
+      // User must use the close button (X) or action buttons to proceed
+      return true;
+    });
+
+    return () => backHandler.remove();
+  }, []);
 
   // Debug: Log when component mounts and receives data
   useEffect(() => {

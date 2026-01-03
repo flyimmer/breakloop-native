@@ -1,5 +1,5 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, View, Platform, NativeModules } from 'react-native';
+import React, { useEffect } from 'react';
+import { BackHandler, Pressable, StyleSheet, Text, View, Platform, NativeModules } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Clock } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -63,9 +63,20 @@ const getAppDisplayName = (packageName: string | null): string => {
 export default function QuickTaskExpiredScreen() {
   const navigation = useNavigation();
   const { quickTaskState, dispatchQuickTask } = useQuickTask();
-  
+
   // Get friendly app name
   const appName = getAppDisplayName(quickTaskState.expiredApp);
+
+  // Disable Android hardware back button during Quick Task expired screen
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Return true to prevent default back behavior
+      // User must acknowledge the expiration by clicking "Close & Go Home"
+      return true;
+    });
+
+    return () => backHandler.remove();
+  }, []);
 
   const handleClose = () => {
     console.log('[QuickTaskExpired] User clicked Close & Go Home');
