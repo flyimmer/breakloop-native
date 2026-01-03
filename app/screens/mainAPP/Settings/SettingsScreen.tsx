@@ -21,7 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/native-modules/AppMonitorModule';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { completeInterventionDEV } from '@/src/os/osTriggerBrain';
-import { setMonitoredApps as updateOsConfigMonitoredApps, setQuickTaskConfig, getQuickTaskDurationMs, getQuickTaskUsesPerWindow, getIsPremiumCustomer } from '@/src/os/osConfig';
+import { setMonitoredApps as updateOsConfigMonitoredApps, setQuickTaskConfig, getQuickTaskDurationMs, getQuickTaskUsesPerWindow, getIsPremiumCustomer, setInterventionPreferences, getInterventionDurationSec, getAppSwitchIntervalMs } from '@/src/os/osConfig';
 import { RootStackParamList } from '../../../navigation/RootNavigator';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
@@ -96,17 +96,24 @@ const SettingsScreen = () => {
   const [quickTaskUsesPerWindow, setQuickTaskUsesPerWindow] = useState<number>(1); // Default: 1 use
   const [isPremium, setIsPremium] = useState<boolean>(false); // Default: free
   
+  // Intervention preferences state
+  const [interventionDuration, setInterventionDuration] = useState<number>(5); // Default: 5 seconds
+  const [appSwitchInterval, setAppSwitchInterval] = useState<number>(5 * 60 * 1000); // Default: 5 minutes in ms
+  
   // Accessibility service status
   const [isAccessibilityEnabled, setIsAccessibilityEnabled] = useState<boolean>(false);
   const [isCheckingAccessibility, setIsCheckingAccessibility] = useState<boolean>(false);
   
   // Storage key for Quick Task settings
   const QUICK_TASK_SETTINGS_STORAGE_KEY = 'quick_task_settings_v1';
+  // Storage key for Intervention preferences
+  const INTERVENTION_PREFERENCES_STORAGE_KEY = 'intervention_preferences_v1';
 
   // Load monitored apps from storage on mount
   useEffect(() => {
     loadMonitoredApps();
     loadQuickTaskSettings();
+    loadInterventionPreferences();
     checkAccessibilityStatus();
   }, []);
 
@@ -242,6 +249,56 @@ const SettingsScreen = () => {
     }
   };
 
+  // Load Intervention preferences from storage
+  const loadInterventionPreferences = async () => {
+    try {
+      const stored = await AsyncStorage.getItem(INTERVENTION_PREFERENCES_STORAGE_KEY);
+      if (stored) {
+        const preferences = JSON.parse(stored);
+        console.log('[SettingsScreen] 📥 Loaded intervention preferences from storage:', preferences);
+        const durationSec = preferences.interventionDurationSec || getInterventionDurationSec();
+        const intervalMs = preferences.appSwitchIntervalMs || getAppSwitchIntervalMs();
+        setInterventionDuration(durationSec);
+        setAppSwitchInterval(intervalMs);
+        // Update osConfig with loaded preferences
+        setInterventionPreferences(durationSec, intervalMs);
+      } else {
+        // Load from osConfig defaults
+        const durationSec = getInterventionDurationSec();
+        const intervalMs = getAppSwitchIntervalMs();
+        setInterventionDuration(durationSec);
+        setAppSwitchInterval(intervalMs);
+        console.log('[SettingsScreen] ℹ️ No intervention preferences in storage, using osConfig defaults');
+      }
+    } catch (error) {
+      console.error('[SettingsScreen] ❌ Failed to load intervention preferences:', error);
+      // Use osConfig defaults
+      const durationSec = getInterventionDurationSec();
+      const intervalMs = getAppSwitchIntervalMs();
+      setInterventionDuration(durationSec);
+      setAppSwitchInterval(intervalMs);
+    }
+  };
+
+  // Save Intervention preferences to storage
+  // NOTE: Changes apply immediately - setInterventionPreferences() updates in-memory config
+  const saveInterventionPreferences = async (durationSec: number, intervalMs: number) => {
+    try {
+      const preferences = {
+        interventionDurationSec: durationSec,
+        appSwitchIntervalMs: intervalMs,
+      };
+      console.log('[SettingsScreen] 💾 Saving intervention preferences:', preferences);
+      await AsyncStorage.setItem(INTERVENTION_PREFERENCES_STORAGE_KEY, JSON.stringify(preferences));
+      // Update osConfig immediately - applies to next intervention
+      setInterventionPreferences(durationSec, intervalMs);
+      console.log('[SettingsScreen] ✅ Successfully saved intervention preferences (applied immediately)');
+    } catch (error) {
+      console.error('[SettingsScreen] ❌ Failed to save intervention preferences:', error);
+      Alert.alert('Error', 'Failed to save intervention preferences. Please try again.');
+    }
+  };
+
   // Handle duration selection
   const handleDurationSelect = (durationMs: number) => {
     if (!isPremium) {
@@ -274,6 +331,18 @@ const SettingsScreen = () => {
     }
     const minutes = seconds / 60;
     return `${minutes}m`;
+  };
+
+  // Handle intervention duration selection (5-30 seconds)
+  const handleInterventionDurationSelect = (durationSec: number) => {
+    setInterventionDuration(durationSec);
+    saveInterventionPreferences(durationSec, appSwitchInterval);
+  };
+
+  // Handle app switch interval selection (1-30 minutes)
+  const handleAppSwitchIntervalSelect = (intervalMs: number) => {
+    setAppSwitchInterval(intervalMs);
+    saveInterventionPreferences(interventionDuration, intervalMs);
   };
 
   // Helper function to get app name from package name
@@ -699,13 +768,196 @@ const SettingsScreen = () => {
           </View>
 
           <View style={styles.card}>
-            <View style={styles.preferenceRow}>
-              <Text style={styles.preferenceLabel}>Intervention Duration</Text>
-              <Text style={styles.preferenceValue}>5s</Text>
+            {/* Intervention Duration (Breathing Duration) */}
+            <Text style={styles.quickTaskLabel}>Intervention Duration (Breathing)</Text>
+            <Text style={styles.preferencesDescription}>
+              How long the breathing countdown lasts before showing root causes.
+            </Text>
+            <View style={styles.quickTaskButtonRow}>
+              <TouchableOpacity
+                style={[
+                  styles.quickTaskButton,
+                  interventionDuration === 5 && styles.quickTaskButtonSelected,
+                ]}
+                onPress={() => handleInterventionDurationSelect(5)}
+              >
+                <Text
+                  style={[
+                    styles.quickTaskButtonText,
+                    interventionDuration === 5 && styles.quickTaskButtonTextSelected,
+                  ]}
+                >
+                  5s
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.quickTaskButton,
+                  interventionDuration === 10 && styles.quickTaskButtonSelected,
+                ]}
+                onPress={() => handleInterventionDurationSelect(10)}
+              >
+                <Text
+                  style={[
+                    styles.quickTaskButtonText,
+                    interventionDuration === 10 && styles.quickTaskButtonTextSelected,
+                  ]}
+                >
+                  10s
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.quickTaskButton,
+                  interventionDuration === 15 && styles.quickTaskButtonSelected,
+                ]}
+                onPress={() => handleInterventionDurationSelect(15)}
+              >
+                <Text
+                  style={[
+                    styles.quickTaskButtonText,
+                    interventionDuration === 15 && styles.quickTaskButtonTextSelected,
+                  ]}
+                >
+                  15s
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.quickTaskButton,
+                  interventionDuration === 20 && styles.quickTaskButtonSelected,
+                ]}
+                onPress={() => handleInterventionDurationSelect(20)}
+              >
+                <Text
+                  style={[
+                    styles.quickTaskButtonText,
+                    interventionDuration === 20 && styles.quickTaskButtonTextSelected,
+                  ]}
+                >
+                  20s
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.quickTaskButton,
+                  interventionDuration === 30 && styles.quickTaskButtonSelected,
+                ]}
+                onPress={() => handleInterventionDurationSelect(30)}
+              >
+                <Text
+                  style={[
+                    styles.quickTaskButtonText,
+                    interventionDuration === 30 && styles.quickTaskButtonTextSelected,
+                  ]}
+                >
+                  30s
+                </Text>
+              </TouchableOpacity>
             </View>
-            <View style={[styles.preferenceRow, styles.preferenceRowLast]}>
-              <Text style={styles.preferenceLabel}>App Switch Interval</Text>
-              <Text style={styles.preferenceValue}>5m</Text>
+
+            {/* App Switch Interval */}
+            <Text style={[styles.quickTaskLabel, { marginTop: 20 }]}>App Switch Interval</Text>
+            <Text style={styles.preferencesDescription}>
+              Minimum time between interventions for the same app.
+            </Text>
+            <View style={styles.quickTaskButtonRow}>
+              <TouchableOpacity
+                style={[
+                  styles.quickTaskButton,
+                  appSwitchInterval === 1 * 60 * 1000 && styles.quickTaskButtonSelected,
+                ]}
+                onPress={() => handleAppSwitchIntervalSelect(1 * 60 * 1000)}
+              >
+                <Text
+                  style={[
+                    styles.quickTaskButtonText,
+                    appSwitchInterval === 1 * 60 * 1000 && styles.quickTaskButtonTextSelected,
+                  ]}
+                >
+                  1m
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.quickTaskButton,
+                  appSwitchInterval === 5 * 60 * 1000 && styles.quickTaskButtonSelected,
+                ]}
+                onPress={() => handleAppSwitchIntervalSelect(5 * 60 * 1000)}
+              >
+                <Text
+                  style={[
+                    styles.quickTaskButtonText,
+                    appSwitchInterval === 5 * 60 * 1000 && styles.quickTaskButtonTextSelected,
+                  ]}
+                >
+                  5m
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.quickTaskButton,
+                  appSwitchInterval === 10 * 60 * 1000 && styles.quickTaskButtonSelected,
+                ]}
+                onPress={() => handleAppSwitchIntervalSelect(10 * 60 * 1000)}
+              >
+                <Text
+                  style={[
+                    styles.quickTaskButtonText,
+                    appSwitchInterval === 10 * 60 * 1000 && styles.quickTaskButtonTextSelected,
+                  ]}
+                >
+                  10m
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.quickTaskButton,
+                  appSwitchInterval === 15 * 60 * 1000 && styles.quickTaskButtonSelected,
+                ]}
+                onPress={() => handleAppSwitchIntervalSelect(15 * 60 * 1000)}
+              >
+                <Text
+                  style={[
+                    styles.quickTaskButtonText,
+                    appSwitchInterval === 15 * 60 * 1000 && styles.quickTaskButtonTextSelected,
+                  ]}
+                >
+                  15m
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.quickTaskButton,
+                  appSwitchInterval === 20 * 60 * 1000 && styles.quickTaskButtonSelected,
+                ]}
+                onPress={() => handleAppSwitchIntervalSelect(20 * 60 * 1000)}
+              >
+                <Text
+                  style={[
+                    styles.quickTaskButtonText,
+                    appSwitchInterval === 20 * 60 * 1000 && styles.quickTaskButtonTextSelected,
+                  ]}
+                >
+                  20m
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.quickTaskButton,
+                  appSwitchInterval === 30 * 60 * 1000 && styles.quickTaskButtonSelected,
+                ]}
+                onPress={() => handleAppSwitchIntervalSelect(30 * 60 * 1000)}
+              >
+                <Text
+                  style={[
+                    styles.quickTaskButtonText,
+                    appSwitchInterval === 30 * 60 * 1000 && styles.quickTaskButtonTextSelected,
+                  ]}
+                >
+                  30m
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
@@ -1358,6 +1610,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 24,
     color: '#18181B',
+    marginBottom: 12,
+  },
+  preferencesDescription: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#A1A1AA',
     marginBottom: 12,
   },
   quickTaskButtonRow: {
