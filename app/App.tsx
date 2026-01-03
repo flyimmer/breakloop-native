@@ -564,8 +564,8 @@ const App = () => {
         const stored = await AsyncStorage.getItem('quick_task_settings_v1');
         if (stored) {
           const settings = JSON.parse(stored);
-          const durationMs = settings.durationMs || getQuickTaskDurationMs();
-          const usesPerWindow = settings.usesPerWindow || getQuickTaskUsesPerWindow();
+          const durationMs = settings.durationMs !== undefined ? settings.durationMs : getQuickTaskDurationMs();
+          const usesPerWindow = settings.usesPerWindow !== undefined ? settings.usesPerWindow : getQuickTaskUsesPerWindow();
           const isPremium = settings.isPremium !== undefined ? settings.isPremium : getIsPremiumCustomer();
           
           // Update osConfig with loaded settings
