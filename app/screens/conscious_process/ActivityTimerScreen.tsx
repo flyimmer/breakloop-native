@@ -47,6 +47,12 @@ export default function ActivityTimerScreen() {
   const { interventionState, dispatchIntervention } = useIntervention();
   const { state, selectedAlternative, actionTimer } = interventionState;
 
+  // Visibility state (defaults based on settings)
+  // IMPORTANT: Must be declared BEFORE early return to avoid React hooks violation
+  const [visibility, setVisibility] = useState<VisibilityOption>(
+    SHARE_CURRENT_ACTIVITY_ENABLED ? 'Anyone can ask to join' : 'Private'
+  );
+
   // Disable Android hardware back button during intervention
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -58,17 +64,8 @@ export default function ActivityTimerScreen() {
     return () => backHandler.remove();
   }, []);
 
-  // Only render when in 'action_timer' state
-  if (state !== 'action_timer' || !selectedAlternative) {
-    return null;
-  }
-
-  // Visibility state (defaults based on settings)
-  const [visibility, setVisibility] = useState<VisibilityOption>(
-    SHARE_CURRENT_ACTIVITY_ENABLED ? 'Anyone can ask to join' : 'Private'
-  );
-
   // Action timer countdown - dispatch ACTION_TIMER_TICK every second
+  // IMPORTANT: Must be declared BEFORE early return to avoid React hooks violation
   useEffect(() => {
     // Only tick if we're in action_timer state and timer > 0
     if (!shouldTickActionTimer(state, actionTimer)) {
@@ -85,12 +82,18 @@ export default function ActivityTimerScreen() {
   }, [state, actionTimer, dispatchIntervention]);
 
   // Auto-complete when timer reaches 0
+  // IMPORTANT: Must be declared BEFORE early return to avoid React hooks violation
   useEffect(() => {
     if (isActionTimerComplete(state, actionTimer)) {
       // Dispatch FINISH_ACTION to transition to reflection
       dispatchIntervention({ type: 'FINISH_ACTION' });
     }
   }, [state, actionTimer, dispatchIntervention]);
+
+  // Only render when in 'action_timer' state
+  if (state !== 'action_timer' || !selectedAlternative) {
+    return null;
+  }
 
   // Extract activity data from selectedAlternative
   const activityTitle = selectedAlternative.title || 'Activity';

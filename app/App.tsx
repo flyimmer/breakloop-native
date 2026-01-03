@@ -241,27 +241,15 @@ function InterventionNavigationHandler() {
       console.log('[F3.5] App to launch:', appToLaunch);
       console.log('[F3.5] Was canceled:', wasCanceled);
       
-      // If intervention was canceled (user clicked X) or completed from reflection screen, launch home screen
-      if (wasCanceled || previousState === 'reflection') {
-        const reason = wasCanceled ? 'intervention canceled' : 'intervention completed from reflection screen';
-        console.log(`[F3.5] ${reason}, launching home screen`);
-        try {
-          AppMonitorModule.launchHomeScreen();
-          console.log('[F3.5] launchHomeScreen called successfully');
-        } catch (error) {
-          console.error('[F3.5] launchHomeScreen threw error:', error);
-        }
-      } 
-      // For all other cases, just finish InterventionActivity
-      // This closes the intervention and returns to the previously foreground app
-      else {
-        console.log('[F3.5] Finishing InterventionActivity (previous state:', previousState, ')');
-        try {
-          AppMonitorModule.finishInterventionActivity();
-          console.log('[F3.5] finishInterventionActivity called - monitored app should return to foreground');
-        } catch (error) {
-          console.error('[F3.5] finishInterventionActivity threw error:', error);
-        }
+      // IMPORTANT: Always use finishInterventionActivity() to close the intervention
+      // This method handles launching the monitored app and moving the activity to background
+      // Using launchHomeScreen() causes race conditions and "View not attached" errors
+      console.log('[F3.5] Finishing InterventionActivity (previous state:', previousState, ')');
+      try {
+        AppMonitorModule.finishInterventionActivity();
+        console.log('[F3.5] finishInterventionActivity called - monitored app should return to foreground');
+      } catch (error) {
+        console.error('[F3.5] finishInterventionActivity threw error:', error);
       }
     }
   }, [state, targetApp, interventionState.wasCanceled]);
