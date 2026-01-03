@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -99,6 +100,9 @@ type SavedActivity = {
   source: 'discover' | 'ai';
 };
 
+// Storage key for saved alternatives
+const SAVED_ALTERNATIVES_STORAGE_KEY = 'saved_alternatives_v1';
+
 export default function AlternativesScreen() {
   const { interventionState, dispatchIntervention } = useIntervention();
   const { selectedCauses, selectedAlternative } = interventionState;
@@ -115,11 +119,56 @@ export default function AlternativesScreen() {
     return () => backHandler.remove();
   }, []);
 
-  // Local state for tabs and saved activities (not in intervention context)
+  // Local state for tabs and saved activities (persisted to AsyncStorage)
   const [activeTab, setActiveTab] = useState<TabId>('discover');
   const [savedActivities, setSavedActivities] = useState<SavedActivity[]>([]);
+  const [isLoadingSavedActivities, setIsLoadingSavedActivities] = useState(true);
 
-  // Save an activity to My List (local state only)
+  // Load saved activities from AsyncStorage on mount
+  useEffect(() => {
+    const loadSavedActivities = async () => {
+      try {
+        const stored = await AsyncStorage.getItem(SAVED_ALTERNATIVES_STORAGE_KEY);
+        if (stored) {
+          const activities = JSON.parse(stored);
+          setSavedActivities(activities);
+          if (__DEV__) {
+            console.log('[AlternativesScreen] ✅ Loaded saved activities from storage:', activities.length);
+          }
+        } else {
+          if (__DEV__) {
+            console.log('[AlternativesScreen] ℹ️ No saved activities in storage yet');
+          }
+        }
+      } catch (error) {
+        console.error('[AlternativesScreen] ❌ Failed to load saved activities:', error);
+      } finally {
+        setIsLoadingSavedActivities(false);
+      }
+    };
+
+    loadSavedActivities();
+  }, []);
+
+  // Persist saved activities to AsyncStorage whenever they change
+  useEffect(() => {
+    if (!isLoadingSavedActivities) {
+      const saveToStorage = async () => {
+        try {
+          await AsyncStorage.setItem(SAVED_ALTERNATIVES_STORAGE_KEY, JSON.stringify(savedActivities));
+          if (__DEV__) {
+            console.log('[AlternativesScreen] 💾 Saved activities to storage:', savedActivities.length);
+          }
+        } catch (error) {
+          console.error('[AlternativesScreen] ❌ Failed to save activities to storage:', error);
+        }
+      };
+
+      saveToStorage();
+    }
+  }, [savedActivities, isLoadingSavedActivities]);
+
+  // Save an activity to My List (persisted to AsyncStorage)
   const saveActivity = (activity: SavedActivity) => {
     setSavedActivities((prev) => {
       // Prevent duplicates
@@ -130,7 +179,7 @@ export default function AlternativesScreen() {
     });
   };
 
-  // Delete an activity from My List (local state only)
+  // Delete an activity from My List (persisted to AsyncStorage)
   const deleteActivity = (activityId: string) => {
     setSavedActivities((prev) => {
       return prev.filter((item) => item.id !== activityId);
