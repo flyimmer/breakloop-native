@@ -3,6 +3,7 @@ import { parseDurationToMinutes } from '@/src/core/intervention';
 import React, { useEffect } from 'react';
 import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { ArrowLeft } from 'lucide-react-native';
 
 /**
  * ActionConfirmationScreen
@@ -35,7 +36,7 @@ export default function ActionConfirmationScreen() {
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
       // Return true to prevent default back behavior
-      // User must use the close button (X) or action buttons to navigate
+      // User must use the back button or action buttons to navigate
       return true;
     });
 
@@ -84,7 +85,7 @@ export default function ActionConfirmationScreen() {
     // Navigation will react to state change to 'idle'
   };
 
-  // Handle close/back - dispatch GO_BACK_FROM_ACTION to return to alternatives
+  // Handle back - dispatch GO_BACK_FROM_ACTION to return to alternatives
   const handleClose = () => {
     dispatchIntervention({ type: 'GO_BACK_FROM_ACTION' });
     // Navigation will react to state change to 'alternatives'
@@ -92,17 +93,17 @@ export default function ActionConfirmationScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
-      {/* Close button */}
+      {/* Back button */}
       <View style={styles.header}>
         <Pressable
           onPress={handleClose}
           style={({ pressed }) => [
-            styles.closeButton,
-            pressed && styles.closeButtonPressed,
+            styles.backButton,
+            pressed && styles.backButtonPressed,
           ]}
           hitSlop={12}
         >
-          <Text style={styles.closeButtonText}>✕</Text>
+          <ArrowLeft size={24} color="#A1A1AA" strokeWidth={2} />
         </Pressable>
       </View>
 
@@ -190,22 +191,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 8,
     paddingBottom: 8,
-    alignItems: 'flex-end',
+    alignItems: 'flex-start',
   },
-  closeButton: {
+  backButton: {
     width: 40,
     height: 40,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 20,
   },
-  closeButtonPressed: {
+  backButtonPressed: {
     opacity: 0.6,
-  },
-  closeButtonText: {
-    fontSize: 24,
-    color: '#A1A1AA', // textSecondary - visually recedes
-    fontWeight: '300',
   },
   scrollView: {
     flex: 1,
