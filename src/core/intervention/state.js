@@ -28,6 +28,7 @@ export const createInitialInterventionContext = () => ({
   selectedCauses: [],
   selectedAlternative: null,
   actionTimer: 0,
+  wasCanceled: false, // Flag to track if intervention was canceled vs completed
 });
 
 /**

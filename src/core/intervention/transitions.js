@@ -43,6 +43,7 @@ export const interventionReducer = (context, action) => {
         selectedCauses: [],
         selectedAlternative: null,
         actionTimer: 0,
+        wasCanceled: false, // Clear canceled flag when starting new intervention
       };
       
       if (__DEV__) {
@@ -210,6 +211,7 @@ export const interventionReducer = (context, action) => {
         selectedCauses: [],
         selectedAlternative: null,
         actionTimer: 0,
+        wasCanceled: true, // Flag to indicate intervention was canceled (not completed)
       };
 
     // REMOVED: PROCEED_TO_BREATHING and ACTIVATE_QUICK_TASK

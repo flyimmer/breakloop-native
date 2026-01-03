@@ -220,6 +220,7 @@ function InterventionNavigationHandler() {
       previousState: previousStateRef.current,
       targetApp,
       previousTargetApp: previousTargetAppRef.current,
+      wasCanceled: interventionState.wasCanceled,
       isAndroid: Platform.OS === 'android',
       hasModule: !!AppMonitorModule,
     });
@@ -234,13 +235,16 @@ function InterventionNavigationHandler() {
       // Use previousTargetAppRef because targetApp is cleared when state becomes idle
       const appToLaunch = previousTargetAppRef.current;
       const previousState = previousStateRef.current;
+      const wasCanceled = interventionState.wasCanceled;
       
       console.log('[F3.5] Previous state was:', previousState);
       console.log('[F3.5] App to launch:', appToLaunch);
+      console.log('[F3.5] Was canceled:', wasCanceled);
       
-      // If intervention completed from reflection screen, launch home screen
-      if (previousState === 'reflection') {
-        console.log('[F3.5] Intervention completed from reflection screen, launching home screen');
+      // If intervention was canceled (user clicked X) or completed from reflection screen, launch home screen
+      if (wasCanceled || previousState === 'reflection') {
+        const reason = wasCanceled ? 'intervention canceled' : 'intervention completed from reflection screen';
+        console.log(`[F3.5] ${reason}, launching home screen`);
         try {
           AppMonitorModule.launchHomeScreen();
           console.log('[F3.5] launchHomeScreen called successfully');
@@ -260,7 +264,7 @@ function InterventionNavigationHandler() {
         }
       }
     }
-  }, [state, targetApp]);
+  }, [state, targetApp, interventionState.wasCanceled]);
 
   /**
    * Finish InterventionActivity when Quick Task is activated (not when Conscious Process is chosen)
@@ -467,6 +471,39 @@ function InterventionNavigationHandler() {
         console.log('[Navigation] ✅ NavigationContainer is READY');
         console.log('[Navigation] Current state:', state);
         console.log('[Navigation] Current targetApp:', targetApp);
+        console.log('[Navigation] Quick Task visible:', quickTaskState.visible);
+        console.log('[Navigation] Quick Task expired:', quickTaskState.showExpired);
+        
+        // CRITICAL FIX: Navigate immediately if intervention/quick task is already active
+        // This handles the case where intervention was triggered before navigation was ready
+        if (quickTaskState.showExpired && quickTaskState.expiredApp) {
+          console.log('[Navigation] Quick Task expired on mount, navigating to QuickTaskExpired');
+          navigationRef.current?.navigate('QuickTaskExpired');
+        } else if (quickTaskState.visible) {
+          console.log('[Navigation] Quick Task visible on mount, navigating to QuickTaskDialog');
+          navigationRef.current?.navigate('QuickTaskDialog');
+        } else if (state === 'breathing') {
+          console.log('[Navigation] Intervention in breathing state on mount, navigating to Breathing');
+          navigationRef.current?.navigate('Breathing');
+        } else if (state === 'root-cause') {
+          console.log('[Navigation] Intervention in root-cause state on mount, navigating to RootCause');
+          navigationRef.current?.navigate('RootCause');
+        } else if (state === 'alternatives') {
+          console.log('[Navigation] Intervention in alternatives state on mount, navigating to Alternatives');
+          navigationRef.current?.navigate('Alternatives');
+        } else if (state === 'timer') {
+          console.log('[Navigation] Intervention in timer state on mount, navigating to IntentionTimer');
+          navigationRef.current?.navigate('IntentionTimer');
+        } else if (state === 'action') {
+          console.log('[Navigation] Intervention in action state on mount, navigating to ActionConfirmation');
+          navigationRef.current?.navigate('ActionConfirmation');
+        } else if (state === 'action_timer') {
+          console.log('[Navigation] Intervention in action_timer state on mount, navigating to ActivityTimer');
+          navigationRef.current?.navigate('ActivityTimer');
+        } else if (state === 'reflection') {
+          console.log('[Navigation] Intervention in reflection state on mount, navigating to Reflection');
+          navigationRef.current?.navigate('Reflection');
+        }
       }}
     >
       <RootNavigator />
