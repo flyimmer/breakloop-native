@@ -194,11 +194,12 @@ function InterventionNavigationHandler() {
         }
         
         // No wake reason or unknown - likely launched from MainActivity
-        // Reset Quick Task state to prevent stale expired screens
+        // Reset Quick Task state to prevent stale dialogs
         if (__DEV__) {
           console.log('[F3.5] No wake reason - likely MainActivity launch, resetting Quick Task state');
         }
         dispatchQuickTask({ type: 'HIDE_EXPIRED' });
+        dispatchQuickTask({ type: 'HIDE_QUICK_TASK' });
       })
       .catch((error: any) => {
         console.error('[F3.5] Failed to get wake reason:', error);
