@@ -241,16 +241,19 @@ function InterventionNavigationHandler() {
       console.log('[F3.5] App to launch:', appToLaunch);
       console.log('[F3.5] Was canceled:', wasCanceled);
       
-      // IMPORTANT: Always use finishInterventionActivity() to close the intervention
-      // This method handles launching the monitored app and moving the activity to background
-      // Using launchHomeScreen() causes race conditions and "View not attached" errors
-      console.log('[F3.5] Finishing InterventionActivity (previous state:', previousState, ')');
-      try {
-        AppMonitorModule.finishInterventionActivity();
-        console.log('[F3.5] finishInterventionActivity called - monitored app should return to foreground');
-      } catch (error) {
-        console.error('[F3.5] finishInterventionActivity threw error:', error);
-      }
+      // After intervention completes, return to home screen
+      // User must manually open the monitored app again (no grace period)
+      // Use a small delay to allow React Native to finish unmounting components
+      console.log('[F3.5] Scheduling home screen launch after intervention completion');
+      setTimeout(() => {
+        try {
+          console.log('[F3.5] Launching home screen now');
+          AppMonitorModule.launchHomeScreen();
+          console.log('[F3.5] launchHomeScreen called successfully');
+        } catch (error) {
+          console.error('[F3.5] launchHomeScreen threw error:', error);
+        }
+      }, 100);
     }
   }, [state, targetApp, interventionState.wasCanceled]);
 
