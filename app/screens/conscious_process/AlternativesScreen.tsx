@@ -130,6 +130,13 @@ export default function AlternativesScreen() {
     });
   };
 
+  // Delete an activity from My List (local state only)
+  const deleteActivity = (activityId: string) => {
+    setSavedActivities((prev) => {
+      return prev.filter((item) => item.id !== activityId);
+    });
+  };
+
   // Check if an activity is already saved (local state only)
   const isSaved = (activityId: string) => {
     return savedActivities.some((item) => item.id === activityId);
@@ -243,6 +250,7 @@ export default function AlternativesScreen() {
             onCardTap={handleCardTap}
             onAddCustomAlternative={handleAddCustomAlternative}
             onRegenerateAI={handleRegenerateAI}
+            onDeleteActivity={deleteActivity}
           />
         )}
       </ScrollView>
@@ -479,11 +487,13 @@ function MyListTab({
   onCardTap,
   onAddCustomAlternative,
   onRegenerateAI,
+  onDeleteActivity,
 }: { 
   savedActivities: SavedActivity[];
   onCardTap: (alternative: any) => void;
   onAddCustomAlternative: () => void;
   onRegenerateAI: () => void;
+  onDeleteActivity: (activityId: string) => void;
 }) {
   return (
     <View style={styles.tabContent}>
@@ -566,7 +576,7 @@ function MyListTab({
               <Pressable
                 onPress={(e) => {
                   e.stopPropagation(); // Prevent card tap
-                  // No-op: UI only
+                  onDeleteActivity(alt.id);
                 }}
                 style={({ pressed }) => [
                   styles.cardManagementButton,
