@@ -63,8 +63,8 @@ const INTERVENTION_PREFERENCES_STORAGE_KEY = 'intervention_preferences_v1';
 This controls how long the breathing countdown lasts before showing root causes in the intervention flow.
 
 ### App Switch Interval (t_appSwitchInterval)
-**Range:** 1 minute to 30 minutes  
-**Options:** 1m, 5m, 10m, 15m, 20m, 30m  
+**Range:** 20 seconds to 30 minutes  
+**Options:** 20s, 1m, 5m, 10m, 15m, 20m, 30m  
 **Default:** 5 minutes
 
 This controls the minimum time between interventions for the same app. If a user exits and re-enters an app within this interval, no new intervention is triggered.

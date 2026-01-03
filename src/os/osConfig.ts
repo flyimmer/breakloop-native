@@ -19,7 +19,7 @@ let MONITORED_APPS = new Set<string>();
 
 /**
  * Minimum interval between intervention triggers (milliseconds)
- * Configurable range: 1 minute to 30 minutes
+ * Configurable range: 20 seconds to 30 minutes
  * Current value: 5 minutes
  */
 let APP_SWITCH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -214,7 +214,7 @@ export function setQuickTaskConfig(
  * Called when user saves preferences in Settings.
  * 
  * @param interventionDurationSec - Breathing countdown duration in seconds (5-30)
- * @param appSwitchIntervalMs - Minimum interval between interventions in milliseconds (1-30 minutes)
+ * @param appSwitchIntervalMs - Minimum interval between interventions in milliseconds (20 seconds to 30 minutes)
  */
 export function setInterventionPreferences(
   interventionDurationSec: number,

@@ -339,7 +339,7 @@ const SettingsScreen = () => {
     saveInterventionPreferences(durationSec, appSwitchInterval);
   };
 
-  // Handle app switch interval selection (1-30 minutes)
+  // Handle app switch interval selection (20s-30 minutes)
   const handleAppSwitchIntervalSelect = (intervalMs: number) => {
     setAppSwitchInterval(intervalMs);
     saveInterventionPreferences(interventionDuration, intervalMs);
@@ -862,6 +862,22 @@ const SettingsScreen = () => {
               Minimum time between interventions for the same app.
             </Text>
             <View style={styles.quickTaskButtonRow}>
+              <TouchableOpacity
+                style={[
+                  styles.quickTaskButton,
+                  appSwitchInterval === 20 * 1000 && styles.quickTaskButtonSelected,
+                ]}
+                onPress={() => handleAppSwitchIntervalSelect(20 * 1000)}
+              >
+                <Text
+                  style={[
+                    styles.quickTaskButtonText,
+                    appSwitchInterval === 20 * 1000 && styles.quickTaskButtonTextSelected,
+                  ]}
+                >
+                  20s
+                </Text>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={[
                   styles.quickTaskButton,
