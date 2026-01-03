@@ -222,6 +222,7 @@ function InterventionNavigationHandler() {
       targetApp,
       previousTargetApp: previousTargetAppRef.current,
       wasCanceled: interventionState.wasCanceled,
+      intentionTimerSet: interventionState.intentionTimerSet,
       isAndroid: Platform.OS === 'android',
       hasModule: !!AppMonitorModule,
     });
@@ -233,30 +234,48 @@ function InterventionNavigationHandler() {
     if (state === 'idle' && previousStateRef.current !== 'idle' && previousStateRef.current !== state) {
       console.log('[F3.5] Intervention complete (state → idle)');
       
-      // Use previousTargetAppRef because targetApp is cleared when state becomes idle
-      const appToLaunch = previousTargetAppRef.current;
+      // Check if intention timer was set
+      const intentionTimerSet = interventionState.intentionTimerSet;
+      const appToLaunch = intentionTimerSet ? targetApp : previousTargetAppRef.current;
       const previousState = previousStateRef.current;
       const wasCanceled = interventionState.wasCanceled;
       
       console.log('[F3.5] Previous state was:', previousState);
       console.log('[F3.5] App to launch:', appToLaunch);
       console.log('[F3.5] Was canceled:', wasCanceled);
+      console.log('[F3.5] Intention timer set:', intentionTimerSet);
       
-      // After intervention completes, return to home screen
-      // User must manually open the monitored app again (no grace period)
-      // Use a small delay to allow React Native to finish unmounting components
-      console.log('[F3.5] Scheduling home screen launch after intervention completion');
-      setTimeout(() => {
-        try {
-          console.log('[F3.5] Launching home screen now');
-          AppMonitorModule.launchHomeScreen();
-          console.log('[F3.5] launchHomeScreen called successfully');
-        } catch (error) {
-          console.error('[F3.5] launchHomeScreen threw error:', error);
-        }
-      }, 100);
+      // CRITICAL: If intention timer was set, launch the target app
+      // Otherwise, return to home screen (full intervention completed)
+      if (intentionTimerSet && appToLaunch) {
+        console.log('[F3.5] Intention timer set - finishing activity to launch target app:', appToLaunch);
+        setTimeout(() => {
+          try {
+            console.log('[F3.5] Calling finishInterventionActivity (will launch monitored app)');
+            // finishInterventionActivity() reads triggeringApp from Intent extras
+            // and launches it before finishing the activity
+            AppMonitorModule.finishInterventionActivity();
+            console.log('[F3.5] finishInterventionActivity called successfully');
+          } catch (error) {
+            console.error('[F3.5] finishInterventionActivity threw error:', error);
+          }
+        }, 100);
+      } else {
+        // After intervention completes, return to home screen
+        // User must manually open the monitored app again (no grace period)
+        console.log('[F3.5] Scheduling home screen launch after intervention completion');
+        setTimeout(() => {
+          try {
+            console.log('[F3.5] Launching home screen now');
+            AppMonitorModule.launchHomeScreen();
+            console.log('[F3.5] launchHomeScreen called successfully');
+          } catch (error) {
+            console.error('[F3.5] launchHomeScreen threw error:', error);
+          }
+        }, 100);
+      }
     }
-  }, [state, targetApp, interventionState.wasCanceled]);
+  }, [state, targetApp, interventionState.wasCanceled, interventionState.intentionTimerSet]);
 
   /**
    * Finish InterventionActivity when Quick Task is activated (not when Conscious Process is chosen)

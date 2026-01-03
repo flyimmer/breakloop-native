@@ -44,6 +44,7 @@ export const interventionReducer = (context, action) => {
         selectedAlternative: null,
         actionTimer: 0,
         wasCanceled: false, // Clear canceled flag when starting new intervention
+        intentionTimerSet: false, // Clear intention timer flag when starting new intervention
       };
       
       if (__DEV__) {
@@ -178,6 +179,7 @@ export const interventionReducer = (context, action) => {
         state: 'idle',
         targetApp: null,
         selectedAlternative: null,
+        intentionTimerSet: false, // Clear intention timer flag
       };
 
     case 'GO_BACK_FROM_ACTION':
@@ -192,14 +194,16 @@ export const interventionReducer = (context, action) => {
     case 'SET_INTENTION_TIMER':
       // User selected intention timer duration - reset to idle and release app
       // The OS Trigger Brain will handle setting the actual timer
+      // IMPORTANT: Keep targetApp so App.tsx can launch it
       return {
         ...context,
         state: 'idle',
-        targetApp: null,
+        targetApp: context.targetApp, // Preserve target app for launch
         breathingCount: 0,
         selectedCauses: [],
         selectedAlternative: null,
         actionTimer: 0,
+        intentionTimerSet: true, // Flag to indicate intention timer was set
       };
 
     case 'RESET_INTERVENTION':
@@ -212,6 +216,7 @@ export const interventionReducer = (context, action) => {
         selectedAlternative: null,
         actionTimer: 0,
         wasCanceled: true, // Flag to indicate intervention was canceled (not completed)
+        intentionTimerSet: false, // Clear intention timer flag
       };
 
     // REMOVED: PROCEED_TO_BREATHING and ACTIVATE_QUICK_TASK
