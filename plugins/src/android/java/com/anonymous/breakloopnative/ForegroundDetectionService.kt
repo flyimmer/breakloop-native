@@ -275,7 +275,8 @@ class ForegroundDetectionService : AccessibilityService() {
         emitForegroundAppChangedEvent(packageName)
         
         // Check if this is a monitored app (for launching intervention)
-        if (MONITORED_APPS.contains(packageName)) {
+        // Use dynamicMonitoredApps (synced from JavaScript) instead of hardcoded MONITORED_APPS
+        if (dynamicMonitoredApps.contains(packageName)) {
             Log.i(TAG, "🎯 MONITORED APP DETECTED: $packageName")
             launchInterventionActivity(packageName)
         } else {
