@@ -27,6 +27,18 @@ export type SystemSession =
   | null;
 
 /**
+ * Bootstrap state - prevents premature activity finish during cold start
+ * 
+ * BOOTSTRAPPING: JS is still processing wake reason and establishing session
+ * READY: JS has made a decision, session state is authoritative
+ * 
+ * This solves the race condition where SystemSurfaceActivity launches with
+ * a fresh React context (session = null) and finishes before JS can establish
+ * the session.
+ */
+export type SessionBootstrapState = 'BOOTSTRAPPING' | 'READY';
+
+/**
  * System Session Event - event-based API for modifying session (Rule 2)
  */
 export type SystemSessionEvent =
@@ -40,6 +52,7 @@ export type SystemSessionEvent =
  */
 interface SystemSessionContextValue {
   session: SystemSession;
+  bootstrapState: SessionBootstrapState;
   foregroundApp: string | null;  // Tracked for Alternative Activity visibility (Rule 1)
   dispatchSystemEvent: (event: SystemSessionEvent) => void;
 }
@@ -49,6 +62,7 @@ interface SystemSessionContextValue {
  */
 interface SystemSessionState {
   session: SystemSession;
+  bootstrapState: SessionBootstrapState;
   foregroundApp: string | null;
 }
 
@@ -76,6 +90,11 @@ export const useSystemSession = (): SystemSessionContextValue => {
  * Handles session state transitions based on SystemSessionEvent.
  * Enforces Rule 2: Event-driven modification only.
  * 
+ * BOOTSTRAP PHASE:
+ * - All session events (START_*, END_SESSION) transition bootstrapState to 'READY'
+ * - This ensures bootstrap ends only after JS makes a semantic decision
+ * - No timers, no delays, purely event-driven
+ * 
  * @param state - Current session state
  * @param event - System session event
  * @returns New session state
@@ -97,41 +116,58 @@ function systemSessionReducer(
   }
 
   // Handle session events
+  // IMPORTANT: All session events exit bootstrap phase
   switch (event.type) {
     case 'START_INTERVENTION':
       if (__DEV__) {
         console.log('[SystemSession] Starting INTERVENTION session for app:', event.app);
+        if (state.bootstrapState === 'BOOTSTRAPPING') {
+          console.log('[SystemSession] Bootstrap phase complete - session established');
+        }
       }
       return {
         ...state,
         session: { kind: 'INTERVENTION', app: event.app },
+        bootstrapState: 'READY',
       };
 
     case 'START_QUICK_TASK':
       if (__DEV__) {
         console.log('[SystemSession] Starting QUICK_TASK session for app:', event.app);
+        if (state.bootstrapState === 'BOOTSTRAPPING') {
+          console.log('[SystemSession] Bootstrap phase complete - session established');
+        }
       }
       return {
         ...state,
         session: { kind: 'QUICK_TASK', app: event.app },
+        bootstrapState: 'READY',
       };
 
     case 'START_ALTERNATIVE_ACTIVITY':
       if (__DEV__) {
         console.log('[SystemSession] Starting ALTERNATIVE_ACTIVITY session for app:', event.app);
+        if (state.bootstrapState === 'BOOTSTRAPPING') {
+          console.log('[SystemSession] Bootstrap phase complete - session established');
+        }
       }
       return {
         ...state,
         session: { kind: 'ALTERNATIVE_ACTIVITY', app: event.app },
+        bootstrapState: 'READY',
       };
 
     case 'END_SESSION':
       if (__DEV__) {
         console.log('[SystemSession] Ending session');
+        if (state.bootstrapState === 'BOOTSTRAPPING') {
+          console.log('[SystemSession] Bootstrap phase complete - explicit "do nothing" decision');
+        }
       }
       return {
         ...state,
         session: null,
+        bootstrapState: 'READY',
       };
 
     default:
@@ -141,9 +177,15 @@ function systemSessionReducer(
 
 /**
  * Initial system session state
+ * 
+ * BOOTSTRAP PHASE:
+ * - Starts in 'BOOTSTRAPPING' state to prevent premature activity finish
+ * - Only transitions to 'READY' when a session event is dispatched
+ * - This solves the race condition on cold start
  */
 const initialSystemSessionState: SystemSessionState = {
   session: null,
+  bootstrapState: 'BOOTSTRAPPING',
   foregroundApp: null,
 };
 
@@ -205,6 +247,7 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({ ch
 
   const value: SystemSessionContextValue = {
     session: state.session,
+    bootstrapState: state.bootstrapState,
     foregroundApp: state.foregroundApp,
     dispatchSystemEvent,
   };

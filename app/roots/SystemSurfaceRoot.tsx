@@ -45,32 +45,52 @@ function finishSystemSurfaceActivity() {
  * Renders system flows based on session.kind.
  * This is the root component for SystemSurfaceActivity.
  * 
- * Rendering Logic:
+ * BOOTSTRAP PHASE:
+ * - While bootstrapState === 'BOOTSTRAPPING': Render nothing, wait for JS to decide
+ * - Only when bootstrapState === 'READY': Enforce session lifecycle rules
+ * 
+ * Rendering Logic (after bootstrap):
  * - session === null → Finish activity immediately (Rule 4)
  * - session.kind === 'INTERVENTION' → Render InterventionFlow
  * - session.kind === 'QUICK_TASK' → Render QuickTaskFlow
  * - session.kind === 'ALTERNATIVE_ACTIVITY' → Render AlternativeActivityFlow (with visibility check)
  */
 export default function SystemSurfaceRoot() {
-  const { session, foregroundApp } = useSystemSession();
+  const { session, bootstrapState, foregroundApp } = useSystemSession();
+
+  /**
+   * BOOTSTRAP PHASE: Wait for JS to establish session
+   * 
+   * During cold start, session starts as null but this doesn't mean
+   * "no session should exist" - it means "JS hasn't decided yet".
+   * 
+   * We must wait for bootstrapState to become 'READY' before enforcing
+   * session lifecycle rules.
+   */
+  if (bootstrapState === 'BOOTSTRAPPING') {
+    if (__DEV__) {
+      console.log('[SystemSurfaceRoot] Bootstrap phase - waiting for session establishment');
+    }
+    return null;
+  }
 
   /**
    * RULE 4: Session is the ONLY authority for SystemSurface existence
-   * When session becomes null, finish activity immediately
+   * When session becomes null (and bootstrap is complete), finish activity
    */
   useEffect(() => {
-    if (session === null) {
+    if (bootstrapState === 'READY' && session === null) {
       if (__DEV__) {
-        console.log('[SystemSurfaceRoot] Session is null - triggering activity finish');
+        console.log('[SystemSurfaceRoot] Session is null (bootstrap complete) - triggering activity finish');
       }
       finishSystemSurfaceActivity();
     }
-  }, [session]);
+  }, [session, bootstrapState]);
 
-  // RULE 4: If no session, render nothing (activity will finish via useEffect)
+  // RULE 4: If no session (and bootstrap complete), render nothing (activity will finish via useEffect)
   if (session === null) {
     if (__DEV__) {
-      console.log('[SystemSurfaceRoot] Rendering null (no session)');
+      console.log('[SystemSurfaceRoot] Rendering null (no session, bootstrap complete)');
     }
     return null;
   }
