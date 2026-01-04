@@ -229,6 +229,11 @@ function InterventionNavigationHandler() {
    * the intervention reducer clears targetApp when transitioning to idle.
    */
   useEffect(() => {
+    // Store timeout IDs for cleanup
+    let cancelledTimeout: NodeJS.Timeout | null = null;
+    let intentionTimeout: NodeJS.Timeout | null = null;
+    let completedTimeout: NodeJS.Timeout | null = null;
+
     console.log('[F3.5 Debug] useEffect triggered:', {
       state,
       previousState: previousStateRef.current,
@@ -267,7 +272,7 @@ function InterventionNavigationHandler() {
       if (wasCancelled) {
         // Intervention was cancelled - immediately close InterventionActivity
         console.log('[F3.5] Intervention was CANCELLED - closing InterventionActivity');
-        setTimeout(() => {
+        cancelledTimeout = setTimeout(() => {
           try {
             console.log('[F3.5] Launching home screen (intervention cancelled)');
             AppMonitorModule.launchHomeScreen();
@@ -285,7 +290,7 @@ function InterventionNavigationHandler() {
       if (intentionTimerSet) {
         // User set intention timer - launch the monitored app
         console.log('[F3.5] Intention timer set - launching triggering app');
-        setTimeout(() => {
+        intentionTimeout = setTimeout(() => {
           try {
             console.log('[F3.5] Calling finishInterventionActivity (will launch app)');
             AppMonitorModule.finishInterventionActivity();
@@ -297,7 +302,7 @@ function InterventionNavigationHandler() {
       } else {
         // User completed without setting timer - launch home screen
         console.log('[F3.5] No intention timer - launching home screen');
-        setTimeout(() => {
+        completedTimeout = setTimeout(() => {
           try {
             console.log('[F3.5] Launching home screen now');
             AppMonitorModule.launchHomeScreen();
@@ -308,6 +313,20 @@ function InterventionNavigationHandler() {
         }, 100);
       }
     }
+
+    // CLEANUP: Cancel all pending timeouts when effect re-runs or component unmounts
+    // This prevents old timeouts from firing during new interventions
+    return () => {
+      if (cancelledTimeout) {
+        clearTimeout(cancelledTimeout);
+      }
+      if (intentionTimeout) {
+        clearTimeout(intentionTimeout);
+      }
+      if (completedTimeout) {
+        clearTimeout(completedTimeout);
+      }
+    };
   }, [state, targetApp, interventionState.wasCompleted, interventionState.wasCancelled, interventionState.intentionTimerSet]);
 
   /**
