@@ -2,9 +2,6 @@ import React, { useEffect } from 'react';
 import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
-import { useNavigation } from '@react-navigation/native';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '@/app/navigation/RootNavigator';
 import { setIntentionTimer, onInterventionCompleted } from '@/src/os/osTriggerBrain';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
@@ -46,7 +43,6 @@ const DURATION_OPTIONS = [
 
 export default function IntentionTimerScreen() {
   const { interventionState, dispatchIntervention } = useIntervention();
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   // Disable Android hardware back button during intervention
   useEffect(() => {
@@ -110,27 +106,8 @@ export default function IntentionTimerScreen() {
     handleSelectDuration(1);
   };
 
-  // Handle close - navigate back without setting timer
-  const handleClose = () => {
-    navigation.goBack();
-  };
-
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
-      {/* Close button */}
-      <View style={styles.header}>
-        <Pressable
-          onPress={handleClose}
-          style={({ pressed }) => [
-            styles.closeButton,
-            pressed && styles.closeButtonPressed,
-          ]}
-          hitSlop={12}
-        >
-          <Text style={styles.closeButtonText}>✕</Text>
-        </Pressable>
-      </View>
-
       {/* Content vertically centered */}
       <View style={styles.contentContainer}>
         {/* Icon */}
@@ -180,28 +157,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0A0A0B', // tokens: background (dark mode)
-  },
-  header: {
-    paddingTop: 12,
-    paddingHorizontal: 16,
-    alignItems: 'flex-end',
-  },
-  closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(24, 24, 27, 0.7)', // tokens: surfaceGlass
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  closeButtonPressed: {
-    opacity: 0.7,
-  },
-  closeButtonText: {
-    fontSize: 18,
-    lineHeight: 24,
-    color: '#FAFAFA', // tokens: textPrimary
-    fontWeight: '300',
   },
   contentContainer: {
     flex: 1,
