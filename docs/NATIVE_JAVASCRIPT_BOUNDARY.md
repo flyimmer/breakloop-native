@@ -177,4 +177,3 @@ When reviewing code changes, verify:
    - [ ] No mechanical logic in JavaScript layer
 
 ---
-

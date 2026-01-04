@@ -52,6 +52,22 @@ This project includes comprehensive design documentation that serves as the sour
 
 ## High-Level Architecture
 
+### Native–JavaScript Boundary (Critical)
+
+**IMPORTANT:** All code changes must respect the architectural boundary defined in `docs/NATIVE_JAVASCRIPT_BOUNDARY.md`.
+
+**Core Principle:**
+- **Native code (Kotlin) decides WHEN to wake the app** (mechanics)
+- **JavaScript decides WHAT the user sees and WHY** (semantics)
+
+**Key Rules:**
+- Native code: Detects events, persists timestamps, wakes System Surface with wake reason
+- JavaScript: Owns OS Trigger Brain, evaluates priority chain, decides all flows and navigation
+- Never duplicate logic across the boundary
+- Always pass and consume wake reasons (`MONITORED_APP_FOREGROUND`, `INTENTION_EXPIRED`, `QUICK_TASK_EXPIRED`, `DEV_DEBUG`)
+
+See `docs/NATIVE_JAVASCRIPT_BOUNDARY.md` for complete boundary rules and verification checklist.
+
 ### React Native (Expo) Application
 
 **Platform:** React Native with Expo SDK (~54.0.30)
@@ -961,6 +977,7 @@ Recent commit themes:
 
 **For Developers:**
 - `CLAUDE.md` (this file) - Architecture, implementation details, development workflow
+- `docs/NATIVE_JAVASCRIPT_BOUNDARY.md` - **Critical architectural boundary rules** (must follow for all native/JS integration)
 - `DEVELOPMENT_NOTE_PLAN_ACTIVITY.md` - Plan Activity feature-specific notes and QA checklist
 - Component READMEs (e.g., `src/components/CauseCard.README.md`) - Component-specific documentation
 

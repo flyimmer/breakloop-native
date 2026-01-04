@@ -228,88 +228,26 @@ function recordQuickTaskUsage(packageName: string, timestamp: number): void {
 }
 
 /**
- * Trigger intervention for a monitored app (Step 5F).
+ * Start intervention flow for a monitored app.
+ * Handles cross-app interference prevention and dispatches BEGIN_INTERVENTION.
  * 
- * ARCHITECTURE: Implements the LOCKED priority chain from SYSTEM_SURFACE_ARCHITECTURE.md
- * 
- * Priority Order (MUST NOT CHANGE):
- * 1. Quick Task ACTIVE (global)        → Suppress everything
- * 2. Alternative Activity RUNNING      → Suppress everything
- * 3. t_intention VALID (per-app)       → Suppress everything
- * 4. n_quickTask > 0 (global)          → Show Quick Task dialog
- * 5. Else                              → Start Intervention Flow
+ * This function is called when the decision tree determines intervention should start.
+ * It deletes t_intention as per spec: "intervention flow starts → t_intention deleted"
  * 
  * @param packageName - App package name requiring intervention
  * @param timestamp - Current timestamp
  */
-function triggerIntervention(packageName: string, timestamp: number): void {
+function startInterventionFlow(packageName: string, timestamp: number): void {
   console.log('[OS Trigger Brain] ========================================');
-  console.log('[OS Trigger Brain] Evaluating priority chain for:', packageName);
+  console.log('[OS Trigger Brain] Starting intervention flow for:', packageName);
   console.log('[OS Trigger Brain] Timestamp:', new Date(timestamp).toISOString());
 
   if (!interventionDispatcher) {
     console.warn('[OS Trigger Brain] No intervention dispatcher set - cannot trigger');
+    console.log('[OS Trigger Brain] ========================================');
     return;
   }
 
-  // ============================================================================
-  // PRIORITY 1: Quick Task ACTIVE (per-app)
-  // ============================================================================
-  // NOTE: Quick Task timer is PER-APP, not global
-  // Check if THIS SPECIFIC APP has an active Quick Task timer
-  if (hasActiveQuickTaskTimer(packageName, timestamp)) {
-    console.log('[OS Trigger Brain] ✓ Priority 1: Quick Task ACTIVE (per-app)');
-    console.log('[OS Trigger Brain] → SUPPRESS EVERYTHING for this app');
-    console.log('[OS Trigger Brain] → User can use this app freely');
-    return; // Do nothing
-  }
-  console.log('[OS Trigger Brain] ✗ Priority 1: No active Quick Task timer for this app');
-
-  // ============================================================================
-  // PRIORITY 2: Alternative Activity RUNNING (per-app)
-  // ============================================================================
-  // TODO: Check if alternative activity is running for this app
-  // This should check the intervention state for 'action_timer' state
-  // For now, we'll skip this check and implement it when we have access to intervention state
-  console.log('[OS Trigger Brain] ✗ Priority 2: No alternative activity running (check not implemented yet)');
-
-  // ============================================================================
-  // PRIORITY 3: t_intention VALID (per-app)
-  // ============================================================================
-  if (hasValidIntentionTimer(packageName, timestamp)) {
-    console.log('[OS Trigger Brain] ✓ Priority 3: t_intention VALID (per-app)');
-    console.log('[OS Trigger Brain] → SUPPRESS EVERYTHING');
-    console.log('[OS Trigger Brain] → Quick Task dialog MUST NOT appear');
-    console.log('[OS Trigger Brain] → User allowed to use app freely');
-    return; // Do nothing
-  }
-  console.log('[OS Trigger Brain] ✗ Priority 3: No valid intention timer');
-
-  // ============================================================================
-  // PRIORITY 4: n_quickTask > 0 (global)
-  // ============================================================================
-  const quickTaskRemaining = getQuickTaskRemaining(packageName, timestamp);
-  if (quickTaskRemaining > 0) {
-    console.log('[OS Trigger Brain] ✓ Priority 4: n_quickTask > 0 (global)');
-    console.log('[OS Trigger Brain] → SHOW QUICK TASK DIALOG');
-    console.log('[OS Trigger Brain] Quick Task remaining:', quickTaskRemaining);
-    
-    // NOTE: We do NOT set interventionsInProgress flag here
-    // Quick Task is separate from intervention
-    interventionDispatcher({
-      type: 'SHOW_QUICK_TASK',
-      app: packageName,
-      remaining: quickTaskRemaining,
-    });
-    return;
-  }
-  console.log('[OS Trigger Brain] ✗ Priority 4: No Quick Task remaining');
-
-  // ============================================================================
-  // PRIORITY 5: Else → Start Intervention Flow
-  // ============================================================================
-  console.log('[OS Trigger Brain] ✓ Priority 5: START INTERVENTION FLOW');
-  
   // CRITICAL CHECK: If there's already an intervention in progress for a DIFFERENT app,
   // DO NOT trigger a new intervention. This prevents cross-app interference.
   // Each app should have its own independent intervention flow.
@@ -324,10 +262,6 @@ function triggerIntervention(packageName: string, timestamp: number): void {
         reason: 'Prevent cross-app interference',
         note: 'Intervention will trigger when user returns to this app',
       });
-      
-      // DO NOT trigger intervention
-      // DO NOT clear interventionsInProgress
-      // DO NOT dispatch BEGIN_INTERVENTION
       console.log('[OS Trigger Brain] ========================================');
       return;
     }
@@ -342,8 +276,9 @@ function triggerIntervention(packageName: string, timestamp: number): void {
   // Mark intervention as in-progress for this app
   interventionsInProgress.add(packageName);
 
-  // Reset intention timer (will be set again if user chooses "I really need to use it")
+  // Delete t_intention (per spec: "intervention flow starts → t_intention deleted")
   intentionTimers.delete(packageName);
+  console.log('[OS Trigger Brain] t_intention deleted (intervention starting)');
 
   console.log('[OS Trigger Brain] BEGIN_INTERVENTION dispatched', {
     packageName,
@@ -358,6 +293,108 @@ function triggerIntervention(packageName: string, timestamp: number): void {
   });
   
   console.log('[OS Trigger Brain] ========================================');
+}
+
+/**
+ * Show Quick Task dialog for a monitored app.
+ * 
+ * @param packageName - App package name
+ * @param remaining - Number of Quick Task uses remaining
+ */
+function showQuickTaskDialog(packageName: string, remaining: number): void {
+  console.log('[OS Trigger Brain] ========================================');
+  console.log('[OS Trigger Brain] Showing Quick Task dialog for:', packageName);
+  console.log('[OS Trigger Brain] Quick Task uses remaining (global):', remaining);
+
+  if (!interventionDispatcher) {
+    console.warn('[OS Trigger Brain] No intervention dispatcher set - cannot show dialog');
+    console.log('[OS Trigger Brain] ========================================');
+    return;
+  }
+
+  // NOTE: We do NOT set interventionsInProgress flag here
+  // Quick Task is separate from intervention
+  interventionDispatcher({
+    type: 'SHOW_QUICK_TASK',
+    app: packageName,
+    remaining: remaining,
+  });
+  
+  console.log('[OS Trigger Brain] ========================================');
+}
+
+/**
+ * Evaluate trigger logic using nested decision tree (OS Trigger Contract v1.1).
+ * 
+ * ARCHITECTURE: Implements NESTED priority logic per spec:
+ * 1. Check t_intention (per-app)
+ *    - If valid: suppress everything
+ * 2. If t_intention = 0: Check n_quickTask (global)
+ *    - If n_quickTask != 0: Check t_quickTask (per-app)
+ *      - If t_quickTask != 0: suppress everything
+ *      - If t_quickTask = 0: show Quick Task dialog
+ *    - If n_quickTask = 0: start intervention flow
+ * 
+ * This function is called ONLY when t_appSwitchInterval has NOT elapsed.
+ * When t_appSwitchInterval elapsed, intervention starts directly (bypassing this logic).
+ * 
+ * @param packageName - App package name
+ * @param timestamp - Current timestamp
+ */
+function evaluateTriggerLogic(packageName: string, timestamp: number): void {
+  console.log('[OS Trigger Brain] ========================================');
+  console.log('[OS Trigger Brain] Evaluating nested trigger logic for:', packageName);
+  console.log('[OS Trigger Brain] Timestamp:', new Date(timestamp).toISOString());
+
+  // ============================================================================
+  // Step 1: Check t_intention (per-app)
+  // ============================================================================
+  if (hasValidIntentionTimer(packageName, timestamp)) {
+    const timer = intentionTimers.get(packageName);
+    const remainingSec = timer ? Math.round((timer.expiresAt - timestamp) / 1000) : 0;
+    console.log('[OS Trigger Brain] ✓ t_intention VALID (per-app)');
+    console.log('[OS Trigger Brain] → SUPPRESS EVERYTHING');
+    console.log('[OS Trigger Brain] → Remaining:', `${remainingSec}s`);
+    console.log('[OS Trigger Brain] ========================================');
+    return; // Suppress
+  }
+  console.log('[OS Trigger Brain] ✗ t_intention = 0 (expired or not set)');
+
+  // ============================================================================
+  // Step 2: t_intention = 0 → Check n_quickTask (global)
+  // ============================================================================
+  const quickTaskRemaining = getQuickTaskRemaining(packageName, timestamp);
+  
+  if (quickTaskRemaining > 0) {
+    console.log('[OS Trigger Brain] ✓ n_quickTask != 0 (uses remaining: ' + quickTaskRemaining + ')');
+    
+    // ============================================================================
+    // Step 3: n_quickTask != 0 → Check t_quickTask (per-app)
+    // ============================================================================
+    if (hasActiveQuickTaskTimer(packageName, timestamp)) {
+      const timer = quickTaskTimers.get(packageName);
+      const remainingSec = timer ? Math.round((timer.expiresAt - timestamp) / 1000) : 0;
+      console.log('[OS Trigger Brain] ✓ t_quickTask ACTIVE (per-app)');
+      console.log('[OS Trigger Brain] → SUPPRESS EVERYTHING');
+      console.log('[OS Trigger Brain] → Remaining:', `${remainingSec}s`);
+      console.log('[OS Trigger Brain] ========================================');
+      return; // Suppress
+    }
+    
+    console.log('[OS Trigger Brain] ✗ t_quickTask = 0 (no active timer)');
+    console.log('[OS Trigger Brain] → SHOW QUICK TASK DIALOG');
+    console.log('[OS Trigger Brain] ========================================');
+    showQuickTaskDialog(packageName, quickTaskRemaining);
+    return;
+  }
+  
+  // ============================================================================
+  // Step 4: n_quickTask = 0 → Start intervention flow
+  // ============================================================================
+  console.log('[OS Trigger Brain] ✗ n_quickTask = 0 (no uses remaining)');
+  console.log('[OS Trigger Brain] → START INTERVENTION FLOW');
+  console.log('[OS Trigger Brain] ========================================');
+  startInterventionFlow(packageName, timestamp);
 }
 
 /**
@@ -574,29 +611,9 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
     }
 
     // ============================================================================
-    // Step 4A: Check Quick Task timer (HIGHEST PRIORITY)
+    // PRIORITY 0: Clean up expired Quick Task timer (if any)
     // ============================================================================
-    // Quick Task timer takes priority over intention timer and app switch interval
     const quickTaskTimer = quickTaskTimers.get(packageName);
-    if (quickTaskTimer && timestamp < quickTaskTimer.expiresAt) {
-      const remainingSec = Math.round((quickTaskTimer.expiresAt - timestamp) / 1000);
-      console.log('[OS Trigger Brain] Valid Quick Task timer exists — allowing app usage', {
-        packageName,
-        expiresAt: quickTaskTimer.expiresAt,
-        expiresAtTime: new Date(quickTaskTimer.expiresAt).toISOString(),
-        currentTimestamp: timestamp,
-        currentTime: new Date(timestamp).toISOString(),
-        remainingMs: quickTaskTimer.expiresAt - timestamp,
-        remainingSec: `${remainingSec}s remaining`,
-      });
-      
-      // Update tracking and return (no intervention)
-      lastForegroundApp = packageName;
-      lastMeaningfulApp = packageName;
-      return;
-    }
-    
-    // If Quick Task timer expired, remove it from both JS and native
     if (quickTaskTimer && timestamp >= quickTaskTimer.expiresAt) {
       quickTaskTimers.delete(packageName);
       
@@ -617,143 +634,102 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
     }
 
     // ============================================================================
-    // Step 4B: Check intention timer
+    // PRIORITY 0: Clean up expired intention timer (if any)
     // ============================================================================
-    // ALWAYS check if intention timer exists and its status (even on heartbeat events)
     const intentionTimer = intentionTimers.get(packageName);
-    
-    // Debug: Log timer status (always log on entry, not just first time)
-    if (intentionTimer) {
-      console.log('[OS Trigger Brain] Timer status check:', {
-        packageName,
-        hasTimer: true,
-        expiresAt: intentionTimer.expiresAt,
-        currentTimestamp: timestamp,
-        expired: timestamp > intentionTimer.expiresAt,
-        remainingMs: intentionTimer.expiresAt - timestamp,
-      });
-    } else {
-      console.log('[OS Trigger Brain] Timer status check:', {
-        packageName,
-        hasTimer: false,
-      });
-    }
-    
-    // If timer expired, trigger intervention
     if (intentionTimer && timestamp > intentionTimer.expiresAt) {
       const expiredSec = Math.round((timestamp - intentionTimer.expiresAt) / 1000);
-      console.log('[OS Trigger Brain] Intention timer expired — intervention required', {
+      console.log('[OS Trigger Brain] Intention timer expired (will be deleted)', {
         packageName,
         expiresAt: intentionTimer.expiresAt,
         expiresAtTime: new Date(intentionTimer.expiresAt).toISOString(),
-        currentTimestamp: timestamp,
-        currentTime: new Date(timestamp).toISOString(),
         expiredMs: timestamp - intentionTimer.expiresAt,
         expiredSec: `${expiredSec}s ago`,
       });
-      
-      // Trigger intervention (Step 5F)
-      triggerIntervention(packageName, timestamp);
-      
-      // Update tracking and return
-      lastForegroundApp = packageName;
-      lastMeaningfulApp = packageName;
-      return;
-    }
-    
-    // If timer exists and is still valid, allow app usage without intervention
-    if (intentionTimer && timestamp <= intentionTimer.expiresAt) {
-      const remainingSec = Math.round((intentionTimer.expiresAt - timestamp) / 1000);
-      console.log('[OS Trigger Brain] Valid intention timer exists — allowing app usage', {
-        packageName,
-        expiresAt: intentionTimer.expiresAt,
-        expiresAtTime: new Date(intentionTimer.expiresAt).toISOString(),
-        currentTimestamp: timestamp,
-        currentTime: new Date(timestamp).toISOString(),
-        remainingMs: intentionTimer.expiresAt - timestamp,
-        remainingSec: `${remainingSec}s remaining`,
-      });
-      
-      // Update tracking and return (no intervention)
-      lastForegroundApp = packageName;
-      lastMeaningfulApp = packageName;
-      return;
+      intentionTimers.delete(packageName);
     }
 
-    // Only run app switch interval logic on actual entry (not heartbeat)
+    // ============================================================================
+    // Skip logic for heartbeat events (same app, no actual switch)
+    // ============================================================================
     if (lastMeaningfulApp === packageName) {
-      // This is a heartbeat event for the same app - skip interval logic
+      // This is a heartbeat event for the same app - skip all logic
       lastForegroundApp = packageName;
       return;
     }
 
-    // Check app switch interval logic (t_appSwitchInterval)
-    // Use meaningful exit timestamps (excludes launcher bounces)
+    // ============================================================================
+    // PRIORITY 1: Check t_appSwitchInterval (HIGHEST PRIORITY per spec)
+    // ============================================================================
+    // Per spec: "t_appSwitchInterval has a higher priority than t_intention"
+    // When t_appSwitchInterval elapsed → intervention MUST start (regardless of t_intention)
+    
     const lastExitTimestamp = lastMeaningfulExitTimestamps.get(packageName);
     const intervalMs = getAppSwitchIntervalMs();
 
-    if (lastExitTimestamp !== undefined) {
-      // App was previously exited - check if enough time has passed
-      const timeSinceExit = timestamp - lastExitTimestamp;
-
-      if (timeSinceExit < intervalMs) {
-        const intervalSec = Math.round(intervalMs / 1000);
-        const timeSinceExitSec = Math.round(timeSinceExit / 1000);
-        console.log('[OS Trigger Brain] Re-entry within app switch interval — no intervention', {
-          packageName,
-          timeSinceExitMs: timeSinceExit,
-          timeSinceExitSec: `${timeSinceExitSec}s`,
-          intervalMs,
-          intervalSec: `${intervalSec}s`,
-          lastExitTimestamp,
-          currentTimestamp: timestamp,
-        });
-        
-        // Existing intention timer (if any) remains valid
-        if (intentionTimer) {
-          const remainingSec = Math.round((intentionTimer.expiresAt - timestamp) / 1000);
-          console.log('[OS Trigger Brain] Existing intention timer remains valid', {
-            packageName,
-            expiresAt: intentionTimer.expiresAt,
-            remainingMs: intentionTimer.expiresAt - timestamp,
-            remainingSec: `${remainingSec}s`,
-          });
-        }
-      } else {
-        const intervalSec = Math.round(intervalMs / 1000);
-        const timeSinceExitSec = Math.round(timeSinceExit / 1000);
-        console.log('[OS Trigger Brain] App switch interval elapsed — intervention eligible', {
-          packageName,
-          timeSinceExitMs: timeSinceExit,
-          timeSinceExitSec: `${timeSinceExitSec}s`,
-          intervalMs,
-          intervalSec: `${intervalSec}s`,
-          lastExitTimestamp,
-          currentTimestamp: timestamp,
-        });
-        
-        // New intervention will overwrite existing intention timer
-        if (intentionTimer) {
-          console.log('[OS Trigger Brain] Existing intention timer will be overwritten by new intervention', {
-            packageName,
-            oldExpiresAt: intentionTimer.expiresAt,
-          });
-        }
-        
-        // Trigger intervention (Step 5F)
-        triggerIntervention(packageName, timestamp);
-      }
+    let appSwitchIntervalElapsed = false;
+    if (lastExitTimestamp === undefined) {
+      // First entry ever - treat as elapsed
+      appSwitchIntervalElapsed = true;
+      console.log('[OS Trigger Brain] First entry for this app (no previous exit)');
     } else {
-      // No previous exit recorded (first launch or never exited before)
-      console.log('[OS Trigger Brain] App switch interval elapsed — intervention eligible', {
-        packageName,
-        reason: 'no_previous_exit',
-        currentTimestamp: timestamp,
-      });
+      const timeSinceExit = timestamp - lastExitTimestamp;
+      appSwitchIntervalElapsed = timeSinceExit >= intervalMs;
       
-      // Trigger intervention (Step 5F)
-      triggerIntervention(packageName, timestamp);
+      const intervalSec = Math.round(intervalMs / 1000);
+      const timeSinceExitSec = Math.round(timeSinceExit / 1000);
+      
+      if (appSwitchIntervalElapsed) {
+        console.log('[OS Trigger Brain] ✓ t_appSwitchInterval ELAPSED (HIGHEST PRIORITY)', {
+          packageName,
+          timeSinceExitMs: timeSinceExit,
+          timeSinceExitSec: `${timeSinceExitSec}s`,
+          intervalMs,
+          intervalSec: `${intervalSec}s`,
+          lastExitTimestamp,
+          currentTimestamp: timestamp,
+        });
+      } else {
+        console.log('[OS Trigger Brain] ✗ t_appSwitchInterval NOT elapsed', {
+          packageName,
+          timeSinceExitMs: timeSinceExit,
+          timeSinceExitSec: `${timeSinceExitSec}s`,
+          intervalMs,
+          intervalSec: `${intervalSec}s`,
+          note: 'Will apply nested logic',
+        });
+      }
     }
+
+    if (appSwitchIntervalElapsed) {
+      // t_appSwitchInterval elapsed → Start intervention directly
+      // Per spec: "intervention should start. Since intervention flow will restart, 
+      // the t_intention for this app shall be deleted"
+      console.log('[OS Trigger Brain] → START INTERVENTION (app switch interval elapsed)');
+      startInterventionFlow(packageName, timestamp);
+      
+      // Update tracking
+      lastForegroundApp = packageName;
+      lastMeaningfulApp = packageName;
+      return;
+    }
+
+    // ============================================================================
+    // PRIORITY 2: t_appSwitchInterval NOT elapsed → Apply nested logic
+    // ============================================================================
+    // Nested decision tree:
+    // 1. Check t_intention
+    // 2. If t_intention = 0: Check n_quickTask
+    //    - If n_quickTask != 0: Check t_quickTask
+    //      - If t_quickTask != 0: suppress
+    //      - If t_quickTask = 0: show Quick Task dialog
+    //    - If n_quickTask = 0: start intervention
+    
+    evaluateTriggerLogic(packageName, timestamp);
+    
+    // Update tracking
+    lastForegroundApp = packageName;
+    lastMeaningfulApp = packageName;
   } else {
     // Non-monitored app in foreground - but we still need to check ALL monitored app timers
     // because per spec: "t_intention counts down independently of which app is in foreground"
@@ -1017,7 +993,7 @@ export function checkForegroundIntentionExpiration(currentTimestamp: number): vo
       const isForeground = packageName === lastMeaningfulApp;
       
       if (isForeground) {
-        console.log('[OS Trigger Brain] Intention timer expired for FOREGROUND app — triggering intervention', {
+        console.log('[OS Trigger Brain] Intention timer expired for FOREGROUND app — re-evaluating logic', {
           packageName,
           expiresAt: timer.expiresAt,
           expiresAtTime: new Date(timer.expiresAt).toISOString(),
@@ -1030,8 +1006,9 @@ export function checkForegroundIntentionExpiration(currentTimestamp: number): vo
         // Clear the expired timer
         intentionTimers.delete(packageName);
         
-        // Trigger intervention for foreground app
-        triggerIntervention(packageName, currentTimestamp);
+        // Re-evaluate using nested logic (not direct intervention)
+        // This respects the priority chain: t_intention expired → check n_quickTask, etc.
+        evaluateTriggerLogic(packageName, currentTimestamp);
       } else {
         console.log('[OS Trigger Brain] Intention timer expired for BACKGROUND app — deleting timer', {
           packageName,
