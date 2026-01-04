@@ -161,8 +161,18 @@ const quickTaskTimers: Map<string, { expiresAt: number }> = new Map();
 /**
  * Dispatch function for triggering interventions in React layer.
  * Set by setInterventionDispatcher() from App.tsx.
+ * 
+ * DEPRECATED: This will be replaced by SystemSession dispatcher.
+ * For now, we keep it for backward compatibility during migration.
  */
 let interventionDispatcher: ((action: any) => void) | null = null;
+
+/**
+ * System Session dispatcher - event-driven API (Rule 2)
+ * Set by setSystemSessionDispatcher() from App.tsx.
+ * This is the NEW way to trigger system flows.
+ */
+let systemSessionDispatcher: ((event: any) => void) | null = null;
 
 /**
  * Current intervention state getter (set by React layer).
@@ -249,10 +259,12 @@ function recordQuickTaskUsage(packageName: string, timestamp: number): void {
 
 /**
  * Start intervention flow for a monitored app.
- * Handles cross-app interference prevention and dispatches BEGIN_INTERVENTION.
+ * Handles cross-app interference prevention and dispatches START_INTERVENTION.
  * 
  * This function is called when the decision tree determines intervention should start.
  * It deletes t_intention as per spec: "intervention flow starts → t_intention deleted"
+ * 
+ * REFACTORED: Now uses SystemSession dispatcher (Rule 2)
  * 
  * @param packageName - App package name requiring intervention
  * @param timestamp - Current timestamp
@@ -262,8 +274,11 @@ function startInterventionFlow(packageName: string, timestamp: number): void {
   console.log('[OS Trigger Brain] Starting intervention flow for:', packageName);
   console.log('[OS Trigger Brain] Timestamp:', new Date(timestamp).toISOString());
 
-  if (!interventionDispatcher) {
-    console.warn('[OS Trigger Brain] No intervention dispatcher set - cannot trigger');
+  // Use SystemSession dispatcher if available (Rule 2)
+  const dispatcher = systemSessionDispatcher || interventionDispatcher;
+  
+  if (!dispatcher) {
+    console.warn('[OS Trigger Brain] No dispatcher set - cannot trigger');
     console.log('[OS Trigger Brain] ========================================');
     return;
   }
@@ -300,23 +315,34 @@ function startInterventionFlow(packageName: string, timestamp: number): void {
   intentionTimers.delete(packageName);
   console.log('[OS Trigger Brain] t_intention deleted (intervention starting)');
 
-  console.log('[OS Trigger Brain] BEGIN_INTERVENTION dispatched', {
+  console.log('[OS Trigger Brain] START_INTERVENTION dispatched', {
     packageName,
     timestamp,
     time: new Date(timestamp).toISOString(),
   });
 
-  interventionDispatcher({
-    type: 'BEGIN_INTERVENTION',
-    app: packageName,
-    breathingDuration: getInterventionDurationSec(),
-  });
+  // RULE 2: Dispatch SystemSession event
+  if (systemSessionDispatcher) {
+    systemSessionDispatcher({
+      type: 'START_INTERVENTION',
+      app: packageName,
+    });
+  } else {
+    // Fallback to old dispatcher during migration
+    dispatcher({
+      type: 'BEGIN_INTERVENTION',
+      app: packageName,
+      breathingDuration: getInterventionDurationSec(),
+    });
+  }
   
   console.log('[OS Trigger Brain] ========================================');
 }
 
 /**
  * Show Quick Task dialog for a monitored app.
+ * 
+ * REFACTORED: Now uses SystemSession dispatcher (Rule 2)
  * 
  * @param packageName - App package name
  * @param remaining - Number of Quick Task uses remaining
@@ -326,19 +352,32 @@ function showQuickTaskDialog(packageName: string, remaining: number): void {
   console.log('[OS Trigger Brain] Showing Quick Task dialog for:', packageName);
   console.log('[OS Trigger Brain] Quick Task uses remaining (global):', remaining);
 
-  if (!interventionDispatcher) {
-    console.warn('[OS Trigger Brain] No intervention dispatcher set - cannot show dialog');
+  // Use SystemSession dispatcher if available (Rule 2)
+  const dispatcher = systemSessionDispatcher || interventionDispatcher;
+  
+  if (!dispatcher) {
+    console.warn('[OS Trigger Brain] No dispatcher set - cannot show dialog');
     console.log('[OS Trigger Brain] ========================================');
     return;
   }
 
   // NOTE: We do NOT set interventionsInProgress flag here
   // Quick Task is separate from intervention
-  interventionDispatcher({
-    type: 'SHOW_QUICK_TASK',
-    app: packageName,
-    remaining: remaining,
-  });
+  
+  // RULE 2: Dispatch SystemSession event
+  if (systemSessionDispatcher) {
+    systemSessionDispatcher({
+      type: 'START_QUICK_TASK',
+      app: packageName,
+    });
+  } else {
+    // Fallback to old dispatcher during migration
+    dispatcher({
+      type: 'SHOW_QUICK_TASK',
+      app: packageName,
+      remaining: remaining,
+    });
+  }
   
   console.log('[OS Trigger Brain] ========================================');
 }
@@ -420,13 +459,27 @@ function evaluateTriggerLogic(packageName: string, timestamp: number): void {
  * Set the intervention dispatcher function.
  * This connects the OS Trigger Brain to the React intervention state machine.
  * 
- * MUST be called from App.tsx on mount to wire up the intervention system.
+ * DEPRECATED: Use setSystemSessionDispatcher() instead (Rule 2)
+ * Kept for backward compatibility during migration.
  * 
  * @param dispatcher - Function to dispatch intervention actions
  */
 export function setInterventionDispatcher(dispatcher: (action: any) => void): void {
   interventionDispatcher = dispatcher;
-  console.log('[OS Trigger Brain] Intervention dispatcher connected');
+  console.log('[OS Trigger Brain] Intervention dispatcher connected (DEPRECATED)');
+}
+
+/**
+ * Set the system session dispatcher function (Rule 2)
+ * This connects the OS Trigger Brain to the SystemSessionProvider.
+ * 
+ * MUST be called from App.tsx on mount to wire up the session system.
+ * 
+ * @param dispatcher - Function to dispatch SystemSession events
+ */
+export function setSystemSessionDispatcher(dispatcher: (event: any) => void): void {
+  systemSessionDispatcher = dispatcher;
+  console.log('[OS Trigger Brain] System Session dispatcher connected');
 }
 
 /**

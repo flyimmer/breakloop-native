@@ -62,6 +62,35 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     }
 
     /**
+     * Get the current runtime context (which Activity we're in)
+     * 
+     * Returns:
+     * - "MAIN_APP" if running in MainActivity
+     * - "SYSTEM_SURFACE" if running in SystemSurfaceActivity
+     * 
+     * This is used by RuntimeContextProvider to determine which root component to render.
+     * 
+     * @param promise Resolves with "MAIN_APP" or "SYSTEM_SURFACE"
+     */
+    @ReactMethod
+    fun getRuntimeContext(promise: Promise) {
+        try {
+            val activity = reactApplicationContext.currentActivity
+            val context = when (activity) {
+                is SystemSurfaceActivity -> "SYSTEM_SURFACE"
+                is MainActivity -> "MAIN_APP"
+                else -> "MAIN_APP" // Default to MAIN_APP if activity is null or unknown
+            }
+            
+            android.util.Log.d("AppMonitorModule", "getRuntimeContext: $context (activity: ${activity?.javaClass?.simpleName})")
+            promise.resolve(context)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to get runtime context", e)
+            promise.resolve("MAIN_APP") // Default to MAIN_APP on error
+        }
+    }
+
+    /**
      * Convert Drawable to base64 string for React Native Image component
      * 
      * @param drawable The app icon drawable
