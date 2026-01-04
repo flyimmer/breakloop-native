@@ -30,6 +30,7 @@ export const createInitialInterventionContext = () => ({
   actionTimer: 0,
   wasCompleted: false, // Flag to track if intervention completed normally (all steps finished)
   intentionTimerSet: false, // Flag to track if intention timer was set (user should access app)
+  wasCancelled: false, // Flag to track if intervention was cancelled (user quit/switched away)
 });
 
 /**

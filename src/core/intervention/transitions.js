@@ -45,6 +45,7 @@ export const interventionReducer = (context, action) => {
         actionTimer: 0,
         wasCompleted: false, // Clear completed flag when starting new intervention
         intentionTimerSet: false, // Clear intention timer flag when starting new intervention
+        wasCancelled: false, // Clear cancelled flag when starting new intervention
       };
       
       if (__DEV__) {
@@ -181,6 +182,7 @@ export const interventionReducer = (context, action) => {
         selectedAlternative: null,
         wasCompleted: true, // Mark intervention as completed normally
         intentionTimerSet: false, // Clear intention timer flag
+        wasCancelled: false, // Not cancelled (completed normally)
       };
 
     case 'GO_BACK_FROM_ACTION':
@@ -206,6 +208,7 @@ export const interventionReducer = (context, action) => {
         actionTimer: 0,
         wasCompleted: false, // Not completed (user chose intention timer)
         intentionTimerSet: true, // Flag to indicate intention timer was set
+        wasCancelled: false, // Not cancelled (user chose intention timer)
       };
 
     case 'RESET_INTERVENTION':
@@ -219,6 +222,7 @@ export const interventionReducer = (context, action) => {
         actionTimer: 0,
         wasCompleted: false, // Not completed (was cancelled)
         intentionTimerSet: false, // Clear intention timer flag
+        wasCancelled: action.cancelled === true, // Set cancelled flag if explicitly cancelled
       };
 
     // REMOVED: PROCEED_TO_BREATHING and ACTIVATE_QUICK_TASK

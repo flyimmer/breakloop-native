@@ -497,9 +497,10 @@ function cancelIncompleteIntervention(packageName: string): void {
   // Clear the in-progress flag
   interventionsInProgress.delete(packageName);
   
-  // Dispatch RESET_INTERVENTION to reset state to idle
+  // Dispatch RESET_INTERVENTION with cancelled flag to indicate cancellation
   interventionDispatcher({
     type: 'RESET_INTERVENTION',
+    cancelled: true, // Mark as cancelled (not completed)
   });
   
   console.log('[OS Trigger Brain] Incomplete intervention cancelled, state reset to idle');
