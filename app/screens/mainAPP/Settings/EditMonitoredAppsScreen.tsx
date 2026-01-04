@@ -175,10 +175,16 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
   };
 
   // Filter apps based on search query (including aliases)
+  // If search query is empty, show all apps
   const filteredApps = installedApps
-    .filter((app) =>
-      matchesAppSearch(app.appName, app.packageName, searchQuery)
-    )
+    .filter((app) => {
+      // If search is empty, show all apps
+      if (!searchQuery.trim()) {
+        return true;
+      }
+      // Otherwise, filter by search query
+      return matchesAppSearch(app.appName, app.packageName, searchQuery);
+    })
     .sort((a, b) => {
       const aIsSelected = selectedApps.includes(a.packageName);
       const bIsSelected = selectedApps.includes(b.packageName);
