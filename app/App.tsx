@@ -19,7 +19,8 @@ import {
   getQuickTaskRemaining,
   getQuickTaskTimer,
   handleForegroundAppChange,
-  setInterventionDispatcher
+  setInterventionDispatcher,
+  setInterventionStateGetter
 } from '@/src/os/osTriggerBrain';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -75,6 +76,18 @@ function InterventionNavigationHandler() {
     
     setInterventionDispatcher(unifiedDispatcher);
   }, [dispatchIntervention, dispatchQuickTask]);
+
+  /**
+   * Connect intervention state getter to OS Trigger Brain
+   * Allows osTriggerBrain to check if there's an incomplete intervention
+   * and cancel it when user switches away.
+   */
+  useEffect(() => {
+    setInterventionStateGetter(() => ({
+      state: interventionState.state,
+      targetApp: interventionState.targetApp,
+    }));
+  }, [interventionState.state, interventionState.targetApp]);
 
   /**
    * PHASE F3.5 - Fix #3: Check for initial triggering app

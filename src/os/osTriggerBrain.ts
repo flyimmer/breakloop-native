@@ -143,6 +143,12 @@ const quickTaskTimers: Map<string, { expiresAt: number }> = new Map();
 let interventionDispatcher: ((action: any) => void) | null = null;
 
 /**
+ * Current intervention state getter (set by React layer).
+ * Allows OS Trigger Brain to check current intervention state.
+ */
+let interventionStateGetter: (() => { state: string; targetApp: string | null }) | null = null;
+
+/**
  * Calculate remaining Quick Task uses GLOBALLY in the current 15-minute window.
  * Filters out timestamps older than 15 minutes.
  * 
@@ -402,6 +408,83 @@ export function setInterventionDispatcher(dispatcher: (action: any) => void): vo
 }
 
 /**
+ * Set the intervention state getter function.
+ * Allows OS Trigger Brain to check current intervention state.
+ * 
+ * MUST be called from App.tsx to enable incomplete intervention detection.
+ * 
+ * @param getter - Function that returns current intervention state
+ */
+export function setInterventionStateGetter(getter: () => { state: string; targetApp: string | null }): void {
+  interventionStateGetter = getter;
+  console.log('[OS Trigger Brain] Intervention state getter connected');
+}
+
+/**
+ * Check if an app has an incomplete intervention that should be cancelled.
+ * 
+ * Incomplete intervention states (should be cancelled when user switches away):
+ * - breathing: User hasn't finished breathing countdown
+ * - root-cause: User hasn't selected causes
+ * - alternatives: User hasn't chosen alternative
+ * - action: User hasn't started activity
+ * - reflection: User hasn't finished reflection
+ * 
+ * Complete/Preserved states (should NOT be cancelled):
+ * - action_timer: User is doing alternative activity (preserve)
+ * - timer: User set t_intention (transitions to idle, app launches normally)
+ * - idle: No intervention active
+ * 
+ * @param packageName - App package name to check
+ * @returns true if app has incomplete intervention that should be cancelled
+ */
+function hasIncompleteIntervention(packageName: string): boolean {
+  if (!interventionStateGetter) {
+    return false;
+  }
+  
+  const { state, targetApp } = interventionStateGetter();
+  
+  // Check if this app has an intervention
+  if (targetApp !== packageName) {
+    return false; // Different app or no intervention
+  }
+  
+  // States that are considered "incomplete" (should be cancelled when user switches away)
+  const incompleteStates = ['breathing', 'root-cause', 'alternatives', 'action', 'reflection'];
+  
+  return incompleteStates.includes(state);
+}
+
+/**
+ * Cancel incomplete intervention for an app.
+ * Called when user switches away from an app with incomplete intervention.
+ * 
+ * @param packageName - App package name
+ */
+function cancelIncompleteIntervention(packageName: string): void {
+  console.log('[OS Trigger Brain] ========================================');
+  console.log('[OS Trigger Brain] Cancelling incomplete intervention for:', packageName);
+  
+  if (!interventionDispatcher) {
+    console.warn('[OS Trigger Brain] No intervention dispatcher set - cannot cancel');
+    console.log('[OS Trigger Brain] ========================================');
+    return;
+  }
+  
+  // Clear the in-progress flag
+  interventionsInProgress.delete(packageName);
+  
+  // Dispatch RESET_INTERVENTION to reset state to idle
+  interventionDispatcher({
+    type: 'RESET_INTERVENTION',
+  });
+  
+  console.log('[OS Trigger Brain] Incomplete intervention cancelled, state reset to idle');
+  console.log('[OS Trigger Brain] ========================================');
+}
+
+/**
  * Dispatch SHOW_EXPIRED action to show Quick Task expired screen.
  * This bypasses the priority chain and shows ONLY the expired screen.
  * 
@@ -545,7 +628,24 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
   }
 
   // ============================================================================
-  // Step 3: Handle meaningful app entry
+  // Step 3: Cancel incomplete intervention if user switched away
+  // ============================================================================
+  
+  // Check if user switched away from an app with incomplete intervention
+  if (lastMeaningfulApp !== null && lastMeaningfulApp !== packageName) {
+    // User switched from lastMeaningfulApp to packageName
+    // Check if lastMeaningfulApp had an incomplete intervention
+    if (hasIncompleteIntervention(lastMeaningfulApp)) {
+      console.log('[OS Trigger Brain] User switched away from app with incomplete intervention:', {
+        fromApp: lastMeaningfulApp,
+        toApp: packageName,
+      });
+      cancelIncompleteIntervention(lastMeaningfulApp);
+    }
+  }
+  
+  // ============================================================================
+  // Step 4: Handle meaningful app entry
   // ============================================================================
   
   // Log the new meaningful app entering foreground (only on actual change)
@@ -558,7 +658,7 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
   }
 
   // ============================================================================
-  // Step 4: Monitored app intervention logic
+  // Step 5: Monitored app intervention logic
   // ============================================================================
   
   // Check if this is a monitored app
