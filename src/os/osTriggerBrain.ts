@@ -615,10 +615,12 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
     }
 
     // ============================================================================
-    // PRIORITY 0: Clean up expired intention timer (if any)
+    // PRIORITY 0: Check if intention timer expired (but don't delete yet)
     // ============================================================================
     const intentionTimer = intentionTimers.get(packageName);
-    if (intentionTimer && timestamp > intentionTimer.expiresAt) {
+    const intentionJustExpired = intentionTimer && timestamp > intentionTimer.expiresAt;
+    
+    if (intentionJustExpired) {
       const expiredSec = Math.round((timestamp - intentionTimer.expiresAt) / 1000);
       console.log('[OS Trigger Brain] Intention timer expired (will be deleted)', {
         packageName,
@@ -627,16 +629,23 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
         expiredMs: timestamp - intentionTimer.expiresAt,
         expiredSec: `${expiredSec}s ago`,
       });
+      // Delete the expired timer
       intentionTimers.delete(packageName);
     }
 
     // ============================================================================
     // Skip logic for heartbeat events (same app, no actual switch)
+    // EXCEPTION: If intention timer just expired, we MUST re-evaluate logic
     // ============================================================================
-    if (lastMeaningfulApp === packageName) {
+    if (lastMeaningfulApp === packageName && !intentionJustExpired) {
       // This is a heartbeat event for the same app - skip all logic
+      // UNLESS intention timer just expired (then we need to trigger intervention)
       lastForegroundApp = packageName;
       return;
+    }
+    
+    if (lastMeaningfulApp === packageName && intentionJustExpired) {
+      console.log('[OS Trigger Brain] Heartbeat event BUT intention timer just expired - will re-evaluate logic');
     }
 
     // ============================================================================
