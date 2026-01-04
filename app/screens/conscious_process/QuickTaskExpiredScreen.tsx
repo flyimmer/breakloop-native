@@ -3,7 +3,7 @@ import { BackHandler, Pressable, StyleSheet, Text, View, Platform, NativeModules
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Clock } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
-import { resetTrackingState } from '@/src/os/osTriggerBrain';
+import { clearIntentionTimer } from '@/src/os/osTriggerBrain';
 import { useQuickTask } from '@/src/contexts/QuickTaskProvider';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
@@ -20,13 +20,13 @@ const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorMod
  * Purpose:
  * - Inform user that emergency window has ended
  * - Provide explicit "Go Home" action
- * - Reset timers (t_intention, t_appSwitchInterval)
+ * - Reset t_intention timer for the expired app (per spec)
  * - Navigate to Home screen
  * 
  * Behavior:
  * - User MUST explicitly close (no auto-dismiss)
  * - Closing navigates to Home screen
- * - All timers reset to 0
+ * - t_intention reset to 0 for this app
  */
 
 /**
@@ -81,9 +81,12 @@ export default function QuickTaskExpiredScreen() {
   const handleClose = () => {
     console.log('[QuickTaskExpired] User clicked Close & Go Home');
     
-    // Reset all tracking state (t_intention, t_appSwitchInterval, Quick Task timers)
-    console.log('[QuickTaskExpired] Resetting all tracking state');
-    resetTrackingState();
+    // Reset t_intention for the expired app (per OS Trigger Contract V1)
+    // When Quick Task expires: t_intention is reset to 0
+    if (quickTaskState.expiredApp) {
+      console.log('[QuickTaskExpired] Clearing t_intention for app:', quickTaskState.expiredApp);
+      clearIntentionTimer(quickTaskState.expiredApp);
+    }
     
     // Reset Quick Task state (hide the expired screen state)
     console.log('[QuickTaskExpired] Dispatching HIDE_EXPIRED');

@@ -18,13 +18,6 @@
 let MONITORED_APPS = new Set<string>();
 
 /**
- * Minimum interval between intervention triggers (milliseconds)
- * Configurable range: 20 seconds to 30 minutes
- * Current value: 5 minutes
- */
-let APP_SWITCH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-
-/**
  * Duration of breathing countdown in intervention flow (seconds)
  * Configurable range: 5 seconds to 30 seconds
  * Current value: 5 seconds
@@ -67,17 +60,6 @@ export function isMonitoredApp(packageName: string): boolean {
     });
   }
   return isMonitored;
-}
-
-/**
- * Get the minimum interval between intervention triggers.
- * 
- * Used to prevent intervention spam when rapidly switching apps.
- * 
- * @returns Interval in milliseconds (default: 5 minutes)
- */
-export function getAppSwitchIntervalMs(): number {
-  return APP_SWITCH_INTERVAL_MS;
 }
 
 /**
@@ -214,19 +196,14 @@ export function setQuickTaskConfig(
  * Called when user saves preferences in Settings.
  * 
  * @param interventionDurationSec - Breathing countdown duration in seconds (5-30)
- * @param appSwitchIntervalMs - Minimum interval between interventions in milliseconds (20 seconds to 30 minutes)
  */
 export function setInterventionPreferences(
-  interventionDurationSec: number,
-  appSwitchIntervalMs: number
+  interventionDurationSec: number
 ): void {
   INTERVENTION_DURATION_SEC = interventionDurationSec;
-  APP_SWITCH_INTERVAL_MS = appSwitchIntervalMs;
   if (__DEV__) {
     console.log('[osConfig] Updated intervention preferences:', {
       interventionDurationSec,
-      appSwitchIntervalMs,
-      appSwitchIntervalMin: appSwitchIntervalMs / (60 * 1000),
     });
   }
 }

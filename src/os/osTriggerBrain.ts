@@ -1,14 +1,14 @@
 /**
- * OS Trigger Brain (Contract v1.1)
+ * OS Trigger Brain (Contract V1 - Updated)
  * 
- * Tracks foreground app changes and records exit timestamps.
- * Implements app switch interval logic to prevent intervention spam.
- * Implements intention timer semantics per OS Trigger Contract.
+ * Tracks foreground app changes and implements intervention trigger logic.
+ * Implements intention timer and Quick Task semantics per OS Trigger Contract V1.
  * 
  * Key Contract Rules:
- * - t_appSwitchInterval determines when a new conscious decision is required
- * - t_intention (intention timer) remains valid across brief exits
- * - Intention timers are overwritten ONLY when new intervention is triggered
+ * - t_intention (intention timer) suppresses intervention when valid
+ * - t_quickTask (Quick Task timer) suppresses intervention when active
+ * - n_quickTask (global usage count) determines Quick Task availability
+ * - Intention timers are deleted when intervention starts/restarts
  * - Expired intention triggers intervention (immediately if foreground, or on next entry)
  * 
  * SEMANTIC LAUNCHER FILTERING:
@@ -16,12 +16,10 @@
  * This layer filters launchers semantically because:
  * - Launchers don't represent user intent to "use an app"
  * - On OEM devices, launchers briefly regain focus during transitions
- * - App switch interval should only count time between meaningful apps
  * - Easier to maintain launcher list in JS than in multiple native platforms
  */
 
 import { 
-  getAppSwitchIntervalMs, 
   isMonitoredApp, 
   getInterventionDurationSec, 
   getMonitoredAppsList,
@@ -40,17 +38,17 @@ import {
  * 
  * WHY FILTER LAUNCHERS?
  * - On OEM devices (Huawei/Honor, Xiaomi, Samsung), launchers briefly regain
- *   focus during app transitions, creating false "app switch" events.
+ *   focus during app transitions, creating false foreground events.
  * - Launchers don't represent user intent to engage with content.
- * - App switch interval should measure time between actual apps, not launcher bounces.
+ * - We only want to trigger interventions for actual app usage.
  * 
  * Example without filtering:
  *   Instagram → Launcher (100ms) → YouTube
- *   = Two app switches, two interventions
+ *   = Two foreground events, potential duplicate interventions
  * 
  * With filtering:
  *   Instagram → [Launcher ignored] → YouTube
- *   = One app switch from Instagram to YouTube
+ *   = Clean transition from Instagram to YouTube
  */
 const LAUNCHER_PACKAGES = new Set([
   'com.android.launcher',           // AOSP launcher
@@ -90,7 +88,7 @@ let lastForegroundApp: string | null = null;
 
 /**
  * Last MEANINGFUL app (excludes launchers).
- * Used for app switch interval logic and intervention decisions.
+ * Used for intervention decisions and heartbeat detection.
  * This represents the last app the user actually engaged with.
  */
 let lastMeaningfulApp: string | null = null;
@@ -98,15 +96,9 @@ let lastMeaningfulApp: string | null = null;
 /**
  * Exit timestamps for ALL apps (including launchers).
  * Maps packageName -> last exit timestamp.
+ * Used for debugging and tracking purposes.
  */
 const lastExitTimestamps: Map<string, number> = new Map();
-
-/**
- * Exit timestamps for MEANINGFUL apps only (excludes launchers).
- * Used for app switch interval calculations.
- * Maps packageName -> last meaningful exit timestamp.
- */
-const lastMeaningfulExitTimestamps: Map<string, number> = new Map();
 
 /**
  * Per-app intention timers (t_intention).
@@ -324,7 +316,7 @@ function showQuickTaskDialog(packageName: string, remaining: number): void {
 }
 
 /**
- * Evaluate trigger logic using nested decision tree (OS Trigger Contract v1.1).
+ * Evaluate trigger logic using nested decision tree (OS Trigger Contract V1).
  * 
  * ARCHITECTURE: Implements NESTED priority logic per spec:
  * 1. Check t_intention (per-app)
@@ -335,8 +327,7 @@ function showQuickTaskDialog(packageName: string, remaining: number): void {
  *      - If t_quickTask = 0: show Quick Task dialog
  *    - If n_quickTask = 0: start intervention flow
  * 
- * This function is called ONLY when t_appSwitchInterval has NOT elapsed.
- * When t_appSwitchInterval elapsed, intervention starts directly (bypassing this logic).
+ * This function is called for EVERY monitored app entry.
  * 
  * @param packageName - App package name
  * @param timestamp - Current timestamp
@@ -557,16 +548,6 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
   // Step 3: Handle meaningful app entry
   // ============================================================================
   
-  // Record exit of last meaningful app (if transitioning between meaningful apps)
-  if (lastMeaningfulApp !== null && lastMeaningfulApp !== packageName) {
-    lastMeaningfulExitTimestamps.set(lastMeaningfulApp, timestamp);
-    console.log('[OS Trigger Brain] Meaningful app exited:', {
-      packageName: lastMeaningfulApp,
-      exitTimestamp: timestamp,
-      exitTime: new Date(timestamp).toISOString(),
-    });
-  }
-
   // Log the new meaningful app entering foreground (only on actual change)
   if (lastForegroundApp !== packageName) {
     console.log('[OS Trigger Brain] App entered foreground:', {
@@ -659,68 +640,12 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
     }
 
     // ============================================================================
-    // PRIORITY 1: Check t_appSwitchInterval (HIGHEST PRIORITY per spec)
+    // Evaluate trigger logic using nested decision tree
     // ============================================================================
-    // Per spec: "t_appSwitchInterval has a higher priority than t_intention"
-    // When t_appSwitchInterval elapsed → intervention MUST start (regardless of t_intention)
-    
-    const lastExitTimestamp = lastMeaningfulExitTimestamps.get(packageName);
-    const intervalMs = getAppSwitchIntervalMs();
-
-    let appSwitchIntervalElapsed = false;
-    if (lastExitTimestamp === undefined) {
-      // First entry ever - treat as elapsed
-      appSwitchIntervalElapsed = true;
-      console.log('[OS Trigger Brain] First entry for this app (no previous exit)');
-    } else {
-      const timeSinceExit = timestamp - lastExitTimestamp;
-      appSwitchIntervalElapsed = timeSinceExit >= intervalMs;
-      
-      const intervalSec = Math.round(intervalMs / 1000);
-      const timeSinceExitSec = Math.round(timeSinceExit / 1000);
-      
-      if (appSwitchIntervalElapsed) {
-        console.log('[OS Trigger Brain] ✓ t_appSwitchInterval ELAPSED (HIGHEST PRIORITY)', {
-          packageName,
-          timeSinceExitMs: timeSinceExit,
-          timeSinceExitSec: `${timeSinceExitSec}s`,
-          intervalMs,
-          intervalSec: `${intervalSec}s`,
-          lastExitTimestamp,
-          currentTimestamp: timestamp,
-        });
-      } else {
-        console.log('[OS Trigger Brain] ✗ t_appSwitchInterval NOT elapsed', {
-          packageName,
-          timeSinceExitMs: timeSinceExit,
-          timeSinceExitSec: `${timeSinceExitSec}s`,
-          intervalMs,
-          intervalSec: `${intervalSec}s`,
-          note: 'Will apply nested logic',
-        });
-      }
-    }
-
-    if (appSwitchIntervalElapsed) {
-      // t_appSwitchInterval elapsed → Start intervention directly
-      // Per spec: "intervention should start. Since intervention flow will restart, 
-      // the t_intention for this app shall be deleted"
-      console.log('[OS Trigger Brain] → START INTERVENTION (app switch interval elapsed)');
-      startInterventionFlow(packageName, timestamp);
-      
-      // Update tracking
-      lastForegroundApp = packageName;
-      lastMeaningfulApp = packageName;
-      return;
-    }
-
-    // ============================================================================
-    // PRIORITY 2: t_appSwitchInterval NOT elapsed → Apply nested logic
-    // ============================================================================
-    // Nested decision tree:
-    // 1. Check t_intention
-    // 2. If t_intention = 0: Check n_quickTask
-    //    - If n_quickTask != 0: Check t_quickTask
+    // Decision tree per OS Trigger Contract V1:
+    // 1. Check t_intention (per-app)
+    // 2. If t_intention = 0: Check n_quickTask (global)
+    //    - If n_quickTask != 0: Check t_quickTask (per-app)
     //      - If t_quickTask != 0: suppress
     //      - If t_quickTask = 0: show Quick Task dialog
     //    - If n_quickTask = 0: start intervention
@@ -1024,9 +949,8 @@ export function checkForegroundIntentionExpiration(currentTimestamp: number): vo
         
         // DELETE the expired timer for background app
         // When user returns to this app, handleForegroundAppChange() will see:
-        // 1. No intention timer exists
-        // 2. App switch interval has elapsed (because timer was set long ago)
-        // 3. Will trigger new intervention at that time
+        // 1. No intention timer exists (expired)
+        // 2. Will trigger new intervention at that time
         intentionTimers.delete(packageName);
         
         // DO NOT trigger intervention - wait for user to return to this app
@@ -1058,13 +982,24 @@ export function checkBackgroundIntentionExpiration(currentTimestamp: number): vo
 }
 
 /**
+ * Clear intention timer for a specific app.
+ * Used when Quick Task expires to reset t_intention per spec.
+ * 
+ * @param packageName - App package name
+ */
+export function clearIntentionTimer(packageName: string): void {
+  intentionTimers.delete(packageName);
+  console.log('[OS Trigger Brain] Intention timer cleared for app:', packageName);
+}
+
+/**
  * Reset all tracking state (for testing/debugging).
+ * NOTE: This is primarily for development/testing purposes.
  */
 export function resetTrackingState(): void {
   lastForegroundApp = null;
   lastMeaningfulApp = null;
   lastExitTimestamps.clear();
-  lastMeaningfulExitTimestamps.clear();
   intentionTimers.clear();
   interventionsInProgress.clear();
   quickTaskTimers.clear();

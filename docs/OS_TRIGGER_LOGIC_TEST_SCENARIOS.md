@@ -1,144 +1,42 @@
 # OS Trigger Logic Test Scenarios
 
-This document provides comprehensive test scenarios to validate the OS Trigger Brain implementation against the OS Trigger Contract specification.
+**Contract Version:** V1 (Updated January 5, 2026)  
+**Purpose:** Comprehensive test scenarios for OS Trigger Brain logic
 
-## Test Setup
+---
 
-**Monitored Apps:** Instagram, TikTok
-**Configuration:**
-- `t_appSwitchInterval`: 5 minutes (300 seconds)
-- `t_intention`: 2 minutes (120 seconds) when set
-- `t_quickTask`: 3 minutes (180 seconds) when activated
-- `n_quickTask`: 1 use per 15-minute window
+## Test Configuration
+
+**Monitored Apps:**
+- Instagram (`com.instagram.android`)
+- TikTok (`com.zhiliaoapp.musically`)
+
+**Settings:**
+- Intervention breathing duration: 5 seconds
+- Quick Task duration: 3 minutes (180 seconds)
+- Quick Task uses per window: 1 use per 15 minutes (global)
 
 ---
 
 ## Scenario 1: First Launch (No Previous State)
 
-**Setup:**
-- User has never opened Instagram before
-- No timers exist
+**Initial State:**
+- Instagram: Never opened before
+- `t_intention = 0` (not set)
+- `t_quickTask = 0` (not active)
+- `n_quickTask = 1` (1 use available)
 
-**Steps:**
-1. User opens Instagram
+**Action:** User opens Instagram
 
-**Expected Behavior:**
-- ✓ t_appSwitchInterval: No previous exit → treat as elapsed
-- ✓ Intervention flow starts immediately
-- ✓ t_intention deleted (none existed)
-- ✓ User sees breathing screen
+**Expected Logic Flow:**
+1. Check `t_intention` → 0 (not set)
+2. Check `n_quickTask` → 1 (available)
+3. Check `t_quickTask` → 0 (not active)
+4. **Result:** Show Quick Task dialog
 
-**Validation:**
+**Expected Logs:**
 ```
-[OS Trigger Brain] First entry for this app (no previous exit)
-[OS Trigger Brain] ✓ t_appSwitchInterval ELAPSED (HIGHEST PRIORITY)
-[OS Trigger Brain] → START INTERVENTION (app switch interval elapsed)
-[OS Trigger Brain] t_intention deleted (intervention starting)
-[OS Trigger Brain] BEGIN_INTERVENTION dispatched
-```
-
----
-
-## Scenario 2: Re-entry Within t_appSwitchInterval
-
-**Setup:**
-- User opens Instagram → intervention → sets t_intention (2 min)
-- User exits Instagram after 30 seconds
-- User re-opens Instagram after 1 minute (within 5-minute interval)
-
-**Steps:**
-1. User opens Instagram (1 minute after exit)
-
-**Expected Behavior:**
-- ✗ t_appSwitchInterval: NOT elapsed (1 min < 5 min)
-- → Apply nested logic
-- ✓ t_intention VALID (still has 90 seconds remaining)
-- → SUPPRESS everything
-- User can use Instagram freely
-
-**Validation:**
-```
-[OS Trigger Brain] ✗ t_appSwitchInterval NOT elapsed
-[OS Trigger Brain] Evaluating nested trigger logic
-[OS Trigger Brain] ✓ t_intention VALID (per-app)
-[OS Trigger Brain] → SUPPRESS EVERYTHING
-[OS Trigger Brain] → Remaining: 90s
-```
-
----
-
-## Scenario 3: Re-entry After t_appSwitchInterval Elapsed
-
-**Setup:**
-- User opens Instagram → intervention → sets t_intention (2 min)
-- User exits Instagram
-- User re-opens Instagram after 6 minutes (> 5-minute interval)
-
-**Steps:**
-1. User opens Instagram (6 minutes after exit)
-
-**Expected Behavior:**
-- ✓ t_appSwitchInterval ELAPSED (6 min > 5 min)
-- → START INTERVENTION immediately (bypass nested logic)
-- ✓ t_intention deleted (even though it already expired)
-- User sees breathing screen
-
-**Validation:**
-```
-[OS Trigger Brain] ✓ t_appSwitchInterval ELAPSED (HIGHEST PRIORITY)
-[OS Trigger Brain] → START INTERVENTION (app switch interval elapsed)
-[OS Trigger Brain] t_intention deleted (intervention starting)
-[OS Trigger Brain] BEGIN_INTERVENTION dispatched
-```
-
-**Key Point:** t_appSwitchInterval has HIGHER priority than t_intention. Even if t_intention was still valid, intervention would start.
-
----
-
-## Scenario 4: Quick Task Available (n_quickTask > 0)
-
-**Setup:**
-- User opens Instagram (first time or after interval elapsed)
-- No t_intention exists
-- n_quickTask = 1 (one use remaining)
-- No active t_quickTask timer
-
-**Steps:**
-1. User opens Instagram
-
-**Expected Behavior:**
-- ✓ t_appSwitchInterval ELAPSED (or first entry)
-- → START INTERVENTION
-- Wait, this is wrong! Let me re-read the spec...
-
-Actually, when t_appSwitchInterval elapsed, intervention starts DIRECTLY. The nested logic (including Quick Task dialog) is only evaluated when t_appSwitchInterval is NOT elapsed.
-
-Let me correct this scenario:
-
-**Corrected Setup:**
-- User opens Instagram
-- User exits after 30 seconds
-- User re-opens Instagram after 1 minute (within 5-minute interval)
-- No t_intention exists (expired or never set)
-- n_quickTask = 1 (one use remaining)
-- No active t_quickTask timer
-
-**Steps:**
-1. User opens Instagram (1 minute after exit)
-
-**Expected Behavior:**
-- ✗ t_appSwitchInterval NOT elapsed (1 min < 5 min)
-- → Apply nested logic
-- ✗ t_intention = 0 (expired or not set)
-- ✓ n_quickTask != 0 (1 use remaining)
-- ✗ t_quickTask = 0 (no active timer)
-- → SHOW QUICK TASK DIALOG
-- User sees Quick Task dialog with "Use Quick Task" option
-
-**Validation:**
-```
-[OS Trigger Brain] ✗ t_appSwitchInterval NOT elapsed
-[OS Trigger Brain] Evaluating nested trigger logic
+[OS Trigger Brain] Monitored app entered foreground: com.instagram.android
 [OS Trigger Brain] ✗ t_intention = 0 (expired or not set)
 [OS Trigger Brain] ✓ n_quickTask != 0 (uses remaining: 1)
 [OS Trigger Brain] ✗ t_quickTask = 0 (no active timer)
@@ -147,158 +45,49 @@ Let me correct this scenario:
 
 ---
 
-## Scenario 5: Quick Task Active (t_quickTask != 0)
+## Scenario 2: Valid Intention Timer
 
-**Setup:**
-- User opens Instagram
-- User activates Quick Task (3-minute timer starts)
-- User exits Instagram
-- User re-opens Instagram after 1 minute (within Quick Task window)
+**Initial State:**
+- Instagram: `t_intention = 120s` (2 minutes remaining)
+- `t_quickTask = 0`
+- `n_quickTask = 1`
 
-**Steps:**
-1. User opens Instagram (1 minute after activating Quick Task)
+**Action:** User opens Instagram
 
-**Expected Behavior:**
-- ✗ t_appSwitchInterval NOT elapsed
-- → Apply nested logic
-- ✗ t_intention = 0 (Quick Task doesn't create t_intention)
-- ✓ n_quickTask = 0 (usage consumed)
-- Wait, this is wrong too. Let me reconsider...
+**Expected Logic Flow:**
+1. Check `t_intention` → 120s (valid)
+2. **Result:** SUPPRESS everything
 
-Actually, n_quickTask is the REMAINING uses. After using Quick Task once, n_quickTask becomes 0 (no uses left). But t_quickTask timer is still active.
-
-**Corrected Expected Behavior:**
-- ✗ t_appSwitchInterval NOT elapsed
-- → Apply nested logic
-- ✗ t_intention = 0
-- Check n_quickTask... wait, the spec says check n_quickTask first, then t_quickTask.
-
-Let me re-read the nested logic from Screenshot 3:
-
+**Expected Logs:**
 ```
-if t_intention = 0:
-  if n_quickTask != 0:
-    if t_quickTask != 0: suppress
-    else: show Quick Task dialog
-  else: start intervention
-```
-
-So when n_quickTask = 0 (no uses remaining), we go straight to intervention, EVEN IF t_quickTask is active!
-
-This seems wrong. Let me check the spec again...
-
-Actually, looking at the spec in Screenshot 2:
-- "During t_quickTask: User may freely switch apps and return to monitored apps. No intervention process shall start."
-
-This suggests t_quickTask should suppress intervention regardless of n_quickTask.
-
-But Screenshot 3 shows the nested logic where n_quickTask is checked BEFORE t_quickTask.
-
-**I need clarification from the user on this edge case:**
-- When user has used all Quick Task quota (n_quickTask = 0), but t_quickTask timer is still active, what should happen?
-  - Option A: t_quickTask suppresses intervention (user can still use the app)
-  - Option B: Intervention starts (n_quickTask = 0 takes priority)
-
-For now, I'll implement according to Screenshot 3 (nested logic), which means Option B.
-
-**Expected Behavior (per Screenshot 3 nested logic):**
-- ✗ t_appSwitchInterval NOT elapsed
-- → Apply nested logic
-- ✗ t_intention = 0
-- ✗ n_quickTask = 0 (no uses remaining)
-- → START INTERVENTION
-- User sees breathing screen (even though t_quickTask is active)
-
-**Validation:**
-```
-[OS Trigger Brain] ✗ t_appSwitchInterval NOT elapsed
-[OS Trigger Brain] Evaluating nested trigger logic
-[OS Trigger Brain] ✗ t_intention = 0 (expired or not set)
-[OS Trigger Brain] ✗ n_quickTask = 0 (no uses remaining)
-[OS Trigger Brain] → START INTERVENTION FLOW
-```
-
----
-
-## Scenario 6: Quick Task Active with Remaining Uses
-
-**Setup:**
-- User has n_quickTask = 2 (two uses remaining, premium user)
-- User opens Instagram, activates Quick Task
-- User exits Instagram
-- User re-opens Instagram after 1 minute (within Quick Task window)
-
-**Steps:**
-1. User opens Instagram (1 minute after activating Quick Task)
-
-**Expected Behavior:**
-- ✗ t_appSwitchInterval NOT elapsed
-- → Apply nested logic
-- ✗ t_intention = 0
-- ✓ n_quickTask != 0 (1 use remaining after first use)
-- ✓ t_quickTask ACTIVE (2 minutes remaining)
-- → SUPPRESS EVERYTHING
-- User can use Instagram freely
-
-**Validation:**
-```
-[OS Trigger Brain] ✗ t_appSwitchInterval NOT elapsed
-[OS Trigger Brain] Evaluating nested trigger logic
-[OS Trigger Brain] ✗ t_intention = 0 (expired or not set)
-[OS Trigger Brain] ✓ n_quickTask != 0 (uses remaining: 1)
-[OS Trigger Brain] ✓ t_quickTask ACTIVE (per-app)
+[OS Trigger Brain] Monitored app entered foreground: com.instagram.android
+[OS Trigger Brain] ✓ t_intention VALID (per-app)
 [OS Trigger Brain] → SUPPRESS EVERYTHING
 [OS Trigger Brain] → Remaining: 120s
 ```
 
 ---
 
-## Scenario 7: Per-App Isolation (Instagram vs TikTok)
+## Scenario 3: Expired Intention Timer
 
-**Setup:**
-- User opens Instagram → sets t_intention (2 min)
-- User switches to TikTok (also monitored)
+**Initial State:**
+- User in Instagram with `t_intention = 30s`
+- After 30 seconds, timer expires
+- `n_quickTask = 0` (no uses remaining)
 
-**Steps:**
-1. User switches to TikTok
+**Action:** Timer expires while user still in Instagram
 
-**Expected Behavior:**
-- TikTok has NO t_intention (independent from Instagram)
-- Check TikTok's t_appSwitchInterval (independent from Instagram)
-- If TikTok's interval elapsed → intervention starts for TikTok
-- Instagram's t_intention does NOT affect TikTok
+**Expected Logic Flow:**
+1. Periodic check detects expiration
+2. Delete `t_intention`
+3. Re-evaluate logic:
+   - Check `t_intention` → 0 (just deleted)
+   - Check `n_quickTask` → 0 (no uses)
+4. **Result:** START INTERVENTION
 
-**Validation:**
-```
-[OS Trigger Brain] Monitored app entered foreground: TikTok
-[OS Trigger Brain] ✓ t_appSwitchInterval ELAPSED (first entry for TikTok)
-[OS Trigger Brain] → START INTERVENTION (app switch interval elapsed)
-[OS Trigger Brain] BEGIN_INTERVENTION dispatched for TikTok
-```
-
-**Key Point:** Each app is treated individually. Instagram's t_intention does not suppress TikTok's intervention.
-
----
-
-## Scenario 8: t_intention Expires While User Is In App
-
-**Setup:**
-- User opens Instagram → sets t_intention (2 min)
-- User stays in Instagram for 3 minutes (t_intention expires while in app)
-
-**Steps:**
-1. Periodic timer check detects t_intention expired for foreground app
-
-**Expected Behavior:**
-- t_intention deleted
-- Re-evaluate using nested logic (evaluateTriggerLogic)
-- Check n_quickTask, t_quickTask, etc.
-- Likely outcome: intervention starts (unless Quick Task available)
-
-**Validation:**
+**Expected Logs:**
 ```
 [OS Trigger Brain] Intention timer expired for FOREGROUND app — re-evaluating logic
-[OS Trigger Brain] Evaluating nested trigger logic
 [OS Trigger Brain] ✗ t_intention = 0 (expired or not set)
 [OS Trigger Brain] ✗ n_quickTask = 0 (no uses remaining)
 [OS Trigger Brain] → START INTERVENTION FLOW
@@ -306,112 +95,234 @@ For now, I'll implement according to Screenshot 3 (nested logic), which means Op
 
 ---
 
-## Scenario 9: Quick Task Expires
+## Scenario 4: Active Quick Task Timer
 
-**Setup:**
-- User activates Quick Task on Instagram (3-minute timer)
-- User stays in Instagram for 4 minutes (Quick Task expires)
+**Initial State:**
+- Instagram: `t_intention = 0`
+- `t_quickTask = 180s` (3 minutes remaining)
+- `n_quickTask = 0` (used up, but timer still active)
 
-**Steps:**
-1. Quick Task timer expires
-2. System shows "QuickTaskExpiredScreen"
-3. User dismisses screen and returns to home
-4. User opens Instagram again
+**Action:** User opens Instagram
 
-**Expected Behavior (on re-opening Instagram):**
-- t_appSwitchInterval reset to 0 (per spec: "When t_quickTask expires, t_appSwitchInterval is reset to 0")
-- t_intention reset to 0 (per spec)
-- Check if this is first entry or interval elapsed
-- Likely outcome: intervention starts or Quick Task dialog (if n_quickTask allows)
+**Expected Logic Flow:**
+1. Check `t_intention` → 0
+2. Check `n_quickTask` → 0 (but we still check `t_quickTask`)
+3. Check `t_quickTask` → 180s (active)
+4. **Result:** SUPPRESS (Quick Task active)
 
-**Validation:**
+**Expected Logs:**
 ```
-[OS Trigger Brain] First entry for this app (no previous exit)
-[OS Trigger Brain] ✓ t_appSwitchInterval ELAPSED (HIGHEST PRIORITY)
-[OS Trigger Brain] → START INTERVENTION (app switch interval elapsed)
+[OS Trigger Brain] Monitored app entered foreground: com.instagram.android
+[OS Trigger Brain] ✗ t_intention = 0 (expired or not set)
+[OS Trigger Brain] ✓ n_quickTask != 0 (uses remaining: 0)
+[OS Trigger Brain] ✓ t_quickTask ACTIVE (per-app)
+[OS Trigger Brain] → SUPPRESS EVERYTHING
+[OS Trigger Brain] → Remaining: 180s
 ```
+
+**Note:** Even if `n_quickTask = 0`, an active `t_quickTask` still suppresses intervention.
 
 ---
 
-## Scenario 10: Global n_quickTask Across Apps
+## Scenario 5: Quick Task Dialog → User Activates Quick Task
 
-**Setup:**
-- User has n_quickTask = 1 (one use remaining)
-- User opens Instagram, uses Quick Task
-- User exits Instagram
-- User opens TikTok (different monitored app)
+**Initial State:**
+- Instagram: `t_intention = 0`, `t_quickTask = 0`
+- `n_quickTask = 1` (1 use available)
+- Quick Task dialog is showing
 
-**Steps:**
-1. User opens TikTok (within t_appSwitchInterval)
+**Action:** User clicks "Quick Task" button
 
 **Expected Behavior:**
-- TikTok checks n_quickTask (GLOBAL)
-- n_quickTask = 0 (already used on Instagram)
-- → START INTERVENTION (no Quick Task dialog for TikTok)
+1. Set `t_quickTask = 180s` for Instagram
+2. Record usage: `n_quickTask` decrements to 0
+3. Hide Quick Task dialog
+4. Launch Instagram
 
-**Validation:**
-```
-[OS Trigger Brain] ✗ t_appSwitchInterval NOT elapsed
-[OS Trigger Brain] Evaluating nested trigger logic
-[OS Trigger Brain] ✗ t_intention = 0
-[OS Trigger Brain] ✗ n_quickTask = 0 (no uses remaining)
-[OS Trigger Brain] → START INTERVENTION FLOW
-```
-
-**Key Point:** n_quickTask is GLOBAL across all monitored apps. Using Quick Task on Instagram consumes quota for TikTok too.
+**Result After:**
+- Instagram: `t_quickTask = 180s` (active)
+- `n_quickTask = 0` (used up)
+- User can use Instagram freely for 3 minutes
 
 ---
 
-## Edge Cases to Test
+## Scenario 6: Quick Task Dialog → User Chooses "Continue"
 
-### Edge Case 1: Heartbeat Events
-- User stays in Instagram (no app switch)
-- Periodic foreground events fire
-- Expected: Skip all logic (no intervention, no dialog)
+**Initial State:**
+- Instagram: `t_intention = 0`, `t_quickTask = 0`
+- `n_quickTask = 1` (1 use available)
+- Quick Task dialog is showing
 
-### Edge Case 2: Launcher Bounces
-- User switches from Instagram to TikTok via launcher
-- Launcher briefly gains focus
-- Expected: Launcher ignored, direct switch from Instagram to TikTok
+**Action:** User clicks "Continue" button
 
-### Edge Case 3: Cross-App Intervention Blocking
-- User opens Instagram → intervention starts (breathing screen)
-- User switches to TikTok (also monitored)
-- Expected: TikTok intervention BLOCKED (Instagram intervention in progress)
-- User must complete Instagram intervention first
+**Expected Behavior:**
+1. Hide Quick Task dialog
+2. Start intervention flow:
+   - Delete `t_intention` (already 0)
+   - Mark intervention as in-progress
+   - Dispatch `BEGIN_INTERVENTION`
+3. Navigate to breathing screen
 
-### Edge Case 4: t_intention Expires in Background
-- User opens Instagram → sets t_intention (2 min)
-- User switches to non-monitored app (Chrome)
-- 3 minutes pass (t_intention expires while Instagram in background)
-- User returns to Instagram
-- Expected: t_intention deleted, intervention logic re-evaluated
+**Result:**
+- Intervention starts
+- `n_quickTask` remains 1 (not used)
 
 ---
 
-## Summary of Priority Rules
+## Scenario 7: Quick Task Expires
 
-**When monitored app enters foreground:**
+**Initial State:**
+- User in Instagram with `t_quickTask = 180s`
+- After 3 minutes, timer expires
 
-1. **Skip heartbeat events** (same app, no actual switch)
+**Action:** Timer expires while user still in Instagram
 
-2. **Check t_appSwitchInterval (HIGHEST PRIORITY)**
-   - If ELAPSED → START INTERVENTION directly (bypass nested logic)
-   - If NOT elapsed → Apply nested logic below
+**Expected Behavior:**
+1. Native layer detects expiration
+2. Wake System Surface with `QUICK_TASK_EXPIRED` reason
+3. JavaScript shows QuickTaskExpiredScreen
+4. User clicks "Close & Go Home"
+5. Clear `t_intention` for Instagram (reset to 0)
+6. Navigate to home screen
 
-3. **Nested Logic (only when t_appSwitchInterval NOT elapsed):**
-   - Check t_intention
-     - If VALID → SUPPRESS
-   - If t_intention = 0:
-     - Check n_quickTask
-       - If != 0:
-         - Check t_quickTask
-           - If ACTIVE → SUPPRESS
-           - If = 0 → SHOW QUICK TASK DIALOG
-       - If = 0 → START INTERVENTION
+**Expected Logs:**
+```
+[QuickTaskExpired] User clicked Close & Go Home
+[QuickTaskExpired] Clearing t_intention for app: com.instagram.android
+[OS Trigger Brain] Intention timer cleared for app: com.instagram.android
+```
 
-**Key Principles:**
-- t_appSwitchInterval has HIGHER priority than t_intention
-- Each app is treated individually (per-app timers)
-- n_quickTask is GLOBAL across all apps
-- When intervention starts, t_intention is deleted
+---
+
+## Scenario 8: Per-App Independence
+
+**Initial State:**
+- Instagram: `t_intention = 120s`, `t_quickTask = 0`
+- TikTok: `t_intention = 0`, `t_quickTask = 0`
+- `n_quickTask = 1` (global)
+
+**Action 1:** User opens Instagram
+
+**Expected Result:**
+- Check `t_intention` → 120s (valid)
+- **SUPPRESS**
+
+**Action 2:** User switches to TikTok
+
+**Expected Result:**
+- Check `t_intention` → 0 (TikTok has no timer)
+- Check `n_quickTask` → 1 (available)
+- Check `t_quickTask` → 0 (not active)
+- **Show Quick Task dialog**
+
+**Key Point:** Instagram's `t_intention` does NOT affect TikTok's evaluation.
+
+---
+
+## Scenario 9: Global n_quickTask
+
+**Initial State:**
+- Instagram: `t_intention = 0`, `t_quickTask = 0`
+- TikTok: `t_intention = 0`, `t_quickTask = 0`
+- `n_quickTask = 1` (global, 1 use available)
+
+**Action 1:** User opens Instagram, activates Quick Task
+
+**Result:**
+- Instagram: `t_quickTask = 180s`
+- `n_quickTask = 0` (used up)
+
+**Action 2:** User switches to TikTok
+
+**Expected Result:**
+- Check `t_intention` → 0
+- Check `n_quickTask` → 0 (no uses remaining)
+- **START INTERVENTION** (no Quick Task dialog)
+
+**Key Point:** Using Quick Task on Instagram consumes the global quota for TikTok.
+
+---
+
+## Scenario 10: Heartbeat Event (Same App)
+
+**Initial State:**
+- User in Instagram
+- Instagram: `t_intention = 0`
+
+**Action:** Accessibility service reports Instagram foreground again (heartbeat)
+
+**Expected Result:**
+- Detect same app (heartbeat event)
+- **Skip all logic** (no intervention, no Quick Task dialog)
+
+**Expected Logs:**
+```
+[OS Trigger Brain] App entered foreground: com.instagram.android
+[OS Trigger Brain] Monitored app entered foreground: com.instagram.android
+(Skip logic - heartbeat event)
+```
+
+---
+
+## Scenario 11: Background Intention Timer Expiry
+
+**Initial State:**
+- Instagram: `t_intention = 30s`
+- User in different app (e.g., Chrome)
+
+**Action:** Instagram's `t_intention` expires while user in Chrome
+
+**Expected Behavior:**
+1. Periodic check detects expiration
+2. Delete `t_intention` for Instagram
+3. Log: "Intention timer expired for BACKGROUND app — deleting timer"
+4. **Do NOT trigger intervention** (user not in Instagram)
+
+**When User Returns to Instagram:**
+- Check `t_intention` → 0 (was deleted)
+- Evaluate nested logic
+- May show Quick Task dialog or start intervention
+
+---
+
+## Summary Table
+
+| Scenario | t_intention | t_quickTask | n_quickTask | Result |
+|----------|-------------|-------------|-------------|--------|
+| 1. First Launch | 0 | 0 | 1 | Show Quick Task dialog |
+| 2. Valid Intention | 120s | 0 | 1 | SUPPRESS |
+| 3. Expired Intention (in-app) | 0 (expired) | 0 | 0 | START INTERVENTION |
+| 4. Active Quick Task | 0 | 180s | 0 | SUPPRESS |
+| 5. QT Dialog → Activate | 0 | 0 → 180s | 1 → 0 | Launch app |
+| 6. QT Dialog → Continue | 0 | 0 | 1 | START INTERVENTION |
+| 7. Quick Task Expires | 0 (reset) | 0 (expired) | 0 | Show expired screen |
+| 8. Per-App (Instagram) | 120s | 0 | 1 | SUPPRESS |
+| 8. Per-App (TikTok) | 0 | 0 | 1 | Show Quick Task dialog |
+| 9. Global Quota (Instagram) | 0 | 0 → 180s | 1 → 0 | Launch app |
+| 9. Global Quota (TikTok) | 0 | 0 | 0 | START INTERVENTION |
+| 10. Heartbeat | 0 | 0 | 1 | Skip (no action) |
+| 11. Background Expiry | 0 (deleted) | 0 | 1 | Delete timer only |
+
+---
+
+## Testing Checklist
+
+- [ ] First launch shows Quick Task dialog
+- [ ] Valid `t_intention` suppresses intervention
+- [ ] Expired `t_intention` (in-app) triggers intervention
+- [ ] Active `t_quickTask` suppresses intervention
+- [ ] Quick Task activation works correctly
+- [ ] Quick Task "Continue" starts intervention
+- [ ] Quick Task expiry shows expired screen and resets `t_intention`
+- [ ] Per-app independence (Instagram timer doesn't affect TikTok)
+- [ ] Global `n_quickTask` (using on Instagram affects TikTok)
+- [ ] Heartbeat events are skipped
+- [ ] Background timer expiry only deletes timer (no intervention)
+
+---
+
+## Related Documentation
+
+- `Trigger_logic_priority.md` - Priority chain documentation
+- `OS_TRIGGER_LOGIC_REFACTOR_SUMMARY.md` - Implementation changes
+- `NATIVE_JAVASCRIPT_BOUNDARY.md` - Native-JS boundary contract

@@ -1,92 +1,54 @@
-# OS Trigger Logic Refactor Summary
+# OS Trigger Logic - Contract V1 Update
 
-**Date:** January 3, 2026  
-**Issue:** OS Trigger Brain implementation had wrong priority order and flat logic instead of nested structure  
+**Date:** January 5, 2026  
+**Change:** Removed `t_appSwitchInterval` concept per updated OS Trigger Contract V1  
 **Status:** ✅ COMPLETED
 
 ---
 
-## Problem Summary
+## Summary
 
-The original implementation in `osTriggerBrain.ts` violated the OS Trigger Contract specification in multiple ways:
+The OS Trigger Contract V1 has been updated to **remove the `t_appSwitchInterval` concept entirely**. The trigger logic is now simpler and based only on:
 
-### Issues Fixed:
-
-1. ❌ **Wrong Priority Order:** t_quickTask checked before t_appSwitchInterval
-   - **Spec:** t_appSwitchInterval has HIGHER priority than t_intention
-   - **Was:** Checked Quick Task timer first, then intention timer, then app switch interval
-   - **Now:** Checks app switch interval FIRST, then applies nested logic
-
-2. ❌ **Flat Priority Chain Instead of Nested Logic**
-   - **Spec:** Nested decision tree (if t_intention=0 → if n_quickTask!=0 → if t_quickTask!=0)
-   - **Was:** Flat priority chain (check 1, check 2, check 3, check 4, else 5)
-   - **Now:** Proper nested structure matching spec
-
-3. ❌ **t_intention Not Deleted on Intervention Start**
-   - **Spec:** "Every time intervention flow starts, t_intention SHALL be deleted"
-   - **Was:** Deleted in triggerIntervention() but not consistently
-   - **Now:** Always deleted in startInterventionFlow()
-
-4. ❌ **Expired t_intention Triggered Intervention Directly**
-   - **Spec:** When t_intention expires, should re-evaluate nested logic
-   - **Was:** Called triggerIntervention() directly
-   - **Now:** Calls evaluateTriggerLogic() to respect priority chain
+- **`t_intention`** (per-app) - Intention timer set by user
+- **`t_quickTask`** (per-app) - Active Quick Task timer
+- **`n_quickTask`** (global) - Quick Task usage count
 
 ---
 
-## Changes Made
+## What Changed
 
-### 1. New Helper Functions
+### Removed Concept: `t_appSwitchInterval`
 
-#### `startInterventionFlow(packageName, timestamp)`
-- Extracted intervention start logic from old `triggerIntervention()`
-- Handles cross-app interference prevention
-- Deletes t_intention (per spec)
-- Dispatches BEGIN_INTERVENTION action
+**Old Behavior (Contract V1.1):**
+- Each app tracked its last exit timestamp
+- If time since exit > interval (e.g., 5 minutes) → intervention starts directly
+- `t_appSwitchInterval` had HIGHEST priority (even over `t_intention`)
 
-#### `showQuickTaskDialog(packageName, remaining)`
-- Extracted Quick Task dialog logic
-- Dispatches SHOW_QUICK_TASK action
-- Clean separation of concerns
+**New Behavior (Contract V1):**
+- No exit timestamp tracking
+- No minimum interval between interventions
+- Every monitored app entry evaluates the nested decision tree
 
-#### `evaluateTriggerLogic(packageName, timestamp)`
-- **NEW:** Implements nested decision tree per spec
-- Called when t_appSwitchInterval NOT elapsed
-- Nested structure:
-  1. Check t_intention → suppress if valid
-  2. If t_intention = 0:
-     - Check n_quickTask
-       - If != 0: Check t_quickTask
-         - If active: suppress
-         - If = 0: show Quick Task dialog
-       - If = 0: start intervention
+---
 
-### 2. Refactored `handleForegroundAppChange()`
+## New Decision Tree
 
-**Old Flow:**
+When a monitored app enters foreground:
+
 ```
-1. Check Quick Task timer → suppress if active
-2. Check intention timer → suppress if valid, trigger if expired
-3. Check app switch interval → trigger if elapsed
+1. Check t_intention for this app
+   - If t_intention != 0 (valid): SUPPRESS everything
+   - If t_intention = 0 (expired/not set): Go to step 2
+
+2. Check n_quickTask (global count)
+   - If n_quickTask != 0: Go to step 3
+   - If n_quickTask = 0: START INTERVENTION
+
+3. Check t_quickTask for this app
+   - If t_quickTask != 0 (active): SUPPRESS everything
+   - If t_quickTask = 0: SHOW QUICK TASK DIALOG
 ```
-
-**New Flow:**
-```
-1. Clean up expired timers (Quick Task, intention)
-2. Skip heartbeat events (same app)
-3. Check t_appSwitchInterval (HIGHEST PRIORITY)
-   - If ELAPSED → startInterventionFlow() directly
-   - If NOT elapsed → evaluateTriggerLogic()
-```
-
-### 3. Updated `checkForegroundIntentionExpiration()`
-
-**Old Behavior:**
-- When t_intention expired for foreground app → called `triggerIntervention()`
-
-**New Behavior:**
-- When t_intention expired for foreground app → calls `evaluateTriggerLogic()`
-- Respects nested priority chain (checks n_quickTask, t_quickTask)
 
 ---
 
@@ -96,11 +58,6 @@ The original implementation in `osTriggerBrain.ts` violated the OS Trigger Contr
 Monitored App Enters Foreground
          ↓
     [Heartbeat?] ─YES→ Skip (no action)
-         ↓ NO
-    [t_appSwitchInterval elapsed?]
-         ↓ YES
-    startInterventionFlow()
-    (delete t_intention, dispatch BEGIN_INTERVENTION)
          ↓ NO
     evaluateTriggerLogic()
          ↓
@@ -113,18 +70,16 @@ Monitored App Enters Foreground
     showQuickTaskDialog()
          ↓ n_quickTask = 0
     startInterventionFlow()
+    (delete t_intention, dispatch BEGIN_INTERVENTION)
 ```
 
 ---
 
-## Per-App Isolation (Preserved)
-
-The refactor maintains proper per-app isolation:
+## Per-App Isolation (Maintained)
 
 **Per-App (Map<packageName, ...>):**
 - `t_intention` - Each app has its own intention timer
 - `t_quickTask` - Each app has its own Quick Task timer
-- `t_appSwitchInterval` - Each app tracks its own exit timestamp
 
 **Global (shared):**
 - `n_quickTask` - Usage count is global across all monitored apps
@@ -137,92 +92,62 @@ The refactor maintains proper per-app isolation:
 
 ---
 
-## Key Behavioral Changes
+## Key Rules
 
-### Change 1: t_appSwitchInterval Takes Priority
-
-**Before:**
-- User opens Instagram after 6 minutes (interval elapsed)
-- But has valid t_intention (30s remaining)
-- Result: Suppressed (t_intention took priority)
-
-**After:**
-- User opens Instagram after 6 minutes (interval elapsed)
-- Has valid t_intention (30s remaining)
-- Result: Intervention starts (t_appSwitchInterval takes priority)
-- t_intention deleted
-
-### Change 2: Nested Logic When Interval NOT Elapsed
-
-**Before:**
-- User opens Instagram after 1 minute (interval NOT elapsed)
-- No t_intention, no t_quickTask, but n_quickTask = 1
-- Result: Intervention started (Quick Task dialog skipped)
-
-**After:**
-- User opens Instagram after 1 minute (interval NOT elapsed)
-- No t_intention, no t_quickTask, but n_quickTask = 1
-- Result: Quick Task dialog shown (nested logic respected)
-
-### Change 3: Expired t_intention Re-evaluates Logic
-
-**Before:**
-- User in Instagram with t_intention
-- t_intention expires while user still in app
-- Result: Intervention starts immediately
-
-**After:**
-- User in Instagram with t_intention
-- t_intention expires while user still in app
-- Result: Re-evaluates nested logic (checks n_quickTask, t_quickTask)
-- May show Quick Task dialog if available
-
----
-
-## Testing Recommendations
-
-See `OS_TRIGGER_LOGIC_TEST_SCENARIOS.md` for comprehensive test scenarios.
-
-**Critical Scenarios to Test:**
-
-1. **First Launch** - Intervention starts immediately
-2. **Re-entry Within Interval** - Nested logic applied
-3. **Re-entry After Interval** - Intervention starts (bypasses nested logic)
-4. **Quick Task Available** - Dialog shown when appropriate
-5. **Quick Task Active** - Suppresses intervention
-6. **Per-App Isolation** - Instagram timer doesn't affect TikTok
-7. **t_intention Expires In-App** - Re-evaluates logic
-8. **Global n_quickTask** - Using on Instagram affects TikTok quota
+1. **Every time intervention starts/restarts, `t_intention` for that app is deleted**
+2. **When `t_intention` expires while user is in the app, intervention starts again**
+3. **Quick Task does NOT create or extend `t_intention`**
+4. **When Quick Task expires: `t_intention` reset to 0, show QuickTaskExpiredScreen**
 
 ---
 
 ## Files Modified
 
-- `src/os/osTriggerBrain.ts` - Main logic refactor
-  - Added: `startInterventionFlow()` (58 lines)
-  - Added: `showQuickTaskDialog()` (23 lines)
-  - Added: `evaluateTriggerLogic()` (68 lines)
-  - Modified: `handleForegroundAppChange()` - Restructured monitored app logic (lines 566-680)
-  - Modified: `checkForegroundIntentionExpiration()` - Uses evaluateTriggerLogic() (line 1010)
-  - Removed: Old `triggerIntervention()` flat priority chain
+### Core Logic:
+- `src/os/osTriggerBrain.ts`
+  - Removed `lastMeaningfulExitTimestamps` Map
+  - Removed `getAppSwitchIntervalMs()` import
+  - Removed PRIORITY 1 block checking `t_appSwitchInterval`
+  - Simplified `handleForegroundAppChange()` to call `evaluateTriggerLogic()` directly
+  - Updated `evaluateTriggerLogic()` comments (now called for EVERY entry)
+  - Added `clearIntentionTimer(packageName)` for targeted reset
+
+### Configuration:
+- `src/os/osConfig.ts`
+  - Removed `APP_SWITCH_INTERVAL_MS` variable
+  - Removed `getAppSwitchIntervalMs()` function
+  - Updated `setInterventionPreferences()` to only take `interventionDurationSec`
+
+### UI:
+- `app/screens/conscious_process/QuickTaskExpiredScreen.tsx`
+  - Changed from `resetTrackingState()` to `clearIntentionTimer(expiredApp)`
+  - Only resets `t_intention` for the expired app (per spec)
+
+- `app/screens/mainAPP/Settings/SettingsScreen.tsx`
+  - Removed `appSwitchInterval` state
+  - Removed "App Switch Interval" UI section
+  - Updated `saveInterventionPreferences()` to only save duration
+
+### Navigation:
+- `app/App.tsx`
+  - No changes needed - already follows correct priority chain
 
 ---
 
 ## Validation Checklist
 
-- [x] t_appSwitchInterval checked FIRST (highest priority)
+- [x] `t_appSwitchInterval` removed from all code
 - [x] Nested decision tree implemented correctly
-- [x] t_intention deleted when intervention starts
+- [x] `t_intention` deleted when intervention starts
 - [x] Per-app isolation preserved (Maps keyed by packageName)
-- [x] Global n_quickTask maintained
-- [x] Expired t_intention re-evaluates logic (not direct intervention)
+- [x] Global `n_quickTask` maintained
+- [x] Quick Task expiry only resets `t_intention` (not all tracking state)
+- [x] Settings UI updated (no App Switch Interval option)
 - [x] Clear logging for each decision branch
-- [x] Cross-app interference prevention maintained
 
 ---
 
 ## Related Documentation
 
 - `NATIVE_JAVASCRIPT_BOUNDARY.md` - Native-JS boundary contract
-- `OS_TRIGGER_LOGIC_TEST_SCENARIOS.md` - Comprehensive test scenarios
-- `spec/Intervention_OS_Contract.docx` - Original specification (screenshots)
+- `spec/NATIVE_JAVASCRIPT_BOUNDARY.md` - Updated spec screenshots

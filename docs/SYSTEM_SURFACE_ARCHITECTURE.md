@@ -139,7 +139,7 @@ The System Surface is a **neutral stage**. Different flows render on this stage,
     │   ┌──────────────────┐
     │   │ Reset Timers:    │
     │   │ - t_intention=0  │
-    │   │ - t_appSwitchInterval=0
+    │   │ (per spec V1)    │
     │   │                  │
     │   │ Navigate to Home │
     │   └────────┬─────────┘
