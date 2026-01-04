@@ -111,6 +111,9 @@ class SystemSurfaceActivity : ReactActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         Log.i(TAG, "🎯 SystemSurfaceActivity created")
         
+        // Register this activity with AppMonitorModule for reliable cancellation
+        AppMonitorModule.setSystemSurfaceActivity(this)
+        
         // Log the triggering app if provided
         intent?.getStringExtra(EXTRA_TRIGGERING_APP)?.let { triggeringApp ->
             Log.i(TAG, "  └─ Triggered by: $triggeringApp")
@@ -218,6 +221,10 @@ class SystemSurfaceActivity : ReactActivity() {
 
     override fun onDestroy() {
         Log.i(TAG, "❌ SystemSurfaceActivity destroyed")
+        
+        // Clear the reference in AppMonitorModule
+        AppMonitorModule.clearSystemSurfaceActivity()
+        
         super.onDestroy()
     }
 

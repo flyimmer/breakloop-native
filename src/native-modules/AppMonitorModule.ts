@@ -163,6 +163,16 @@ interface IAppMonitorModule {
   launchHomeScreen(): void;
 
   /**
+   * Cancel intervention and close SystemSurfaceActivity
+   * 
+   * Called when user presses back during intervention or switches away from monitored app.
+   * Uses static reference to reliably finish SystemSurfaceActivity even when currentActivity is null.
+   * 
+   * This is a MECHANICAL ACTION - JavaScript decides WHEN to cancel (semantics).
+   */
+  cancelInterventionActivity(): void;
+
+  /**
    * Launch a specific app by package name
    * 
    * @param packageName - Package name to launch

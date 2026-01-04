@@ -274,11 +274,11 @@ function InterventionNavigationHandler() {
         console.log('[F3.5] Intervention was CANCELLED - closing InterventionActivity');
         cancelledTimeout = setTimeout(() => {
           try {
-            console.log('[F3.5] Launching home screen (intervention cancelled)');
-            AppMonitorModule.launchHomeScreen();
-            console.log('[F3.5] InterventionActivity closed, home screen launched');
+            console.log('[F3.5] Calling cancelInterventionActivity (intervention cancelled)');
+            AppMonitorModule.cancelInterventionActivity();
+            console.log('[F3.5] InterventionActivity cancelled, home screen launched');
           } catch (error) {
-            console.error('[F3.5] launchHomeScreen threw error:', error);
+            console.error('[F3.5] cancelInterventionActivity threw error:', error);
           }
         }, 100);
         return;

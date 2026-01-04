@@ -22,8 +22,35 @@ import com.facebook.react.bridge.WritableMap
 import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.Arguments
 import java.io.ByteArrayOutputStream
+import java.lang.ref.WeakReference
 
 class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
+    
+    companion object {
+        /**
+         * Static reference to SystemSurfaceActivity for reliable cancellation.
+         * Uses WeakReference to prevent memory leaks if activity is destroyed by Android.
+         */
+        private var systemSurfaceActivityRef: WeakReference<SystemSurfaceActivity>? = null
+        
+        /**
+         * Store a reference to SystemSurfaceActivity when it's created.
+         * Called from SystemSurfaceActivity.onCreate()
+         */
+        fun setSystemSurfaceActivity(activity: SystemSurfaceActivity) {
+            systemSurfaceActivityRef = WeakReference(activity)
+            android.util.Log.i("AppMonitorModule", "📌 SystemSurfaceActivity reference stored")
+        }
+        
+        /**
+         * Clear the reference when SystemSurfaceActivity is destroyed.
+         * Called from SystemSurfaceActivity.onDestroy()
+         */
+        fun clearSystemSurfaceActivity() {
+            systemSurfaceActivityRef = null
+            android.util.Log.i("AppMonitorModule", "🧹 SystemSurfaceActivity reference cleared")
+        }
+    }
     
     init {
         // Pass React context to the service so it can emit events
@@ -480,6 +507,40 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             }
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "❌ Failed to launch home screen", e)
+        }
+    }
+
+    /**
+     * Cancel intervention and close SystemSurfaceActivity
+     * 
+     * Called when user presses back during intervention or switches away from monitored app.
+     * Uses static reference to reliably finish SystemSurfaceActivity even when currentActivity is null.
+     * 
+     * This is a MECHANICAL ACTION - JavaScript decides WHEN to cancel (semantics).
+     */
+    @ReactMethod
+    fun cancelInterventionActivity() {
+        try {
+            android.util.Log.i("AppMonitorModule", "🚫 Cancelling intervention activity")
+            
+            // Finish SystemSurfaceActivity using stored reference
+            val activity = systemSurfaceActivityRef?.get()
+            if (activity != null && !activity.isFinishing) {
+                android.util.Log.i("AppMonitorModule", "🔄 Finishing SystemSurfaceActivity via static reference")
+                activity.finish()
+            } else {
+                android.util.Log.w("AppMonitorModule", "⚠️ SystemSurfaceActivity reference is null or already finishing")
+            }
+            
+            // Launch home screen
+            val homeIntent = Intent(Intent.ACTION_MAIN)
+            homeIntent.addCategory(Intent.CATEGORY_HOME)
+            homeIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            reactApplicationContext.startActivity(homeIntent)
+            
+            android.util.Log.i("AppMonitorModule", "✅ Intervention cancelled, home screen launched")
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "❌ Failed to cancel intervention", e)
         }
     }
 
