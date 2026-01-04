@@ -240,6 +240,80 @@ if (intentionTimerSet) {
 
 ---
 
+## Critical Bug #3: Premature Intervention Cancellation on App Switch
+
+### Discovery
+
+After fixing the cancellation bug, another issue was discovered: **when switching from one monitored app to another, the intervention is cancelled immediately**, causing the breathing countdown to never complete properly.
+
+### Symptoms
+
+- User opens Instagram, reaches root-cause screen
+- User switches to Twitter (X)
+- Twitter intervention starts with breathing screen
+- **Countdown shows 5 but immediately goes to home screen** (intervention cancelled)
+- Logs show "User switched away from app with incomplete intervention"
+
+### Root Cause - Order of Operations Bug
+
+The cancellation logic was running in the **wrong order** in `handleForegroundAppChange`:
+
+**Original (Incorrect) Order:**
+```
+Step 1: Record exit timestamps
+Step 2: Cancel incomplete intervention ❌ (checks launcher as real app switch)
+Step 3: Semantic launcher filtering ✅ (identifies launchers)
+Step 3.5: Launcher transition detection ✅ (filters transition launchers)
+```
+
+**The Problem:** Cancellation check (Step 2) ran **BEFORE** launcher filtering (Step 3). When the launcher appeared during app switching, it was treated as a real app switch and triggered cancellation, even though we had logic to detect it was just a transition.
+
+**Sequence from logs:**
+
+```
+Twitter enters → BEGIN_INTERVENTION → BreakLoop launches → BreakLoop exits → Launcher appears
+→ Cancellation logic sees: lastMeaningfulApp=Twitter, packageName=Launcher
+→ Twitter intervention cancelled (breathingCount still at 5)
+```
+
+At the moment launcher appeared:
+- `lastMeaningfulApp = "com.twitter.android"`
+- `packageName = "com.hihonor.android.launcher"` 
+- Cancellation logic ran BEFORE checking if launcher was a transition
+- Twitter's intervention got cancelled immediately
+
+### The Fix
+
+**Reordered the steps** in `src/os/osTriggerBrain.ts` to run semantic filtering BEFORE cancellation logic:
+
+**New (Correct) Order:**
+```
+Step 1: Record exit timestamps
+Step 2: Semantic launcher filtering ✅ (filters launchers)
+Step 3: Launcher transition detection ✅ (filters transition launchers)
+Step 4: Cancel incomplete intervention ✅ (only checks real app switches)
+```
+
+**Why this works:**
+1. **Semantic filtering first** - Identify and filter infrastructure apps (launchers, BreakLoop)
+2. **Transition detection second** - Determine if launcher was just a transition
+3. **Decision logic last** - Make intervention decisions based on clean, filtered state
+
+When launcher appears during app switch:
+- Step 2 detects it's a launcher → early return (no cancellation check runs)
+- Launcher transition detection confirms it was transient
+- Intervention continues when next real app appears
+
+**Why this is better than adding `!isLauncher()` check:**
+- User can still legitimately cancel by going to home screen
+- Launcher transition detection already distinguishes:
+  - **Transition launcher** (Instagram → launcher → Twitter) = filtered, no cancellation
+  - **Destination launcher** (Instagram → launcher, stays) = not filtered, triggers cancellation
+
+**Location:** `src/os/osTriggerBrain.ts`, lines 628-730
+
+---
+
 ## Testing
 
 ### Test Scenarios
@@ -271,6 +345,14 @@ if (intentionTimerSet) {
 7. **Complete intervention without timer**
    - Expected: Go to HOME SCREEN
    - Result: ✅ Fixed (launches home screen)
+
+8. **Switch apps during intervention (Instagram → Twitter)**
+   - Expected: Twitter intervention starts fresh with breathing countdown (5, 4, 3, 2, 1, 0)
+   - Result: ✅ Fixed (cancellation runs after launcher filtering)
+
+9. **User legitimately goes to home screen during intervention**
+   - Expected: Intervention should be cancelled
+   - Result: ✅ Works correctly (destination launcher not filtered, triggers cancellation)
 
 ### Debug Logs
 

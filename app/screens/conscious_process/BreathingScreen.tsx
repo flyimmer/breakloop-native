@@ -22,7 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 export default function BreathingScreen() {
   // Intervention state from context
   const { interventionState, dispatchIntervention } = useIntervention();
-  const { state, breathingCount } = interventionState;
+  const { state, breathingCount, targetApp } = interventionState;
 
   // Soft breathing animation (opacity-based, organic feel)
   const breatheAnim = useRef(new Animated.Value(1)).current;
@@ -75,8 +75,10 @@ export default function BreathingScreen() {
     }, 1000);
 
     // Cleanup interval on unmount or state change
+    // IMPORTANT: targetApp dependency ensures timer is reset when switching apps
+    // This prevents multiple timers from running simultaneously during app switches
     return () => clearInterval(timer);
-  }, [state, breathingCount, dispatchIntervention]);
+  }, [state, breathingCount, targetApp, dispatchIntervention]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>

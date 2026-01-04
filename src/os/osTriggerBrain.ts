@@ -626,30 +626,7 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
   }
 
   // ============================================================================
-  // Step 2: Cancel incomplete intervention if user switched away
-  // ============================================================================
-  
-  // Check if user switched away from an app with incomplete intervention
-  // This runs BEFORE launcher filtering so it catches home screen switches
-  // Uses lastMeaningfulApp (not lastForegroundApp) to skip intermediate launchers
-  // 
-  // IMPORTANT: Do NOT cancel when BreakLoop comes to foreground - that's the intervention UI itself!
-  if (lastMeaningfulApp !== null && 
-      lastMeaningfulApp !== packageName && 
-      packageName !== 'com.anonymous.breakloopnative') {
-    // User switched from lastMeaningfulApp to packageName
-    // Check if lastMeaningfulApp had an incomplete intervention
-    if (hasIncompleteIntervention(lastMeaningfulApp)) {
-      console.log('[OS Trigger Brain] User switched away from app with incomplete intervention:', {
-        fromApp: lastMeaningfulApp,
-        toApp: packageName,
-      });
-      cancelIncompleteIntervention(lastMeaningfulApp);
-    }
-  }
-
-  // ============================================================================
-  // Step 3: Semantic launcher filtering
+  // Step 2: Semantic launcher filtering
   // ============================================================================
   
   const isLauncherEvent = isLauncher(packageName);
@@ -681,7 +658,7 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
   }
   
   // ============================================================================
-  // Step 3.5: Launcher transition detection
+  // Step 3: Launcher transition detection
   // ============================================================================
   
   // Check if launcher was a transition (not a real home screen visit)
@@ -701,7 +678,31 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
   lastLauncherEventTime = 0;
   
   // ============================================================================
-  // Step 4: Handle meaningful app entry
+  // Step 4: Cancel incomplete intervention if user switched away
+  // ============================================================================
+  
+  // Check if user switched away from an app with incomplete intervention
+  // This runs AFTER launcher filtering and transition detection
+  // This ensures we only cancel on real app switches, not transient launcher events
+  // Uses lastMeaningfulApp (not lastForegroundApp) to skip intermediate launchers
+  // 
+  // IMPORTANT: Do NOT cancel when BreakLoop comes to foreground - that's the intervention UI itself!
+  if (lastMeaningfulApp !== null && 
+      lastMeaningfulApp !== packageName && 
+      packageName !== 'com.anonymous.breakloopnative') {
+    // User switched from lastMeaningfulApp to packageName
+    // Check if lastMeaningfulApp had an incomplete intervention
+    if (hasIncompleteIntervention(lastMeaningfulApp)) {
+      console.log('[OS Trigger Brain] User switched away from app with incomplete intervention:', {
+        fromApp: lastMeaningfulApp,
+        toApp: packageName,
+      });
+      cancelIncompleteIntervention(lastMeaningfulApp);
+    }
+  }
+  
+  // ============================================================================
+  // Step 5: Handle meaningful app entry
   // ============================================================================
   
   // Log the new meaningful app entering foreground (only on actual change)
