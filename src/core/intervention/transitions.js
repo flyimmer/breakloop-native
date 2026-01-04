@@ -43,7 +43,7 @@ export const interventionReducer = (context, action) => {
         selectedCauses: [],
         selectedAlternative: null,
         actionTimer: 0,
-        wasCanceled: false, // Clear canceled flag when starting new intervention
+        wasCompleted: false, // Clear completed flag when starting new intervention
         intentionTimerSet: false, // Clear intention timer flag when starting new intervention
       };
       
@@ -179,6 +179,7 @@ export const interventionReducer = (context, action) => {
         state: 'idle',
         targetApp: null,
         selectedAlternative: null,
+        wasCompleted: true, // Mark intervention as completed normally
         intentionTimerSet: false, // Clear intention timer flag
       };
 
@@ -203,6 +204,7 @@ export const interventionReducer = (context, action) => {
         selectedCauses: [],
         selectedAlternative: null,
         actionTimer: 0,
+        wasCompleted: false, // Not completed (user chose intention timer)
         intentionTimerSet: true, // Flag to indicate intention timer was set
       };
 
@@ -215,7 +217,7 @@ export const interventionReducer = (context, action) => {
         selectedCauses: [],
         selectedAlternative: null,
         actionTimer: 0,
-        wasCanceled: true, // Flag to indicate intervention was canceled (not completed)
+        wasCompleted: false, // Not completed (was cancelled)
         intentionTimerSet: false, // Clear intention timer flag
       };
 

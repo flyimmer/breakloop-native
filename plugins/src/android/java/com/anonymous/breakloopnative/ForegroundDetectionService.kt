@@ -18,6 +18,8 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import com.facebook.react.bridge.Arguments
+import com.facebook.react.modules.core.DeviceEventManagerModule
 
 /**
  * AccessibilityService for detecting foreground app changes
@@ -268,12 +270,50 @@ class ForegroundDetectionService : AccessibilityService() {
         // Log all foreground changes for debugging
         Log.i(TAG, "📱 Foreground app changed: $packageName")
         
-        // Check if this is a monitored app
+        // Emit event to JavaScript for ALL apps (including launchers)
+        // This allows JavaScript to track exits and cancel incomplete interventions
+        emitForegroundAppChangedEvent(packageName)
+        
+        // Check if this is a monitored app (for launching intervention)
         if (MONITORED_APPS.contains(packageName)) {
             Log.i(TAG, "🎯 MONITORED APP DETECTED: $packageName")
             launchInterventionActivity(packageName)
         } else {
-            Log.d(TAG, "  └─ Not a monitored app, ignoring")
+            Log.d(TAG, "  └─ Not a monitored app, no intervention needed")
+        }
+    }
+    
+    /**
+     * Emit foreground app changed event to JavaScript.
+     * Called for ALL apps (including launchers) so JavaScript can track exits.
+     * 
+     * This allows JavaScript to:
+     * - Detect when user switches to home screen
+     * - Record exit timestamps for all apps
+     * - Cancel incomplete interventions when user switches away
+     * 
+     * @param packageName Package name of the foreground app
+     */
+    private fun emitForegroundAppChangedEvent(packageName: String) {
+        try {
+            val reactContext = AppMonitorService.getReactContext()
+            if (reactContext == null) {
+                Log.w(TAG, "React context not available, cannot emit event")
+                return
+            }
+            
+            val params = Arguments.createMap().apply {
+                putString("packageName", packageName)
+                putDouble("timestamp", System.currentTimeMillis().toDouble())
+            }
+            
+            reactContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit("onForegroundAppChanged", params)
+                
+            Log.d(TAG, "  └─ Event emitted to JavaScript: $packageName")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to emit foreground app changed event", e)
         }
     }
     

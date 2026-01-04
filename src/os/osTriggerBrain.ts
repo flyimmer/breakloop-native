@@ -33,14 +33,20 @@ import {
 // ============================================================================
 
 /**
- * Known launcher package names.
- * Launchers are NOT treated as "meaningful apps" for intervention logic.
+ * Launcher packages and BreakLoop itself.
+ * These apps are NOT treated as "meaningful apps" for intervention logic.
  * 
  * WHY FILTER LAUNCHERS?
  * - On OEM devices (Huawei/Honor, Xiaomi, Samsung), launchers briefly regain
  *   focus during app transitions, creating false foreground events.
  * - Launchers don't represent user intent to engage with content.
  * - We only want to trigger interventions for actual app usage.
+ * 
+ * WHY FILTER BREAKLOOP ITSELF?
+ * - BreakLoop is the intervention UI (breathing screen, root cause, etc.)
+ * - When intervention starts, BreakLoop comes to foreground to show UI
+ * - This should NOT be treated as "user switched away from monitored app"
+ * - Without filtering, intervention would cancel itself when UI appears!
  * 
  * Example without filtering:
  *   Instagram → Launcher (100ms) → YouTube
@@ -49,6 +55,12 @@ import {
  * With filtering:
  *   Instagram → [Launcher ignored] → YouTube
  *   = Clean transition from Instagram to YouTube
+ * 
+ * Example without BreakLoop filtering:
+ *   Instagram → BreakLoop (intervention UI) → Cancels Instagram intervention (WRONG!)
+ * 
+ * With BreakLoop filtering:
+ *   Instagram → [BreakLoop ignored] → Intervention continues (CORRECT!)
  */
 const LAUNCHER_PACKAGES = new Set([
   'com.android.launcher',           // AOSP launcher
@@ -64,6 +76,7 @@ const LAUNCHER_PACKAGES = new Set([
   'com.teslacoilsw.launcher',       // Nova Launcher
   'com.microsoft.launcher',         // Microsoft Launcher
   'com.actionlauncher.playstore',   // Action Launcher
+  'com.anonymous.breakloopnative',  // BreakLoop itself (intervention UI)
 ]);
 
 /**
@@ -92,6 +105,15 @@ let lastForegroundApp: string | null = null;
  * This represents the last app the user actually engaged with.
  */
 let lastMeaningfulApp: string | null = null;
+
+/**
+ * Track launcher event timestamp for transition detection.
+ * Used to distinguish between:
+ * - Transient launcher (app switching): App A -> Launcher (50ms) -> App B
+ * - Real launcher (home screen): App A -> Launcher (stays there)
+ */
+let lastLauncherEventTime: number = 0;
+const LAUNCHER_TRANSITION_THRESHOLD_MS = 300;
 
 /**
  * Exit timestamps for ALL apps (including launchers).
@@ -604,35 +626,17 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
   }
 
   // ============================================================================
-  // Step 2: Semantic launcher filtering
-  // ============================================================================
-  
-  const isLauncherEvent = isLauncher(packageName);
-  
-  if (isLauncherEvent) {
-    // Launcher detected - log but don't treat as meaningful app
-    if (__DEV__) {
-      console.log('[OS Trigger Brain] Launcher event ignored for semantics:', {
-        packageName,
-        timestamp,
-      });
-    }
-    
-    // Update raw tracking (for exit inference) but NOT meaningful app tracking
-    lastForegroundApp = packageName;
-    
-    // Do NOT update lastMeaningfulApp
-    // Do NOT update lastMeaningfulExitTimestamps
-    // Do NOT run intervention logic
-    return;
-  }
-
-  // ============================================================================
-  // Step 3: Cancel incomplete intervention if user switched away
+  // Step 2: Cancel incomplete intervention if user switched away
   // ============================================================================
   
   // Check if user switched away from an app with incomplete intervention
-  if (lastMeaningfulApp !== null && lastMeaningfulApp !== packageName) {
+  // This runs BEFORE launcher filtering so it catches home screen switches
+  // Uses lastMeaningfulApp (not lastForegroundApp) to skip intermediate launchers
+  // 
+  // IMPORTANT: Do NOT cancel when BreakLoop comes to foreground - that's the intervention UI itself!
+  if (lastMeaningfulApp !== null && 
+      lastMeaningfulApp !== packageName && 
+      packageName !== 'com.anonymous.breakloopnative') {
     // User switched from lastMeaningfulApp to packageName
     // Check if lastMeaningfulApp had an incomplete intervention
     if (hasIncompleteIntervention(lastMeaningfulApp)) {
@@ -643,6 +647,58 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
       cancelIncompleteIntervention(lastMeaningfulApp);
     }
   }
+
+  // ============================================================================
+  // Step 3: Semantic launcher filtering
+  // ============================================================================
+  
+  const isLauncherEvent = isLauncher(packageName);
+  
+  if (isLauncherEvent) {
+    // Record launcher event time for transition detection
+    lastLauncherEventTime = timestamp;
+    
+    // Launcher detected - log but don't treat as meaningful app
+    if (__DEV__) {
+      console.log('[OS Trigger Brain] Launcher event:', {
+        packageName,
+        timestamp,
+      });
+    }
+    
+    // Debug log for BreakLoop infrastructure filtering
+    if (packageName === 'com.anonymous.breakloopnative') {
+      console.log('[OS Trigger Brain] BreakLoop infrastructure detected, lastMeaningfulApp unchanged:', lastMeaningfulApp);
+    }
+    
+    // Update raw tracking (for exit inference) but NOT meaningful app tracking
+    lastForegroundApp = packageName;
+    
+    // Do NOT update lastMeaningfulApp
+    // Do NOT update lastMeaningfulExitTimestamps
+    // Do NOT run intervention logic
+    return;
+  }
+  
+  // ============================================================================
+  // Step 3.5: Launcher transition detection
+  // ============================================================================
+  
+  // Check if launcher was a transition (not a real home screen visit)
+  const timeSinceLauncher = timestamp - lastLauncherEventTime;
+  const isLauncherTransition = lastLauncherEventTime > 0 && timeSinceLauncher < LAUNCHER_TRANSITION_THRESHOLD_MS;
+  
+  if (isLauncherTransition) {
+    console.log('[OS Trigger Brain] Launcher was transition (not destination):', {
+      fromApp: lastMeaningfulApp,
+      toApp: packageName,
+      timeSinceLauncher,
+      threshold: LAUNCHER_TRANSITION_THRESHOLD_MS,
+    });
+  }
+  
+  // Reset launcher time
+  lastLauncherEventTime = 0;
   
   // ============================================================================
   // Step 4: Handle meaningful app entry
@@ -740,6 +796,12 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
     if (lastMeaningfulApp === packageName && !intentionJustExpired) {
       // This is a heartbeat event for the same app - skip all logic
       // UNLESS intention timer just expired (then we need to trigger intervention)
+      if (__DEV__) {
+        console.log('[OS Trigger Brain] Duplicate event filtered (same meaningful app):', {
+          packageName,
+          lastMeaningfulApp,
+        });
+      }
       lastForegroundApp = packageName;
       return;
     }
