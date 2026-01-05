@@ -612,13 +612,29 @@ When user switches away from a monitored app, cancel intervention ONLY if it's i
 │  │                                                     │   │
 │  │    AT ANY TIME, EXACTLY ONE OF:                    │   │
 │  │                                                     │   │
-│  │    • Quick Task Flow screens                       │   │
-│  │      (QuickTaskDialog, QuickTaskExpired)           │   │
+│  │    1. BOOTSTRAPPING STATE                          │   │
+│  │       - session = null                             │   │
+│  │       - bootstrapState = BOOTSTRAPPING             │   │
+│  │       - Renders: null (blank screen)               │   │
+│  │       - MUST NOT finish activity                   │   │
+│  │       - Waiting for OS Trigger Brain decision      │   │
 │  │                                                     │   │
-│  │    • Intervention Flow screens                     │   │
-│  │      (Breathing, RootCause, Alternatives, etc.)    │   │
+│  │    2. ACTIVE SESSION                               │   │
+│  │       - session !== null                           │   │
+│  │       - bootstrapState = READY                     │   │
+│  │       - Renders ONE flow:                          │   │
+│  │         • Quick Task Flow screens                  │   │
+│  │           (QuickTaskDialog, QuickTaskExpired)      │   │
+│  │         • Intervention Flow screens                │   │
+│  │           (Breathing, RootCause, Alternatives...)  │   │
+│  │         • Alternative Activity Flow screens        │   │
+│  │       - NEVER multiple flows simultaneously        │   │
 │  │                                                     │   │
-│  │    NEVER BOTH                                      │   │
+│  │    3. NO SESSION NEEDED                            │   │
+│  │       - session = null                             │   │
+│  │       - bootstrapState = READY                     │   │
+│  │       - Immediately calls finish()                 │   │
+│  │       - Activity closes, returns to previous app   │   │
 │  │                                                     │   │
 │  └─────────────────────────────────────────────────────┘   │
 │                                                             │
@@ -629,10 +645,12 @@ When user switches away from a monitored app, cancel intervention ONLY if it's i
 
 **Key Principles:**
 1. ✅ ONE shared OS-level activity
-2. ✅ TWO separate, mutually exclusive flows
-3. ✅ Flows share infrastructure, not semantics
-4. ✅ Only ONE flow active at any time
-5. ✅ Main app UI never appears in System Surface
+2. ✅ THREE distinct states (BOOTSTRAPPING, ACTIVE SESSION, NO SESSION)
+3. ✅ Multiple separate, mutually exclusive flows (Quick Task, Intervention, Alternative Activity)
+4. ✅ Flows share infrastructure, not semantics
+5. ✅ Only ONE flow active at any time (when session exists)
+6. ✅ Bootstrap state protects against premature finish()
+7. ✅ Main app UI never appears in System Surface
 
 ---
 

@@ -251,18 +251,10 @@ export default function SystemSurfaceRoot() {
       return <QuickTaskFlow app={session.app} />;
 
     case 'ALTERNATIVE_ACTIVITY':
-      // RULE 1: Alternative Activity visibility is conditional
-      // Session remains active, but UI is hidden when user is in different app
-      if (foregroundApp !== session.app) {
-        if (__DEV__) {
-          console.log('[SystemSurfaceRoot] Alternative Activity hidden (foreground app:', foregroundApp, 'session app:', session.app, ')');
-        }
-        // Render null but DO NOT end session or finish activity
-        return null;
-      }
-
+      // v1: Alternative Activity is ALWAYS OUT_OF_APP
+      // Always render UI, never check foregroundApp, never launch app
       if (__DEV__) {
-        console.log('[SystemSurfaceRoot] Rendering AlternativeActivityFlow for app:', session.app);
+        console.log('[SystemSurfaceRoot] Rendering AlternativeActivityFlow (OUT_OF_APP, always visible)');
       }
       return <AlternativeActivityFlow app={session.app} />;
 

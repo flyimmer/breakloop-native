@@ -21,9 +21,11 @@ import { DarkTheme, DefaultTheme, NavigationContainerRef } from '@react-navigati
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
 import ActivityTimerScreen from '../screens/conscious_process/ActivityTimerScreen';
+import ReflectionScreen from '../screens/conscious_process/ReflectionScreen';
 
 export type AlternativeActivityStackParamList = {
   ActivityTimer: undefined;
+  Reflection: undefined;
 };
 
 const Stack = createNativeStackNavigator<AlternativeActivityStackParamList>();
@@ -36,7 +38,8 @@ const Stack = createNativeStackNavigator<AlternativeActivityStackParamList>();
  * 
  * Responsibilities:
  * - Show activity timer UI
- * - Dispatch END_SESSION when timer completes or user finishes early
+ * - Navigate to Reflection when activity completes (timer ends or user ends early)
+ * - Dispatch END_SESSION when reflection completes
  * 
  * MUST NOT:
  * - Handle visibility logic (Rule 1 - handled by SystemSurfaceRoot)
@@ -70,9 +73,13 @@ export default function AlternativeActivityFlow({ app }: AlternativeActivityFlow
 
   /**
    * Watch for intervention state changes
-   * When action_timer completes, dispatch END_SESSION
+   * Navigate to Reflection when activity completes, dispatch END_SESSION when reflection completes
    */
   useEffect(() => {
+    if (!navigationRef.current?.isReady()) {
+      return;
+    }
+
     const stateChanged = state !== previousStateRef.current;
     previousStateRef.current = state;
 
@@ -84,15 +91,23 @@ export default function AlternativeActivityFlow({ app }: AlternativeActivityFlow
       console.log('[AlternativeActivityFlow] Intervention state changed:', state);
     }
 
-    // When user finishes activity or timer completes
+    // Navigate to Reflection when activity timer completes or user ends activity early
+    if (state === 'reflection') {
+      if (__DEV__) {
+        console.log('[AlternativeActivityFlow] Activity completed - navigating to Reflection');
+      }
+      navigationRef.current.navigate('Reflection');
+    }
+
+    // When reflection completes, dispatch END_SESSION
     if (state === 'idle') {
       if (__DEV__) {
-        console.log('[AlternativeActivityFlow] Activity completed - dispatching END_SESSION');
+        console.log('[AlternativeActivityFlow] Reflection completed - dispatching END_SESSION');
       }
       // RULE 3: Dispatch event instead of navigating
       dispatchSystemEvent({ type: 'END_SESSION' });
     }
-  }, [state]);
+  }, [state, dispatchSystemEvent]);
 
   return (
     <NavigationContainer
@@ -107,6 +122,7 @@ export default function AlternativeActivityFlow({ app }: AlternativeActivityFlow
         }}
       >
         <Stack.Screen name="ActivityTimer" component={ActivityTimerScreen} />
+        <Stack.Screen name="Reflection" component={ReflectionScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

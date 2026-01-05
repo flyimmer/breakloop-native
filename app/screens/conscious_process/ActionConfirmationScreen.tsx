@@ -3,6 +3,7 @@ import { parseDurationToMinutes } from '@/src/core/intervention';
 import React, { useEffect } from 'react';
 import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ArrowLeft } from 'lucide-react-native';
 
 /**
@@ -79,10 +80,33 @@ export default function ActionConfirmationScreen() {
     // Navigation will react to state change to 'action_timer'
   };
 
-  // Handle plan for later - exit intervention flow and reset to idle
-  const handlePlanForLater = () => {
+  // Handle plan for later - save activity and exit intervention
+  const handlePlanForLater = async () => {
+    // 1. Save activity to Main App storage (Upcoming Activities)
+    const activity = {
+      id: `planned-${Date.now()}`,
+      title: selectedAlternative.title,
+      description: selectedAlternative.description,
+      duration: selectedAlternative.duration,
+      plannedAt: Date.now(),
+      source: 'intervention',
+    };
+    
+    try {
+      const existingActivities = await AsyncStorage.getItem('upcoming_activities');
+      const activities = existingActivities ? JSON.parse(existingActivities) : [];
+      activities.push(activity);
+      await AsyncStorage.setItem('upcoming_activities', JSON.stringify(activities));
+      
+      if (__DEV__) {
+        console.log('[ActionConfirmation] Activity saved for later:', activity);
+      }
+    } catch (error) {
+      console.error('[ActionConfirmation] Failed to save activity:', error);
+    }
+    
+    // 2. Reset intervention state (triggers idle → END_SESSION → SystemSurface closes)
     dispatchIntervention({ type: 'RESET_INTERVENTION' });
-    // Navigation will react to state change to 'idle'
   };
 
   // Handle back - dispatch GO_BACK_FROM_ACTION to return to alternatives
