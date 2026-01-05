@@ -190,6 +190,25 @@ interface IAppMonitorModule {
   launchApp(packageName: string): void;
 
   /**
+   * Set wake suppression flag
+   * 
+   * Tells native: "Do not launch SystemSurfaceActivity before this timestamp"
+   * 
+   * SEMANTIC OWNERSHIP:
+   * - JavaScript makes semantic decision (e.g., "user wants 1-min intention timer")
+   * - JavaScript sets mechanical flag: "don't wake before X"
+   * - Native reads mechanical flag, has ZERO semantic knowledge
+   * - Native doesn't know WHY suppression exists (intention timer, quick task, etc.)
+   * - Native only knows: "Don't wake before this timestamp"
+   * 
+   * This is a MECHANICAL flag set by JavaScript's SEMANTIC decision.
+   * 
+   * @param packageName - Package name (e.g., "com.instagram.android")
+   * @param suppressUntil - Timestamp (milliseconds) - don't wake before this time
+   */
+  setSuppressSystemSurfaceUntil(packageName: string, suppressUntil: number): void;
+
+  /**
    * Get the initial triggering app from InterventionActivity Intent.
    * Returns the package name of the app that triggered the intervention, or null.
    * 

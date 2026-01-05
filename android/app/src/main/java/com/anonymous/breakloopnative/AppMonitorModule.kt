@@ -483,7 +483,9 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
 
     /**
      * Store intention timer in SharedPreferences
-     * This allows ForegroundDetectionService to check if intervention should be skipped
+     * 
+     * NOTE: This is kept for backward compatibility but is NO LONGER used by native layer.
+     * JavaScript is the ONLY authority for t_intention (semantic ownership).
      * 
      * @param packageName Package name of the app (e.g., "com.instagram.android")
      * @param expiresAt Timestamp when timer expires (milliseconds since epoch)
@@ -498,12 +500,42 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             prefs.edit().putLong(key, expiresAtLong).apply()
             
             val remainingSec = (expiresAtLong - System.currentTimeMillis()) / 1000
-            android.util.Log.i("AppMonitorModule", "Stored intention timer for $packageName (expires in ${remainingSec}s)")
+            android.util.Log.i("AppMonitorModule", "Stored intention timer for $packageName (expires in ${remainingSec}s) [NOTE: Native no longer checks this]")
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "Failed to store intention timer", e)
         }
     }
-
+    
+    /**
+     * Set wake suppression flag
+     * 
+     * This tells native: "Do not launch SystemSurfaceActivity before this timestamp"
+     * 
+     * SEMANTIC OWNERSHIP:
+     * - JavaScript makes semantic decision (e.g., "user wants 1-min intention timer")
+     * - JavaScript sets mechanical flag: "don't wake before X"
+     * - Native reads mechanical flag, has ZERO semantic knowledge
+     * - Native doesn't know WHY suppression exists (intention timer, quick task, etc.)
+     * - Native only knows: "Don't wake before this timestamp"
+     * 
+     * @param packageName Package name (e.g., "com.instagram.android")
+     * @param suppressUntil Timestamp (milliseconds) - don't wake before this time
+     */
+    @ReactMethod
+    fun setSuppressSystemSurfaceUntil(packageName: String, suppressUntil: Double) {
+        try {
+            val suppressUntilLong = suppressUntil.toLong()
+            
+            // Store in static map for ForegroundDetectionService to read
+            ForegroundDetectionService.setSuppressWakeUntil(packageName, suppressUntilLong)
+            
+            val remainingSec = (suppressUntilLong - System.currentTimeMillis()) / 1000
+            android.util.Log.i("AppMonitorModule", "🚫 Wake suppression set for $packageName (${remainingSec}s)")
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "❌ Failed to set wake suppression", e)
+        }
+    }
+    
     /**
      * Store Quick Task timer in SharedPreferences
      * This allows ForegroundDetectionService to check if Quick Task is active

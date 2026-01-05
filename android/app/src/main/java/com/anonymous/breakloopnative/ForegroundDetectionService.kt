@@ -93,6 +93,23 @@ class ForegroundDetectionService : AccessibilityService() {
         private val quickTaskTimers = mutableMapOf<String, Long>()
         
         /**
+         * Wake suppression timestamps per app
+         * 
+         * Maps packageName -> suppressUntil timestamp
+         * 
+         * JavaScript sets this to say: "Don't launch SystemSurface before this time"
+         * Native reads it to suppress unnecessary wakes
+         * 
+         * SEMANTIC OWNERSHIP:
+         * - JavaScript makes semantic decision (e.g., intention timer)
+         * - JavaScript sets mechanical flag: "don't wake before X"
+         * - Native reads mechanical flag, has ZERO semantic knowledge
+         * - Native doesn't know WHY suppression exists
+         * - Native only knows: "Don't wake before this timestamp"
+         */
+        private val suppressWakeUntil = mutableMapOf<String, Long>()
+        
+        /**
          * Set Quick Task timer for an app.
          * Called from AppMonitorModule when user activates Quick Task.
          */
@@ -111,6 +128,51 @@ class ForegroundDetectionService : AccessibilityService() {
         fun clearQuickTaskTimer(packageName: String) {
             quickTaskTimers.remove(packageName)
             Log.i(TAG, "🧹 Quick Task timer cleared for $packageName")
+        }
+        
+        /**
+         * Set wake suppression for an app
+         * 
+         * Called by JavaScript via AppMonitorModule when JavaScript makes a semantic
+         * decision to suppress system-level UI (e.g., intention timer granted).
+         * 
+         * Native receives a mechanical instruction: "Don't wake before this timestamp"
+         * Native has NO knowledge of WHY suppression exists.
+         * 
+         * @param packageName Package name
+         * @param suppressUntil Timestamp - don't launch SystemSurface before this time
+         */
+        @JvmStatic
+        fun setSuppressWakeUntil(packageName: String, suppressUntil: Long) {
+            suppressWakeUntil[packageName] = suppressUntil
+            val remainingSec = (suppressUntil - System.currentTimeMillis()) / 1000
+            Log.i(TAG, "🚫 Wake suppression set for $packageName (${remainingSec}s)")
+        }
+        
+        /**
+         * Check if wake is suppressed for an app
+         * 
+         * Returns true if SystemSurface wake should be suppressed.
+         * Automatically cleans up expired suppressions.
+         * 
+         * @param packageName Package name to check
+         * @return true if wake should be suppressed
+         */
+        @JvmStatic
+        fun isWakeSuppressed(packageName: String): Boolean {
+            val suppressUntil = suppressWakeUntil[packageName] ?: return false
+            val now = System.currentTimeMillis()
+            
+            if (now < suppressUntil) {
+                val remainingSec = (suppressUntil - now) / 1000
+                Log.d(TAG, "🚫 Wake suppressed for $packageName (${remainingSec}s remaining)")
+                return true
+            } else {
+                // Suppression expired - automatically clean up
+                suppressWakeUntil.remove(packageName)
+                Log.d(TAG, "✅ Wake suppression expired for $packageName")
+                return false
+            }
         }
         
         /**
@@ -168,10 +230,13 @@ class ForegroundDetectionService : AccessibilityService() {
     
     /**
      * Runnable for checking timer expirations periodically
+     * 
+     * NOTE: Only checks Quick Task timers (mechanical).
+     * Intention timer expiration is handled by JavaScript (semantic).
      */
     private val timerCheckRunnable = object : Runnable {
         override fun run() {
-            checkIntentionTimerExpirations()
+            // Only check Quick Task timers - intention timers are JavaScript's responsibility
             checkQuickTaskTimerExpirations()
             // Schedule next check in 1 second for accurate Quick Task expiration
             handler.postDelayed(this, 1000)
@@ -319,44 +384,17 @@ class ForegroundDetectionService : AccessibilityService() {
     }
     
     /**
-     * Check if there's a valid intention timer for the given app
+     * NOTE: hasValidIntentionTimer() has been REMOVED.
      * 
-     * Intention timers are stored in SharedPreferences by the JS layer
-     * Format: "intention_timer_{packageName}" -> expiration timestamp (Long)
+     * SEMANTIC OWNERSHIP:
+     * - JavaScript is the ONLY authority for t_intention
+     * - Native MUST NOT check, evaluate, or suppress based on t_intention
+     * - Native provides mechanical wake service only
      * 
-     * @param packageName Package name to check
-     * @return true if valid timer exists (not expired), false otherwise
+     * This respects the architectural boundary:
+     * - Native decides WHEN to wake (mechanics)
+     * - JavaScript decides WHAT to show and WHY (semantics)
      */
-    private fun hasValidIntentionTimer(packageName: String): Boolean {
-        try {
-            val prefs = getSharedPreferences("intention_timers", MODE_PRIVATE)
-            val key = "intention_timer_$packageName"
-            val expiresAt = prefs.getLong(key, 0L)
-            
-            if (expiresAt == 0L) {
-                // No timer set
-                return false
-            }
-            
-            val now = System.currentTimeMillis()
-            val isValid = now <= expiresAt
-            
-            if (isValid) {
-                val remainingSec = (expiresAt - now) / 1000
-                Log.i(TAG, "✅ Valid intention timer exists for $packageName (${remainingSec}s remaining)")
-            } else {
-                Log.d(TAG, "⏰ Intention timer expired for $packageName")
-                // Clean up expired timer
-                prefs.edit().remove(key).apply()
-            }
-            
-            return isValid
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error checking intention timer", e)
-            return false
-        }
-    }
     
     /**
      * Launch SystemSurfaceActivity to show intervention UI
@@ -383,20 +421,25 @@ class ForegroundDetectionService : AccessibilityService() {
      * - Proper isolation from MainActivity
      * - User sees ONLY intervention UI, not main app
      * 
+     * WAKE SUPPRESSION:
+     * - JavaScript sets mechanical flag: "don't wake before timestamp X"
+     * - Native reads flag and suppresses wake
+     * - Native has ZERO semantic knowledge (doesn't know about intention timers)
+     * 
      * @param triggeringApp Package name of the app that triggered intervention
-     * @param skipTimerCheck If true, skip the intention timer check (used when timer already expired)
      */
-    private fun launchInterventionActivity(triggeringApp: String, skipTimerCheck: Boolean = false) {
-        // HIGHEST PRIORITY: Check Quick Task timer FIRST
-        // If Quick Task is active for this app, do NOT launch SystemSurfaceActivity
-        if (hasValidQuickTaskTimer(triggeringApp)) {
-            Log.i(TAG, "⏭️ Skipping intervention - Quick Task timer ACTIVE for $triggeringApp")
+    private fun launchInterventionActivity(triggeringApp: String) {
+        // HIGHEST PRIORITY: Check wake suppression flag
+        // JavaScript sets this to say: "Don't wake before this time"
+        // Native doesn't know WHY (intention timer, etc.) - just that wake is suppressed
+        if (isWakeSuppressed(triggeringApp)) {
+            Log.i(TAG, "⏭️ Skipping - wake suppressed by JavaScript for $triggeringApp")
             return
         }
         
-        // Check if there's a valid intention timer first (unless we're called from timer expiration check)
-        if (!skipTimerCheck && hasValidIntentionTimer(triggeringApp)) {
-            Log.i(TAG, "⏭️ Skipping intervention - valid intention timer exists for $triggeringApp")
+        // Check Quick Task timer
+        if (hasValidQuickTaskTimer(triggeringApp)) {
+            Log.i(TAG, "⏭️ Skipping - Quick Task timer ACTIVE for $triggeringApp")
             return
         }
         
@@ -438,67 +481,18 @@ class ForegroundDetectionService : AccessibilityService() {
      * Called when the service is disconnected
      * This happens when user disables the service in Settings
      */
+    
     /**
-     * Check if any intention timers have expired and trigger interventions
+     * NOTE: checkIntentionTimerExpirations() has been REMOVED.
      * 
-     * This runs periodically (every 1 second) to catch timer expirations
-     * even when the React Native app is backgrounded (JS timers don't fire reliably)
+     * SEMANTIC OWNERSHIP:
+     * - JavaScript is the ONLY authority for t_intention
+     * - JavaScript checks expiration periodically (every 10 seconds)
+     * - JavaScript requests native wake via launchSystemSurfaceForIntentionExpired()
+     * - Native provides mechanical wake service, NO semantic decisions
      * 
-     * CRITICAL FIX: Only trigger intervention if the expired timer is for the
-     * CURRENTLY FOREGROUND app. For background apps, just delete the timer -
-     * intervention will trigger when user returns to that app.
-     * 
-     * This prevents cross-app interference where App A's expired timer
-     * would trigger intervention while user is using App B.
+     * This prevents race conditions and respects the architectural boundary.
      */
-    private fun checkIntentionTimerExpirations() {
-        try {
-            val prefs = getSharedPreferences("intention_timers", MODE_PRIVATE)
-            val allPrefs = prefs.all
-            val now = System.currentTimeMillis()
-            
-            // Get the currently foreground app
-            val currentForegroundApp = lastPackageName
-            
-            for ((key, value) in allPrefs) {
-                if (!key.startsWith("intention_timer_")) {
-                    continue
-                }
-                
-                val packageName = key.substring("intention_timer_".length)
-                val expiresAt = value as? Long ?: continue
-                
-                if (now > expiresAt) {
-                    val expiredSec = (now - expiresAt) / 1000
-                    
-                    // CRITICAL CHECK: Only trigger intervention if this is the CURRENT foreground app
-                    val isForeground = packageName == currentForegroundApp
-                    
-                    if (isForeground) {
-                        Log.i(TAG, "⏰ Intention timer EXPIRED for FOREGROUND app $packageName (${expiredSec}s ago) — launching intervention")
-                        
-                        // Clear expired timer
-                        prefs.edit().remove(key).apply()
-                        
-                        // Launch intervention for foreground app
-                        launchInterventionActivity(packageName, skipTimerCheck = true)
-                    } else {
-                        Log.i(TAG, "⏰ Intention timer EXPIRED for BACKGROUND app $packageName (${expiredSec}s ago)")
-                        Log.i(TAG, "  └─ Current foreground: $currentForegroundApp")
-                        Log.i(TAG, "  └─ Deleting timer - intervention will trigger when user returns to $packageName")
-                        
-                        // Just delete the timer - DO NOT launch intervention
-                        // When user returns to this app, launchInterventionActivity() will be called
-                        // from onAccessibilityEvent() and will trigger intervention then
-                        prefs.edit().remove(key).apply()
-                    }
-                }
-            }
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Error checking intention timer expirations", e)
-        }
-    }
     
     /**
      * Launch SystemSurfaceActivity specifically for Quick Task expiration.

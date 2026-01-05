@@ -73,7 +73,15 @@ export default function IntentionTimerScreen() {
       
       setIntentionTimer(interventionState.targetApp, durationMs, currentTimestamp);
       
-      // Store timer in native SharedPreferences so ForegroundDetectionService can check it
+      // Set wake suppression flag (mechanical instruction to native)
+      // This tells native: "Don't launch SystemSurface before this time"
+      // Native doesn't know WHY (intention timer) - just that wake is suppressed
+      if (AppMonitorModule) {
+        AppMonitorModule.setSuppressSystemSurfaceUntil(interventionState.targetApp, expiresAt);
+        console.log('[IntentionTimer] Wake suppression flag set until:', new Date(expiresAt).toISOString());
+      }
+      
+      // Store timer in native SharedPreferences (for backward compatibility)
       if (AppMonitorModule) {
         AppMonitorModule.storeIntentionTimer(interventionState.targetApp, expiresAt);
         console.log('[IntentionTimer] Stored intention timer in native SharedPreferences');

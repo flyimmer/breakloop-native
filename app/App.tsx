@@ -29,7 +29,10 @@ import {
   getQuickTaskUsesPerWindow,
   getIsPremiumCustomer,
 } from '@/src/os/osConfig';
-import { handleForegroundAppChange, setSystemSessionDispatcher } from '@/src/os/osTriggerBrain';
+import { 
+  handleForegroundAppChange, 
+  setSystemSessionDispatcher,
+} from '@/src/os/osTriggerBrain';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -66,6 +69,50 @@ function AppContent() {
       }
     }
   }, [dispatchSystemEvent, runtime]);
+
+  /**
+   * Subscribe to foreground app changes ONLY in SYSTEM_SURFACE context
+   * 
+   * CRITICAL: MainActivity must NEVER subscribe to these system-level signals.
+   * Foreground events are consumed exclusively by SystemSurface / OS Trigger Brain.
+   * 
+   * This prevents MainActivity from waking and rendering when monitored apps are detected.
+   */
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !AppMonitorModule) {
+      return;
+    }
+
+    // Only subscribe if we're in SYSTEM_SURFACE context
+    if (runtime === 'SYSTEM_SURFACE') {
+      const emitter = new NativeEventEmitter(AppMonitorModule);
+      const subscription = emitter.addListener(
+        'onForegroundAppChanged',
+        (event: { packageName: string; timestamp: number }) => {
+          // Pass to OS Trigger Brain for tracking exits and session lifecycle
+          handleForegroundAppChange({
+            packageName: event.packageName,
+            timestamp: event.timestamp,
+          });
+        }
+      );
+
+      if (__DEV__) {
+        console.log('[OS] ✅ Subscribed to foreground app changes (SYSTEM_SURFACE context)');
+      }
+
+      return () => {
+        subscription.remove();
+        if (__DEV__) {
+          console.log('[OS] 🧹 Unsubscribed from foreground app changes (SYSTEM_SURFACE context)');
+        }
+      };
+    } else {
+      if (__DEV__) {
+        console.log('[OS] ⏭️ Skipping foreground app change subscription (MAIN_APP context)');
+      }
+    }
+  }, [runtime]);
 
   if (__DEV__) {
     console.log('[App] Rendering for runtime context:', runtime);
@@ -177,10 +224,12 @@ const App = () => {
   }, []);
 
   /**
-   * Android foreground app monitoring
-   * Starts monitoring service and logs foreground app changes.
+   * Android foreground app monitoring service startup
    * 
    * IMPORTANT: Wait for monitored apps to load before starting monitoring
+   * 
+   * NOTE: Event subscription is handled in AppContent component based on RuntimeContext.
+   * This ensures MainActivity never subscribes to system-level foreground change events.
    */
   useEffect(() => {
     if (Platform.OS !== 'android' || !AppMonitorModule) {
@@ -211,24 +260,8 @@ const App = () => {
         console.error('[OS] Failed to start monitoring:', error);
       });
 
-    // Listen for foreground app changes
-    const emitter = new NativeEventEmitter(AppMonitorModule);
-    const subscription = emitter.addListener(
-      'onForegroundAppChanged',
-      (event: { packageName: string; timestamp: number }) => {
-        // Pass to OS Trigger Brain for tracking
-        handleForegroundAppChange({
-          packageName: event.packageName,
-          timestamp: event.timestamp,
-        });
-      }
-    );
-
-    return () => {
-      // Only remove the event listener
-      // DO NOT stop the monitoring service - it must run independently
-      subscription.remove();
-    };
+    // Event subscription is now handled in AppContent based on RuntimeContext
+    // No cleanup needed here
   }, [monitoredAppsLoaded]);
 
   return (

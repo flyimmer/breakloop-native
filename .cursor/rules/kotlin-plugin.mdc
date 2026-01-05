@@ -1,0 +1,9 @@
+---
+name: kotlin-plugin
+description: This is a new rule
+---
+
+# Overview
+
+Insert overview text here. The agent will only see this should they choose to apply the rule.
+when you add, delete, change Kotlin files, make sure you read Kotlin_file_sync.md
