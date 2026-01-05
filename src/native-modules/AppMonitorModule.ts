@@ -173,6 +173,16 @@ interface IAppMonitorModule {
   cancelInterventionActivity(): void;
 
   /**
+   * Finish SystemSurfaceActivity without launching home screen
+   * 
+   * Called when intervention completes with intention timer set (user wants to use the app).
+   * The monitored app will naturally come to foreground after SystemSurfaceActivity finishes.
+   * 
+   * This is a MECHANICAL ACTION - JavaScript decides WHEN to finish (semantics).
+   */
+  finishSystemSurfaceActivity(): void;
+
+  /**
    * Launch a specific app by package name
    * 
    * @param packageName - Package name to launch

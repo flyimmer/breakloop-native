@@ -139,20 +139,34 @@ export default function InterventionFlow({ app }: InterventionFlowProps) {
         break;
       case 'action_timer':
         // RULE 3: Dispatch START_ALTERNATIVE_ACTIVITY event instead of navigating
+        // Don't launch home - user is starting alternative activity
         if (__DEV__) {
           console.log('[InterventionFlow] Starting alternative activity - dispatching START_ALTERNATIVE_ACTIVITY');
         }
-        dispatchSystemEvent({ type: 'START_ALTERNATIVE_ACTIVITY', app });
+        dispatchSystemEvent({ 
+          type: 'START_ALTERNATIVE_ACTIVITY', 
+          app,
+          shouldLaunchHome: false,
+        });
         break;
       case 'reflection':
         navigationRef.current.navigate('Reflection');
         break;
       case 'idle':
         // RULE 3: Dispatch END_SESSION event instead of navigating
+        // Determine if we should launch home based on how intervention ended
+        const shouldLaunchHome = !interventionState.intentionTimerSet;
+        
         if (__DEV__) {
-          console.log('[InterventionFlow] Intervention completed - dispatching END_SESSION');
+          console.log('[InterventionFlow] Intervention completed - dispatching END_SESSION', {
+            intentionTimerSet: interventionState.intentionTimerSet,
+            shouldLaunchHome,
+          });
         }
-        dispatchSystemEvent({ type: 'END_SESSION' });
+        dispatchSystemEvent({ 
+          type: 'END_SESSION',
+          shouldLaunchHome,
+        });
         break;
     }
   }, [state, targetApp, app]);

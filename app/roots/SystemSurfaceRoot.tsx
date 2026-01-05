@@ -48,14 +48,25 @@ function isBreakLoopInfrastructure(packageName: string | null): boolean {
 /**
  * Finish SystemSurfaceActivity
  * Called when session becomes null (Rule 4)
+ * 
+ * @param shouldLaunchHome - If true, launches home screen after finishing (cancellation/completion)
+ *                           If false, just finishes activity (intention timer/alternative activity)
  */
-function finishSystemSurfaceActivity() {
+function finishSystemSurfaceActivity(shouldLaunchHome: boolean = true) {
   if (Platform.OS === 'android' && AppMonitorModule) {
     if (__DEV__) {
-      console.log('[SystemSurfaceRoot] Session is null - finishing SystemSurfaceActivity');
+      console.log('[SystemSurfaceRoot] Session is null - finishing SystemSurfaceActivity', {
+        shouldLaunchHome,
+      });
     }
-    // Note: We call cancelInterventionActivity which finishes the activity and launches home
-    AppMonitorModule.cancelInterventionActivity();
+    
+    if (shouldLaunchHome) {
+      // Finish activity AND launch home (cancellation/completion)
+      AppMonitorModule.cancelInterventionActivity();
+    } else {
+      // Finish activity only (intention timer/alternative activity)
+      AppMonitorModule.finishSystemSurfaceActivity();
+    }
   }
 }
 
@@ -76,7 +87,7 @@ function finishSystemSurfaceActivity() {
  * - session.kind === 'ALTERNATIVE_ACTIVITY' → Render AlternativeActivityFlow (with visibility check)
  */
 export default function SystemSurfaceRoot() {
-  const { session, bootstrapState, foregroundApp, dispatchSystemEvent } = useSystemSession();
+  const { session, bootstrapState, foregroundApp, shouldLaunchHome, dispatchSystemEvent } = useSystemSession();
   const [bootstrapInitialized, setBootstrapInitialized] = useState(false);
 
   /**
@@ -168,11 +179,13 @@ export default function SystemSurfaceRoot() {
   useEffect(() => {
     if (bootstrapState === 'READY' && session === null) {
       if (__DEV__) {
-        console.log('[SystemSurfaceRoot] Session is null (bootstrap complete) - triggering activity finish');
+        console.log('[SystemSurfaceRoot] Session is null (bootstrap complete) - triggering activity finish', {
+          shouldLaunchHome,
+        });
       }
-      finishSystemSurfaceActivity();
+      finishSystemSurfaceActivity(shouldLaunchHome);
     }
-  }, [session, bootstrapState]);
+  }, [session, bootstrapState, shouldLaunchHome]);
 
   /**
    * CRITICAL: End Intervention Session if user leaves the app

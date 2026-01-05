@@ -586,9 +586,42 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     }
 
     /**
-     * Cancel intervention and close SystemSurfaceActivity
+     * Finish SystemSurfaceActivity without launching home screen.
      * 
-     * Called when user presses back during intervention or switches away from monitored app.
+     * Use this when:
+     * - User sets intention timer (wants to use the monitored app)
+     * - User starts alternative activity (activity timer screen)
+     * 
+     * The monitored app or previous activity will naturally come to foreground.
+     * 
+     * This is a MECHANICAL ACTION - JavaScript decides WHEN to finish (semantics).
+     */
+    @ReactMethod
+    fun finishSystemSurfaceActivity() {
+        try {
+            android.util.Log.i("AppMonitorModule", "🏁 Finishing SystemSurfaceActivity (no home launch)")
+            
+            // Finish SystemSurfaceActivity using stored reference
+            val activity = systemSurfaceActivityRef?.get()
+            if (activity != null && !activity.isFinishing) {
+                android.util.Log.i("AppMonitorModule", "🔄 Finishing SystemSurfaceActivity via static reference")
+                activity.finish()
+                android.util.Log.i("AppMonitorModule", "✅ SystemSurfaceActivity finished, monitored app will surface")
+            } else {
+                android.util.Log.w("AppMonitorModule", "⚠️ SystemSurfaceActivity reference is null or already finishing")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "❌ Failed to finish SystemSurfaceActivity", e)
+        }
+    }
+
+    /**
+     * Cancel intervention and close SystemSurfaceActivity, then launch home screen.
+     * 
+     * Use this when:
+     * - User cancels intervention (back button, switches away)
+     * - User completes full intervention with reflection
+     * 
      * Uses static reference to reliably finish SystemSurfaceActivity even when currentActivity is null.
      * 
      * This is a MECHANICAL ACTION - JavaScript decides WHEN to cancel (semantics).

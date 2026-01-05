@@ -44,8 +44,8 @@ export type SessionBootstrapState = 'BOOTSTRAPPING' | 'READY';
 export type SystemSessionEvent =
   | { type: 'START_INTERVENTION'; app: string }
   | { type: 'START_QUICK_TASK'; app: string }
-  | { type: 'START_ALTERNATIVE_ACTIVITY'; app: string }
-  | { type: 'END_SESSION' };
+  | { type: 'START_ALTERNATIVE_ACTIVITY'; app: string; shouldLaunchHome?: boolean }
+  | { type: 'END_SESSION'; shouldLaunchHome?: boolean };
 
 /**
  * System Session Context Value
@@ -54,6 +54,7 @@ interface SystemSessionContextValue {
   session: SystemSession;
   bootstrapState: SessionBootstrapState;
   foregroundApp: string | null;  // Tracked for Alternative Activity visibility (Rule 1)
+  shouldLaunchHome: boolean;  // Whether to launch home screen when session ends
   dispatchSystemEvent: (event: SystemSessionEvent) => void;
 }
 
@@ -64,6 +65,7 @@ interface SystemSessionState {
   session: SystemSession;
   bootstrapState: SessionBootstrapState;
   foregroundApp: string | null;
+  shouldLaunchHome: boolean;  // Whether to launch home screen when session ends
 }
 
 /**
@@ -155,11 +157,15 @@ function systemSessionReducer(
         ...state,
         session: { kind: 'ALTERNATIVE_ACTIVITY', app: event.app },
         bootstrapState: 'READY',
+        // Alternative activity: don't launch home (default to false)
+        shouldLaunchHome: event.shouldLaunchHome ?? false,
       };
 
     case 'END_SESSION':
       if (__DEV__) {
-        console.log('[SystemSession] Ending session');
+        console.log('[SystemSession] Ending session', {
+          shouldLaunchHome: event.shouldLaunchHome ?? true,
+        });
         if (state.bootstrapState === 'BOOTSTRAPPING') {
           console.log('[SystemSession] Bootstrap phase complete - explicit "do nothing" decision');
         }
@@ -168,6 +174,9 @@ function systemSessionReducer(
         ...state,
         session: null,
         bootstrapState: 'READY',
+        // Store shouldLaunchHome flag for SystemSurfaceRoot to read
+        // Default to true (launch home) for safety
+        shouldLaunchHome: event.shouldLaunchHome ?? true,
       };
 
     default:
@@ -187,6 +196,7 @@ const initialSystemSessionState: SystemSessionState = {
   session: null,
   bootstrapState: 'BOOTSTRAPPING',
   foregroundApp: null,
+  shouldLaunchHome: true,  // Default to launching home for safety
 };
 
 /**
@@ -249,6 +259,7 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({ ch
     session: state.session,
     bootstrapState: state.bootstrapState,
     foregroundApp: state.foregroundApp,
+    shouldLaunchHome: state.shouldLaunchHome,
     dispatchSystemEvent,
   };
 
