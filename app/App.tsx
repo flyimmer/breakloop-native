@@ -45,14 +45,27 @@ function AppContent() {
 
   /**
    * Connect OS Trigger Brain to SystemSession dispatcher (Rule 2)
-   * This allows OS Trigger Brain to dispatch session events
+   * 
+   * CRITICAL: Only connect in SYSTEM_SURFACE context
+   * MainApp context MUST NOT create or modify SystemSession
+   * 
+   * This prevents the context mismatch bug where:
+   * - MainActivity dispatches START_INTERVENTION in its context
+   * - SystemSurfaceActivity launches with a fresh context
+   * - Session never transfers → app hangs
    */
   useEffect(() => {
-    setSystemSessionDispatcher(dispatchSystemEvent);
-    if (__DEV__) {
-      console.log('[App] Connected OS Trigger Brain to SystemSession dispatcher');
+    if (runtime === 'SYSTEM_SURFACE') {
+      setSystemSessionDispatcher(dispatchSystemEvent);
+      if (__DEV__) {
+        console.log('[App] ✅ Connected OS Trigger Brain to SystemSession dispatcher (SYSTEM_SURFACE context)');
+      }
+    } else {
+      if (__DEV__) {
+        console.log('[App] ⏭️ Skipping OS Trigger Brain connection (MAIN_APP context - sessions created in SystemSurface only)');
+      }
     }
-  }, [dispatchSystemEvent]);
+  }, [dispatchSystemEvent, runtime]);
 
   if (__DEV__) {
     console.log('[App] Rendering for runtime context:', runtime);

@@ -16,9 +16,10 @@
  * - When session === null, activity MUST finish immediately
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Platform, NativeModules } from 'react-native';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
+import { handleForegroundAppChange } from '@/src/os/osTriggerBrain';
 import InterventionFlow from '../flows/InterventionFlow';
 import QuickTaskFlow from '../flows/QuickTaskFlow';
 import AlternativeActivityFlow from '../flows/AlternativeActivityFlow';
@@ -56,27 +57,94 @@ function finishSystemSurfaceActivity() {
  * - session.kind === 'ALTERNATIVE_ACTIVITY' → Render AlternativeActivityFlow (with visibility check)
  */
 export default function SystemSurfaceRoot() {
-  const { session, bootstrapState, foregroundApp } = useSystemSession();
+  const { session, bootstrapState, foregroundApp, dispatchSystemEvent } = useSystemSession();
+  const [bootstrapInitialized, setBootstrapInitialized] = useState(false);
 
   /**
-   * BOOTSTRAP PHASE: Wait for JS to establish session
+   * BOOTSTRAP INITIALIZATION (Cold Start)
    * 
-   * During cold start, session starts as null but this doesn't mean
-   * "no session should exist" - it means "JS hasn't decided yet".
+   * Per system_surface_bootstrap.md timeline (t9-t13):
+   * t9  - Read wakeReason + triggeringApp from Intent extras
+   * t10 - Run OS Trigger Brain in SystemSurface context
+   * t11 - OS Trigger Brain makes decision
+   * t12 - Dispatch SystemSession event
+   * t13 - Set bootstrapState = READY
    * 
-   * We must wait for bootstrapState to become 'READY' before enforcing
-   * session lifecycle rules.
+   * This ensures session is created in the CORRECT React context.
    */
-  if (bootstrapState === 'BOOTSTRAPPING') {
-    if (__DEV__) {
-      console.log('[SystemSurfaceRoot] Bootstrap phase - waiting for session establishment');
-    }
-    return null;
-  }
+  useEffect(() => {
+    if (bootstrapInitialized) return;
+
+    const initializeBootstrap = async () => {
+      try {
+        if (__DEV__) {
+          console.log('[SystemSurfaceRoot] 🚀 Bootstrap initialization starting...');
+        }
+
+        // t9: Read Intent extras from native
+        if (!AppMonitorModule) {
+          console.error('[SystemSurfaceRoot] ❌ AppMonitorModule not available');
+          dispatchSystemEvent({ type: 'END_SESSION' });
+          setBootstrapInitialized(true);
+          return;
+        }
+
+        const extras = await AppMonitorModule.getSystemSurfaceIntentExtras();
+
+        if (!extras || !extras.triggeringApp) {
+          console.error('[SystemSurfaceRoot] ❌ No Intent extras - finishing activity');
+          dispatchSystemEvent({ type: 'END_SESSION' });
+          setBootstrapInitialized(true);
+          return;
+        }
+
+        const { triggeringApp, wakeReason } = extras;
+
+        if (__DEV__) {
+          console.log('[SystemSurfaceRoot] 📋 Intent extras:', {
+            triggeringApp,
+            wakeReason,
+          });
+        }
+
+        // t10-t11: Run OS Trigger Brain in THIS context (SystemSurface)
+        // This will evaluate the trigger logic and dispatch the appropriate session event
+        // CRITICAL: Use force flag to bypass duplicate event filtering
+        if (__DEV__) {
+          console.log('[SystemSurfaceRoot] 🧠 Running OS Trigger Brain in SystemSurface context...');
+        }
+
+        handleForegroundAppChange(
+          {
+            packageName: triggeringApp,
+            timestamp: Date.now(),
+          },
+          { force: true } // Bypass duplicate filter for bootstrap
+        );
+
+        // t12-t13: OS Trigger Brain will dispatch session event, which sets bootstrapState = READY
+
+        setBootstrapInitialized(true);
+
+        if (__DEV__) {
+          console.log('[SystemSurfaceRoot] ✅ Bootstrap initialization complete');
+        }
+      } catch (error) {
+        console.error('[SystemSurfaceRoot] ❌ Bootstrap initialization failed:', error);
+        dispatchSystemEvent({ type: 'END_SESSION' });
+        setBootstrapInitialized(true);
+      }
+    };
+
+    initializeBootstrap();
+  }, [bootstrapInitialized, dispatchSystemEvent]);
 
   /**
    * RULE 4: Session is the ONLY authority for SystemSurface existence
    * When session becomes null (and bootstrap is complete), finish activity
+   * 
+   * IMPORTANT: This useEffect must be called BEFORE any early returns
+   * to comply with React's Rules of Hooks.
    */
   useEffect(() => {
     if (bootstrapState === 'READY' && session === null) {
@@ -86,6 +154,26 @@ export default function SystemSurfaceRoot() {
       finishSystemSurfaceActivity();
     }
   }, [session, bootstrapState]);
+
+  /**
+   * BOOTSTRAP PHASE: Wait for JS to establish session
+   * 
+   * During cold start, session starts as null but this doesn't mean
+   * "no session should exist" - it means "JS hasn't decided yet".
+   * 
+   * We must wait for:
+   * 1. Bootstrap initialization to complete (Intent extras read, OS Trigger Brain run)
+   * 2. bootstrapState to become 'READY' (session decision made)
+   */
+  if (!bootstrapInitialized || bootstrapState === 'BOOTSTRAPPING') {
+    if (__DEV__) {
+      console.log('[SystemSurfaceRoot] Bootstrap phase - waiting for session establishment', {
+        bootstrapInitialized,
+        bootstrapState,
+      });
+    }
+    return null;
+  }
 
   // RULE 4: If no session (and bootstrap complete), render nothing (activity will finish via useEffect)
   if (session === null) {

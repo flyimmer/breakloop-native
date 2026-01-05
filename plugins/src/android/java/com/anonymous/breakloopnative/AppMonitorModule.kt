@@ -91,6 +91,52 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     }
 
     /**
+     * Get Intent extras from SystemSurfaceActivity
+     * 
+     * This is used during bootstrap initialization to read:
+     * - triggeringApp: The monitored app that triggered the wake
+     * - wakeReason: Why SystemSurfaceActivity was launched
+     * 
+     * Per system_surface_bootstrap.md (t9):
+     * JS reads these extras to run OS Trigger Brain in the correct context.
+     * 
+     * @param promise Resolves with map containing triggeringApp and wakeReason, or null if not in SystemSurfaceActivity
+     */
+    @ReactMethod
+    fun getSystemSurfaceIntentExtras(promise: Promise) {
+        try {
+            val activity = reactApplicationContext.currentActivity
+            
+            // Only works in SystemSurfaceActivity
+            if (activity !is SystemSurfaceActivity) {
+                android.util.Log.w("AppMonitorModule", "getSystemSurfaceIntentExtras called but not in SystemSurfaceActivity")
+                promise.resolve(null)
+                return
+            }
+            
+            val intent = activity.intent
+            val extras = Arguments.createMap()
+            
+            val triggeringApp = intent.getStringExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP)
+            val wakeReason = intent.getStringExtra(SystemSurfaceActivity.EXTRA_WAKE_REASON)
+            
+            if (triggeringApp != null) {
+                extras.putString("triggeringApp", triggeringApp)
+            }
+            
+            if (wakeReason != null) {
+                extras.putString("wakeReason", wakeReason)
+            }
+            
+            android.util.Log.d("AppMonitorModule", "getSystemSurfaceIntentExtras: triggeringApp=$triggeringApp, wakeReason=$wakeReason")
+            promise.resolve(extras)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to get SystemSurface Intent extras", e)
+            promise.reject("GET_INTENT_EXTRAS_ERROR", "Failed to get Intent extras: ${e.message}", e)
+        }
+    }
+
+    /**
      * Convert Drawable to base64 string for React Native Image component
      * 
      * @param drawable The app icon drawable

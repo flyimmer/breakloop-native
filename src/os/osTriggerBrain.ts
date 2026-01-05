@@ -662,9 +662,15 @@ export function getInterventionsInProgressDEV(): string[] {
  * Implements semantic launcher filtering at the business logic layer.
  * 
  * @param app - App info containing packageName and timestamp
+ * @param options - Optional configuration
+ * @param options.force - If true, bypasses duplicate event filtering (used during SystemSurface bootstrap)
  */
-export function handleForegroundAppChange(app: { packageName: string; timestamp: number }): void {
+export function handleForegroundAppChange(
+  app: { packageName: string; timestamp: number },
+  options?: { force?: boolean }
+): void {
   const { packageName, timestamp } = app;
+  const force = options?.force ?? false;
 
   // ============================================================================
   // Step 1: Record raw exit (for all apps, including launchers)
@@ -846,11 +852,12 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
 
     // ============================================================================
     // Skip logic for heartbeat events (same app, no actual switch)
-    // EXCEPTION: If intention timer just expired, we MUST re-evaluate logic
+    // EXCEPTION 1: If intention timer just expired, we MUST re-evaluate logic
+    // EXCEPTION 2: If force === true (SystemSurface bootstrap), we MUST re-evaluate
     // ============================================================================
-    if (lastMeaningfulApp === packageName && !intentionJustExpired) {
+    if (lastMeaningfulApp === packageName && !intentionJustExpired && !force) {
       // This is a heartbeat event for the same app - skip all logic
-      // UNLESS intention timer just expired (then we need to trigger intervention)
+      // UNLESS intention timer just expired OR force flag is set
       if (__DEV__) {
         console.log('[OS Trigger Brain] Duplicate event filtered (same meaningful app):', {
           packageName,
@@ -863,6 +870,10 @@ export function handleForegroundAppChange(app: { packageName: string; timestamp:
     
     if (lastMeaningfulApp === packageName && intentionJustExpired) {
       console.log('[OS Trigger Brain] Heartbeat event BUT intention timer just expired - will re-evaluate logic');
+    }
+    
+    if (lastMeaningfulApp === packageName && force) {
+      console.log('[OS Trigger Brain] Duplicate event BUT force === true (SystemSurface bootstrap) - will re-evaluate logic');
     }
 
     // ============================================================================
