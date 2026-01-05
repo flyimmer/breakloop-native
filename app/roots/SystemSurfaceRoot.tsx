@@ -27,6 +27,25 @@ import AlternativeActivityFlow from '../flows/AlternativeActivityFlow';
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
 /**
+ * Check if a package name is BreakLoop infrastructure
+ * These apps should NOT trigger intervention session end
+ * 
+ * During bootstrap, foregroundApp may temporarily be BreakLoop's own app,
+ * which is infrastructure and should not be treated as "user left the app".
+ */
+function isBreakLoopInfrastructure(packageName: string | null): boolean {
+  if (!packageName) return true; // null = not yet initialized
+  
+  // BreakLoop's own app package
+  if (packageName === 'com.anonymous.breakloopnative') return true;
+  
+  // Add other infrastructure packages if needed
+  // if (packageName === 'com.android.systemui') return true;
+  
+  return false;
+}
+
+/**
  * Finish SystemSurfaceActivity
  * Called when session becomes null (Rule 4)
  */
@@ -154,6 +173,40 @@ export default function SystemSurfaceRoot() {
       finishSystemSurfaceActivity();
     }
   }, [session, bootstrapState]);
+
+  /**
+   * CRITICAL: End Intervention Session if user leaves the app
+   * 
+   * Intervention Session is ONE-SHOT and NON-RECOVERABLE.
+   * If user switches away from the monitored app during intervention,
+   * the session MUST end immediately.
+   * 
+   * IMPORTANT: Exclude BreakLoop infrastructure apps from this check.
+   * During bootstrap, foregroundApp may temporarily be BreakLoop's own app,
+   * which should NOT trigger session end.
+   * 
+   * This does NOT apply to:
+   * - ALTERNATIVE_ACTIVITY (already has visibility logic)
+   * - QUICK_TASK (persists across app switches)
+   */
+  useEffect(() => {
+    // Only check for INTERVENTION sessions
+    if (session?.kind !== 'INTERVENTION') return;
+    
+    // Don't end session if foregroundApp is null or BreakLoop infrastructure
+    if (isBreakLoopInfrastructure(foregroundApp)) return;
+    
+    // End session if user switched to a different app
+    if (foregroundApp !== session.app) {
+      if (__DEV__) {
+        console.log('[SystemSurfaceRoot] 🚨 Intervention Session ended - user left app', {
+          sessionApp: session.app,
+          foregroundApp,
+        });
+      }
+      dispatchSystemEvent({ type: 'END_SESSION' });
+    }
+  }, [session, foregroundApp, dispatchSystemEvent]);
 
   /**
    * BOOTSTRAP PHASE: Wait for JS to establish session

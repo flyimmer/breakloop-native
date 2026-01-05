@@ -1,7 +1,7 @@
 # BreakLoop OS-Level UI Architecture
 
-**Version:** 1.0  
-**Date:** December 30, 2025  
+**Version:** 2.0  
+**Date:** January 5, 2026  
 **Status:** AUTHORITATIVE - This document defines the canonical architecture
 
 ---
@@ -30,7 +30,350 @@ The System Surface is a **neutral stage**. Different flows render on this stage,
 
 ---
 
-## Part 2: State Diagram
+## Part 1A: Runtime Context & Bootstrap Lifecycle
+
+### Runtime Context
+
+Determines *which UI world* React Native is running in.
+
+```ts
+type RuntimeContext = 'MAIN_APP' | 'SYSTEM_SURFACE';
+```
+
+- `MainActivity` → `MAIN_APP`
+- `SystemSurfaceActivity` → `SYSTEM_SURFACE`
+
+**Critical Rule:** Each context has separate React Native instances and separate state.
+
+### System Session
+
+Defines **whether SystemSurfaceActivity has a legitimate reason to exist**.
+
+```ts
+type SystemSession =
+  | { kind: 'INTERVENTION'; app: AppId }
+  | { kind: 'QUICK_TASK'; app: AppId }
+  | { kind: 'ALTERNATIVE_ACTIVITY'; app: AppId }
+  | null;
+```
+
+**Invariant:**
+```ts
+SystemSurfaceActivity.isAlive === (SystemSession !== null)
+```
+
+### Bootstrap State
+
+Bootstrap state exists **only** to protect cold start.
+
+```ts
+type SessionBootstrapState = 'BOOTSTRAPPING' | 'READY';
+```
+
+- Initial state: `BOOTSTRAPPING`
+- Exit condition: **JS finishes OS Trigger evaluation**
+
+**Core Principle (Non‑Negotiable):**
+
+> **SystemSurfaceActivity must survive long enough for JavaScript to decide whether a SystemSession exists.**
+
+During cold start:
+- `session === null` does **NOT** mean "finish immediately"
+- it means **"decision not made yet"**
+
+### Cold Start Timeline
+
+```
+t0  User opens Instagram
+t1  Android OS switches foreground app → Instagram
+t2  AccessibilityService still alive
+t3  AccessibilityService detects monitored app
+t4  Native decides: need to wake SystemSurface
+t5  Native launches SystemSurfaceActivity
+t6  Android creates NEW Activity + NEW RN Context
+t7  React Native initializes
+t8  SystemSurfaceRoot first render
+     - session = null
+     - bootstrapState = BOOTSTRAPPING
+     - ❌ MUST NOT finish
+t9  JS reads from native:
+     - wakeReason
+     - triggeringApp
+t10 JS runs OS Trigger Brain in【SystemSurface Context】
+t11 OS Trigger Brain makes decision:
+     - START_INTERVENTION / START_QUICK_TASK /
+       START_ALTERNATIVE_ACTIVITY / DO_NOTHING
+t12 JS dispatches SystemSession event
+t13 JS sets bootstrapState = READY
+t14 SystemSurfaceRoot renders again
+     - If session !== null → render corresponding Flow
+     - If session === null → finish SystemSurfaceActivity
+```
+
+### SystemSurfaceRoot — Authoritative Logic
+
+```tsx
+function SystemSurfaceRoot() {
+  const { session, bootstrapState } = useSystemSession();
+
+  if (bootstrapState === 'BOOTSTRAPPING') {
+    // Cold start phase — NEVER finish here
+    return null;
+  }
+
+  if (session === null) {
+    // Decision complete, no session needed
+    finishSystemSurfaceActivity();
+    return null;
+  }
+
+  switch (session.kind) {
+    case 'INTERVENTION':
+      return <InterventionFlow app={session.app} />;
+
+    case 'QUICK_TASK':
+      return <QuickTaskFlow app={session.app} />;
+
+    case 'ALTERNATIVE_ACTIVITY':
+      return <AlternativeActivityFlow app={session.app} />;
+  }
+}
+```
+
+### Context Ownership Rules
+
+**JavaScript (SystemSurface Context) MUST:**
+- Run OS Trigger Brain
+- Decide whether to create SystemSession
+- Dispatch START_* events
+- Control bootstrap lifecycle
+
+**JavaScript (SystemSurface Context) MUST NOT:**
+- Assume session exists on mount
+- Finish activity during BOOTSTRAPPING
+
+**JavaScript (MainApp Context) MUST:**
+- Request native wake only
+
+**JavaScript (MainApp Context) MUST NOT:**
+- Create or modify SystemSession
+- Dispatch START_* events
+
+**Native (Kotlin) MUST:**
+- Wake SystemSurfaceActivity
+- Pass wakeReason + triggeringApp
+
+**Native (Kotlin) MUST NOT:**
+- Create session
+- Interpret session
+- Manage bootstrap
+
+### Bootstrap Failure Modes
+
+| Symptom | Root Cause |
+|---------|-----------|
+| App returns to Home immediately | finish() called during BOOTSTRAPPING |
+| App hangs with no UI | Session created in MainApp context |
+| No intervention shows | OS Trigger Brain not run in SystemSurface |
+| Infinite loading | bootstrap never set to READY |
+
+**Final Lock Rule:**
+
+> **SystemSurfaceActivity may only finish after JavaScript has explicitly completed one OS Trigger evaluation cycle.**
+
+---
+
+## Part 2: Native–JavaScript Boundary
+
+### Core Principle (Non-Negotiable)
+
+**Native code decides WHEN to wake the app.**  
+**JavaScript decides WHAT the user sees and WHY.**
+
+- **Native = mechanics**
+- **JavaScript = semantics**
+
+### Native (Kotlin) — Allowed Responsibilities
+
+**Native Code MAY:**
+- Detect foreground app changes (AccessibilityService)
+- Detect timer expiration using persisted timestamps
+- Persist timestamps (SharedPreferences)
+- Answer binary questions:
+  - "Is Quick Task active?"
+  - "Did a timer expire?"
+- Wake the System Surface Activity
+- Pass a WAKE REASON to JavaScript
+
+**Native Code MUST NOT:**
+- Decide Quick Task vs Intervention
+- Check `n_quickTask`
+- Check `t_intention` priority
+- Run OS Trigger priority chain
+- Decide which screen to show
+- Interpret user intent
+- Navigate inside flows
+
+### JavaScript — Required Responsibilities
+
+**JavaScript MUST:**
+- Own the OS Trigger Brain
+- Evaluate the full priority chain
+- Decide:
+  - Quick Task Flow
+  - Intervention Flow
+  - Suppression (do nothing)
+- Manage `t_intention` semantics
+- Manage Quick Task semantics
+- Reset timers on Quick Task expiry
+- Decide navigation within System Surface
+
+**JavaScript MUST NOT:**
+- Assume native semantics
+- Duplicate native timestamp logic
+- Bypass the priority chain
+- React to wake-ups without checking WAKE REASON
+
+### Wake Reason Contract (Critical)
+
+Every native launch of `SystemSurfaceActivity` MUST include a wake reason.
+
+**Valid Wake Reasons:**
+- `MONITORED_APP_FOREGROUND`
+- `INTENTION_EXPIRED`
+- `QUICK_TASK_EXPIRED`
+- `DEV_DEBUG`
+
+**JavaScript Requirements:**
+- Read wake reason on startup
+- Branch behavior based on wake reason
+- **NEVER** treat `QUICK_TASK_EXPIRED` as a normal trigger
+
+### Red Flags (Immediate Failure)
+
+If **ANY** of the following are true, **STOP and FIX**:
+
+- ❌ Kotlin code checks `n_quickTask`
+- ❌ Kotlin code chooses Quick Task vs Intervention
+- ❌ Kotlin code decides navigation or screens
+- ❌ JavaScript skips priority chain based on native assumptions
+- ❌ `QUICK_TASK_EXPIRED` triggers Quick Task dialog again
+- ❌ Main app UI appears in System Surface
+- ❌ Native logic duplicates JS logic
+
+### Verification Checklist
+
+When reviewing code changes, verify:
+
+**1. Native Code Review:**
+- [ ] Only detects events and persists timestamps
+- [ ] Never makes semantic decisions
+- [ ] Always passes wake reason to JavaScript
+- [ ] Never checks Quick Task availability or counts
+
+**2. JavaScript Code Review:**
+- [ ] Always reads wake reason on startup
+- [ ] Runs full priority chain evaluation
+- [ ] Makes all flow decisions (Quick Task vs Intervention)
+- [ ] Handles `QUICK_TASK_EXPIRED` as special case
+- [ ] Never duplicates native timestamp logic
+
+**3. Integration Points:**
+- [ ] Wake reason is always provided
+- [ ] Wake reason is always consumed
+- [ ] No semantic logic in native layer
+- [ ] No mechanical logic in JavaScript layer
+
+---
+
+## Part 3: OS Trigger Contract
+
+### Monitored Apps Definition
+
+**What counts as a "monitored app":**
+- Apps and Websites listed under Settings → "Monitored apps"
+- Both applications and websites are monitored and will trigger the conscious process intervention
+- Each monitored app/website is treated as an individual entity
+
+### Timer/Parameter Scope
+
+Each individual monitored app shall have its own timers/parameters below, **except** `n_quickTasks` which is global:
+
+| Timer/Parameter | Scope | Notes |
+|----------------|-------|-------|
+| `t_intention` | Per-app | Each monitored app has its own intention timer |
+| `t_quickTask` | Per-app | Each monitored app has its own Quick Task active timer |
+| `n_quickTask` | **GLOBAL** | Usage count is shared - using Quick Task on Instagram consumes quota for TikTok too |
+
+### Intervention Trigger Rules
+
+**Core Principle:** Every app shall be treated as individual.
+
+**Evaluation Rule:**
+- Every time a monitored app enters foreground, the OS trigger logic must evaluate whether an intervention should start.
+
+**Suppression Conditions:**
+
+When the intervention for a monitored app has already been started, the system must monitor:
+
+- If the intention timer (`t_intention`) is chosen and `t_intention` is not over, **OR**
+- If the "alternative activity" is started,  
+- **Then:** the intervention shall NOT be started.
+
+**Else:** the intervention shall be started from the beginning again.
+
+### Intention Timer (`t_intention`) Behavior
+
+**Definition:** The timer set by the user for this monitored app during the intervention flow indicating how long the user wants to use this app.
+
+**Rules:**
+- When `t_intention` is over and the user is still using this monitored app, the intervention should start again.
+- Every time the intervention flow starts or restarts, the `t_intention` for this app shall be deleted.
+
+### Incomplete Intervention Cancellation
+
+When user switches away from a monitored app, cancel intervention ONLY if it's incomplete.
+
+**Incomplete States (Cancel Intervention):**
+- **`breathing`** - User hasn't finished breathing
+- **`root-cause`** - User hasn't selected causes
+- **`alternatives`** - User hasn't chosen alternative
+- **`action`** - User hasn't started activity
+- **`reflection`** - User hasn't finished reflection
+
+**Complete/Preserved States (Do NOT Cancel):**
+- **`action_timer`** - User is doing alternative activity → preserve
+- **`timer`** - User set `t_intention` → this transitions to idle AND launches the app, so user can use it normally → preserve
+- **`idle`** - No intervention → nothing to cancel
+
+**Key Insight:** When user sets `t_intention`, the intervention completes and transitions to `idle`, then the app launches normally. The `t_intention` timer is now active and will suppress future interventions until it expires.
+
+### Quick Task System
+
+**Definitions:**
+- **`t_quickTask`**: Duration of the emergency allowance
+- **`n_quickTask`**: Number of Quick Tasks allowed within the rolling window (e.g., 15 minutes)
+
+**Rules:**
+1. **Quick Task temporarily suppresses all intervention triggers.**
+2. **During `t_quickTask`:**
+   - User may freely switch apps and return to monitored apps
+   - No intervention process shall start
+3. **Quick Task does NOT create or extend `t_intention`.**
+4. **When `t_quickTask` expires:**
+   - `t_intention` is reset to 0
+   - System shows the screen "QuickTaskExpiredScreen"
+   - User will press the button and leave to the home screen of the cellphone
+5. **After Quick Task expiry:**
+   - The next opening of a monitored app triggers:
+     - the intervention process, OR
+     - the Quick Task dialog (if `n_quickTask` allows)
+6. **No timer state from before the Quick Task is resumed or reused.**
+7. **`n_quickTask` is counted globally across all monitored apps within the window.**
+
+---
+
+## Part 4: State Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -383,6 +726,78 @@ This order is **AUTHORITATIVE** and must never change:
 4. **Quick Task availability fourth** - Emergency bypass option (global quota check)
 5. **Intervention last** - Default path when no other conditions apply
 
+### Logic Between `t_intention`, `t_quickTask`, `n_quickTasks`
+
+When a monitored app enters foreground, evaluate in this order:
+
+**Step 1: Check `t_intention` for this opening monitored app**
+
+**If `t_intention != 0`:**
+- No Quick Task dialog
+- No intervention
+- **SUPPRESS everything**
+
+**If `t_intention = 0`:**
+- Proceed to Step 2
+
+**Step 2: Check `n_quickTasks` (global count)**
+
+**If `n_quickTasks != 0`:**
+- Proceed to Step 3
+
+**If `n_quickTasks = 0`:**
+- No Quick Task dialog
+- **START INTERVENTION**
+
+**Step 3: Check `t_quickTask` for this app**
+
+**If `t_quickTask != 0`:**
+- No Quick Task dialog
+- No intervention
+- **SUPPRESS (Quick Task active)**
+
+**If `t_quickTask = 0` or has no value:**
+- **SHOW QUICK TASK DIALOG**
+
+### Decision Tree Summary
+
+```
+Monitored App Enters Foreground
+    ↓
+Check t_intention for this app
+    ↓
+[t_intention != 0?] ─YES→ SUPPRESS (no Quick Task, no intervention)
+    ↓ NO (t_intention = 0)
+Check n_quickTask (global)
+    ↓
+[n_quickTask != 0?]
+    ↓ YES
+    Check t_quickTask for this app
+        ↓
+    [t_quickTask != 0?] ─YES→ SUPPRESS (no Quick Task, no intervention)
+        ↓ NO (t_quickTask = 0)
+    SHOW QUICK TASK DIALOG
+    ↓ NO (n_quickTask = 0)
+START INTERVENTION FLOW
+(delete t_intention for this app)
+```
+
+### Key Principles
+
+1. **Per-App Isolation:** Each monitored app has its own `t_intention` and `t_quickTask` timers. Instagram's timers don't affect TikTok's behavior.
+
+2. **Global Quick Task Quota:** `n_quickTask` is shared across all monitored apps. Using Quick Task on one app consumes the quota for all apps.
+
+3. **Intervention Reset:** Every time intervention starts or restarts, `t_intention` for that app is deleted.
+
+4. **Intention Timer Expiry:** When `t_intention` expires while user is still in the app, intervention starts again.
+
+5. **Quick Task Independence:** Quick Task does NOT create or extend `t_intention`. They are separate mechanisms.
+
+6. **Incomplete Cancellation:** Only cancel intervention when user switches away in incomplete states (breathing, root-cause, alternatives, action, reflection).
+
+7. **Complete Preservation:** Preserve intervention state when user sets `t_intention` (transitions to idle) or starts alternative activity (action_timer state).
+
 ---
 
 ## Decision Authority
@@ -425,13 +840,29 @@ This architecture allows for:
 ## Summary
 
 1. **System Surface** = Neutral OS-level container
-2. **Quick Task Flow** = Emergency bypass (global)
-3. **Intervention Flow** = Conscious process (per-app)
-4. **Flows are separate** = Different purposes, different scopes
-5. **Priority chain is locked** = 5 conditions, strict order
-6. **JavaScript decides** = Native code just launches the surface
+2. **Runtime Context** = MAIN_APP vs SYSTEM_SURFACE (separate React Native instances)
+3. **Bootstrap Lifecycle** = BOOTSTRAPPING → READY (protects cold start)
+4. **Native–JavaScript Boundary** = Native decides WHEN, JavaScript decides WHAT
+5. **Wake Reason Contract** = Every wake includes reason, JS branches on it
+6. **Quick Task Flow** = Emergency bypass (global quota, per-app timer)
+7. **Intervention Flow** = Conscious process (per-app)
+8. **Flows are separate** = Different purposes, different scopes
+9. **Priority chain is locked** = 5 conditions, strict order
+10. **JavaScript decides** = Native code just launches the surface
 
 **This is the canonical model. All implementation must follow this.**
+
+---
+
+## Related Documentation
+
+- `system_surface_bootstrap.md` - Authoritative cold-start bootstrap lifecycle
+- `OS_Trigger_Contract V1.md` - Intervention trigger rules and timer logic
+- `NATIVE_JAVASCRIPT_BOUNDARY.md` - Native-JS boundary contract
+- `System_Session_Definition.md` - System session definitions
+- `Trigger_logic_priority.md` - Decision tree implementation details
+- `OS_TRIGGER_LOGIC_REFACTOR_SUMMARY.md` - Implementation changes
+- `OS_TRIGGER_LOGIC_TEST_SCENARIOS.md` - Comprehensive test scenarios
 
 ---
 

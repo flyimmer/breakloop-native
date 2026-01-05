@@ -19,6 +19,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { DarkTheme, DefaultTheme, NavigationContainerRef } from '@react-navigation/native';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
+import { getInterventionDurationSec } from '@/src/os/osConfig';
 import BreathingScreen from '../screens/conscious_process/BreathingScreen';
 import RootCauseScreen from '../screens/conscious_process/RootCauseScreen';
 import AlternativesScreen from '../screens/conscious_process/AlternativesScreen';
@@ -68,20 +69,33 @@ export default function InterventionFlow({ app }: InterventionFlowProps) {
   const previousTargetAppRef = useRef<any>(targetApp);
 
   /**
-   * Initialize intervention for this app
+   * Initialize intervention state when flow mounts
+   * 
+   * CRITICAL: Do NOT dispatch BEGIN_INTERVENTION unconditionally.
+   * Session creation (START_INTERVENTION) IS the intervention start.
+   * This flow only renders and advances the intervention steps.
+   * 
+   * The OS Trigger Brain already dispatched START_INTERVENTION,
+   * which created the session. We just need to ensure the reducer
+   * is in the correct initial state.
    */
   useEffect(() => {
     if (__DEV__) {
-      console.log('[InterventionFlow] Initializing intervention for app:', app);
+      console.log('[InterventionFlow] Mounted for app:', app);
     }
     
-    // Start intervention in InterventionProvider
-    dispatchIntervention({
-      type: 'BEGIN_INTERVENTION',
-      app,
-      breathingDuration: 3, // TODO: Get from config
-    });
-  }, [app]);
+    // If reducer is not already in breathing state, initialize it
+    if (interventionState.state === 'idle' || interventionState.targetApp !== app) {
+      if (__DEV__) {
+        console.log('[InterventionFlow] Initializing reducer state for app:', app);
+      }
+      dispatchIntervention({
+        type: 'BEGIN_INTERVENTION',
+        app,
+        breathingDuration: getInterventionDurationSec(), // ✅ Use config (5 seconds)
+      });
+    }
+  }, [app]); // Only run on mount or app change
 
   /**
    * Navigate based on intervention state changes

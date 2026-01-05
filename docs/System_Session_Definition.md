@@ -82,8 +82,23 @@ An Intervention Session exists when the system requires the user to immediately 
 - User sets t_intention
 - User starts Alternative Activity
 - User cancels / exits intervention
+- **User leaves the monitored app (app switch, background, kill)**
 
 Once any exit condition is met, the Intervention Session must end.
+
+**Non-Recoverable Semantics**
+
+Intervention Session is one-shot and non-resumable:
+- If user leaves the app during intervention, session ends immediately
+- Reopening the app starts a NEW intervention from breathing stage
+- No intervention state is preserved or restored
+- This ensures conscious decision-making and prevents gaming
+
+**Rationale:**
+Intervention is a conscious interruption requiring immediate attention. If the user leaves the app mid-intervention, they have implicitly rejected the intervention. Allowing recovery would violate the "conscious decision" principle and create confusing UX with stale state.
+
+**Contrast with Alternative Activity:**
+Alternative Activity Session DOES persist across app switches because the user has committed to an activity that may involve multiple apps (e.g., "Go for a walk" while using Spotify).
 
 ---
 
