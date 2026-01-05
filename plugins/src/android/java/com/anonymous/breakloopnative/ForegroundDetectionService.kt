@@ -231,14 +231,17 @@ class ForegroundDetectionService : AccessibilityService() {
     /**
      * Runnable for checking timer expirations periodically
      * 
-     * NOTE: Only checks Quick Task timers (mechanical).
-     * Intention timer expiration is handled by JavaScript (semantic).
+     * Checks:
+     * - Wake suppression expirations (mechanical flag set by JavaScript)
+     * - Quick Task timer expirations (mechanical timer)
+     * 
+     * Both are MECHANICAL checks - native detects expiration, JavaScript decides semantics.
      */
     private val timerCheckRunnable = object : Runnable {
         override fun run() {
-            // Only check Quick Task timers - intention timers are JavaScript's responsibility
-            checkQuickTaskTimerExpirations()
-            // Schedule next check in 1 second for accurate Quick Task expiration
+            checkWakeSuppressionExpirations()  // Check wake suppression flags
+            checkQuickTaskTimerExpirations()   // Check Quick Task timers
+            // Schedule next check in 1 second for accurate expiration detection
             handler.postDelayed(this, 1000)
         }
     }
@@ -483,16 +486,64 @@ class ForegroundDetectionService : AccessibilityService() {
      */
     
     /**
-     * NOTE: checkIntentionTimerExpirations() has been REMOVED.
+     * Check if any wake suppressions have expired
      * 
-     * SEMANTIC OWNERSHIP:
-     * - JavaScript is the ONLY authority for t_intention
-     * - JavaScript checks expiration periodically (every 10 seconds)
-     * - JavaScript requests native wake via launchSystemSurfaceForIntentionExpired()
-     * - Native provides mechanical wake service, NO semantic decisions
+     * MECHANICAL EXPIRATION DETECTION:
+     * - Checks all suppression flags periodically
+     * - If expired AND app is foreground: Launch SystemSurface
+     * - If expired AND app is background: Just clean up
      * 
-     * This prevents race conditions and respects the architectural boundary.
+     * Native provides mechanical detection, JavaScript makes semantic decisions.
+     * 
+     * This runs every 1 second to catch expirations even when no foreground
+     * events occur (user stays in same app continuously).
+     * 
+     * CRITICAL: Only launches SystemSurface if expired app is CURRENT foreground app.
+     * This ensures intervention only triggers when user is actively using the app.
      */
+    private fun checkWakeSuppressionExpirations() {
+        try {
+            val now = System.currentTimeMillis()
+            val currentForegroundApp = lastPackageName
+            val expiredApps = mutableListOf<String>()
+            
+            // Find all expired suppressions
+            for ((packageName, suppressUntil) in suppressWakeUntil) {
+                if (now >= suppressUntil) {
+                    expiredApps.add(packageName)
+                    
+                    val isForeground = packageName == currentForegroundApp
+                    val expiredSec = (now - suppressUntil) / 1000
+                    
+                    if (isForeground) {
+                        Log.i(TAG, "⏰ Wake suppression EXPIRED for FOREGROUND app $packageName (${expiredSec}s ago)")
+                    } else {
+                        Log.i(TAG, "⏰ Wake suppression EXPIRED for BACKGROUND app $packageName (${expiredSec}s ago)")
+                    }
+                }
+            }
+            
+            // Process expired suppressions
+            for (packageName in expiredApps) {
+                // Remove from map
+                suppressWakeUntil.remove(packageName)
+                
+                // CRITICAL: Only launch SystemSurface if this is the CURRENT foreground app
+                // This ensures intervention only triggers when user is actively using the app
+                val isForeground = packageName == currentForegroundApp
+                
+                if (isForeground) {
+                    Log.i(TAG, "🚨 Launching SystemSurface for expired suppression: $packageName")
+                    launchInterventionActivity(packageName)
+                } else {
+                    Log.d(TAG, "  └─ Background app - no action needed")
+                }
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error checking wake suppression expirations", e)
+        }
+    }
     
     /**
      * Launch SystemSurfaceActivity specifically for Quick Task expiration.
