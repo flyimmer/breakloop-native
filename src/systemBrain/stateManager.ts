@@ -18,6 +18,7 @@ const STATE_KEY = 'system_brain_state_v1';
 export interface TimerState {
   quickTaskTimers: Record<string, { expiresAt: number }>;
   intentionTimers: Record<string, { expiresAt: number }>;
+  quickTaskUsageHistory: number[];  // PERSISTED - critical for kill-safety
   lastMeaningfulApp: string | null;
 }
 
@@ -34,9 +35,15 @@ export async function loadTimerState(): Promise<TimerState> {
       console.log('[System Brain] State loaded from storage:', {
         quickTaskTimers: Object.keys(state.quickTaskTimers || {}).length,
         intentionTimers: Object.keys(state.intentionTimers || {}).length,
+        usageHistoryLength: (state.quickTaskUsageHistory || []).length,
         lastMeaningfulApp: state.lastMeaningfulApp,
       });
-      return state;
+      return {
+        quickTaskTimers: state.quickTaskTimers || {},
+        intentionTimers: state.intentionTimers || {},
+        quickTaskUsageHistory: state.quickTaskUsageHistory || [],
+        lastMeaningfulApp: state.lastMeaningfulApp || null,
+      };
     }
   } catch (e) {
     console.warn('[System Brain] Failed to load state:', e);
@@ -47,6 +54,7 @@ export async function loadTimerState(): Promise<TimerState> {
   return {
     quickTaskTimers: {},
     intentionTimers: {},
+    quickTaskUsageHistory: [],  // Empty array
     lastMeaningfulApp: null,
   };
 }
@@ -63,6 +71,7 @@ export async function saveTimerState(state: TimerState): Promise<void> {
     console.log('[System Brain] State saved to storage:', {
       quickTaskTimers: Object.keys(state.quickTaskTimers).length,
       intentionTimers: Object.keys(state.intentionTimers).length,
+      usageHistoryLength: state.quickTaskUsageHistory.length,
       lastMeaningfulApp: state.lastMeaningfulApp,
     });
   } catch (e) {

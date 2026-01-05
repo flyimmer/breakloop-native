@@ -29,15 +29,27 @@ import { handleSystemEvent } from './eventHandler';
 /**
  * Register System Brain headless task.
  * 
+ * IMPORTANT: We use ONLY HeadlessTask for system events to ensure
+ * each event is processed exactly once (no double delivery).
+ * 
+ * HeadlessTask works in both foreground and background, so we don't
+ * need DeviceEventEmitter as a separate path.
+ * 
  * Native emits ONLY mechanical events:
- * - "SystemEvent" with { type: "TIMER_EXPIRED", packageName, timestamp }
- * - "SystemEvent" with { type: "FOREGROUND_CHANGED", packageName, timestamp }
+ * - { type: "TIMER_EXPIRED", packageName, timestamp }
+ * - { type: "TIMER_SET", packageName, timestamp, expiresAt }
+ * - { type: "FOREGROUND_CHANGED", packageName, timestamp }
  * 
  * System Brain classifies semantic meaning and decides action.
  */
 AppRegistry.registerHeadlessTask('SystemEvent', () => async (taskData) => {
-  console.log('[System Brain] Event received:', taskData);
-  await handleSystemEvent(taskData);
+  console.log('[System Brain] Event received (HeadlessTask):', taskData);
+  
+  try {
+    await handleSystemEvent(taskData);
+  } catch (error) {
+    console.error('[System Brain] Error processing event:', error);
+  }
 });
 
-console.log('[System Brain] Headless JS task registered');
+console.log('[System Brain] Headless JS task registered (single event path)');

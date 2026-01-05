@@ -5,9 +5,114 @@
  * This is the ONLY place where semantic decisions are made.
  */
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { loadTimerState, saveTimerState, TimerState } from './stateManager';
 import { evaluateTriggerLogic } from '../os/osTriggerBrain';
 import { launchSystemSurface } from './nativeBridge';
+
+/**
+ * Load Quick Task configuration from user settings.
+ * 
+ * Returns the configured number of Quick Task uses per 15-minute window.
+ * This is the user's n_quickTask setting from Settings screen.
+ */
+async function loadQuickTaskConfig(): Promise<{ maxUses: number; windowMs: number }> {
+  try {
+    // Load from the same storage key used by Settings screen
+    // Adjust key based on actual implementation
+    const configJson = await AsyncStorage.getItem('user_settings_v1');
+    if (configJson) {
+      const config = JSON.parse(configJson);
+      const maxUses = config.n_quickTask ?? 1; // Default to 1 if not set
+      
+      console.log('[System Brain] Quick Task config loaded:', {
+        maxUses,
+        source: 'user settings',
+      });
+      
+      return {
+        maxUses,
+        windowMs: 15 * 60 * 1000, // 15 minutes
+      };
+    }
+  } catch (e) {
+    console.warn('[System Brain] Failed to load Quick Task config:', e);
+  }
+  
+  // Fallback defaults
+  console.log('[System Brain] Using default Quick Task config');
+  return {
+    maxUses: 1,
+    windowMs: 15 * 60 * 1000,
+  };
+}
+
+/**
+ * Calculate remaining Quick Task uses GLOBALLY.
+ * 
+ * Filters usage history to 15-minute window and calculates remaining quota.
+ * Reads maxUses from user's configured settings (n_quickTask).
+ * 
+ * CRITICAL: This function cleans up old entries from persisted state.
+ * 
+ * @param currentTimestamp - Current timestamp
+ * @param state - Semantic state (will be mutated to clean old entries)
+ * @returns Number of Quick Task uses remaining
+ */
+async function getQuickTaskRemaining(currentTimestamp: number, state: TimerState): Promise<number> {
+  // Load user's configured max uses (n_quickTask from Settings)
+  const config = await loadQuickTaskConfig();
+  const { maxUses, windowMs } = config;
+  
+  // Filter out timestamps older than 15 minutes from PERSISTED history
+  const recentUsages = state.quickTaskUsageHistory.filter(ts => currentTimestamp - ts < windowMs);
+  
+  // Update persisted history (cleanup old entries)
+  if (recentUsages.length !== state.quickTaskUsageHistory.length) {
+    const removed = state.quickTaskUsageHistory.length - recentUsages.length;
+    state.quickTaskUsageHistory = recentUsages;
+    console.log('[System Brain] Cleaned up old usage history entries:', {
+      removed,
+      remaining: recentUsages.length,
+    });
+  }
+  
+  // Calculate remaining uses based on user's configured limit
+  const remaining = Math.max(0, maxUses - recentUsages.length);
+  
+  console.log('[System Brain] Quick Task availability check (GLOBAL):', {
+    maxUses: `${maxUses} (from user settings)`,
+    recentUsagesGlobal: recentUsages.length,
+    remaining,
+    windowMinutes: windowMs / (60 * 1000),
+  });
+  
+  return remaining;
+}
+
+/**
+ * Record a Quick Task usage GLOBALLY.
+ * 
+ * This is semantic logic: "user consumed one Quick Task use"
+ * 
+ * CRITICAL: Usage history is PERSISTED in state, not in-memory.
+ * This ensures kill-safety and correct quota enforcement.
+ * 
+ * @param packageName - App package name (for logging only)
+ * @param timestamp - Current timestamp
+ * @param state - Semantic state (will be mutated)
+ */
+function recordQuickTaskUsage(packageName: string, timestamp: number, state: TimerState): void {
+  // Add to persisted usage history
+  state.quickTaskUsageHistory.push(timestamp);
+  
+  console.log('[System Brain] Quick Task usage recorded (GLOBAL, PERSISTED)', {
+    packageName,
+    timestamp,
+    totalUsagesGlobal: state.quickTaskUsageHistory.length,
+    note: 'Usage is GLOBAL across all apps and PERSISTED for kill-safety',
+  });
+}
 
 /**
  * Handle a mechanical system event from native.
@@ -23,9 +128,10 @@ import { launchSystemSurface } from './nativeBridge';
  * 4. Save updated state
  */
 export async function handleSystemEvent(event: {
-  type: 'TIMER_EXPIRED' | 'FOREGROUND_CHANGED';
+  type: 'TIMER_EXPIRED' | 'FOREGROUND_CHANGED' | 'TIMER_SET';
   packageName: string;
   timestamp: number;
+  expiresAt?: number; // For TIMER_SET events
 }): Promise<void> {
   const { type, packageName, timestamp } = event;
   
@@ -40,6 +146,8 @@ export async function handleSystemEvent(event: {
     await handleTimerExpiration(packageName, timestamp, state);
   } else if (type === 'FOREGROUND_CHANGED') {
     await handleForegroundChange(packageName, timestamp, state);
+  } else if (type === 'TIMER_SET') {
+    await handleTimerSet(packageName, event.expiresAt!, timestamp, state);
   }
   
   // Save updated semantic state
@@ -128,6 +236,39 @@ async function handleTimerExpiration(
     console.log('[System Brain] ✓ User switched apps - silent cleanup only (no intervention)');
     console.log('[System Brain] Current foreground app:', currentForegroundApp);
   }
+}
+
+/**
+ * Handle timer set (MECHANICAL event from native).
+ * 
+ * Native reports: "A timer was stored for app X with expiration Y"
+ * System Brain makes semantic decision: "Record this as Quick Task usage"
+ * 
+ * @param packageName - App package name
+ * @param expiresAt - Timer expiration timestamp
+ * @param timestamp - Current timestamp
+ * @param state - Semantic state
+ */
+async function handleTimerSet(
+  packageName: string,
+  expiresAt: number,
+  timestamp: number,
+  state: TimerState
+): Promise<void> {
+  console.log('[System Brain] Timer set for:', packageName);
+  console.log('[System Brain] Timer details:', {
+    expiresAt,
+    expiresAtTime: new Date(expiresAt).toISOString(),
+    durationMs: expiresAt - timestamp,
+  });
+  
+  // SEMANTIC DECISION: Store timer in semantic state
+  state.quickTaskTimers[packageName] = { expiresAt };
+  
+  // SEMANTIC DECISION: Record usage (this consumes quota)
+  recordQuickTaskUsage(packageName, timestamp, state);
+  
+  console.log('[System Brain] Quick Task timer recorded in persisted state');
 }
 
 /**

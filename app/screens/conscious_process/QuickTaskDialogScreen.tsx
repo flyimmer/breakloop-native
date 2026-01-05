@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
-import { getQuickTaskRemaining, setQuickTaskTimer } from '@/src/os/osTriggerBrain';
+import { getQuickTaskRemaining } from '@/src/os/osTriggerBrain';
 import { getQuickTaskDurationMs, getQuickTaskWindowMs } from '@/src/os/osConfig';
+
+const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
 /**
  * QuickTaskDialogScreen
@@ -139,16 +141,20 @@ export default function QuickTaskDialogScreen() {
         return;
       }
       
-      // Set per-app timer (also records GLOBAL usage internally)
+      // Store timer in native (mechanical operation)
+      // Native will emit TIMER_SET event to System Brain (single path)
       const durationMs = getQuickTaskDurationMs();
-      console.log('[QuickTaskDialog] Setting Quick Task timer:', { 
-        app: session.app, 
-        durationMs, 
-        remainingBefore: remaining 
-      });
-      setQuickTaskTimer(session.app, durationMs, now);
-      console.log('[QuickTaskDialog] Quick Task timer set successfully');
-      console.log('[QuickTaskDialog] GLOBAL usage recorded, remaining uses decreased');
+      const expiresAt = now + durationMs;
+      
+      if (AppMonitorModule) {
+        AppMonitorModule.storeQuickTaskTimer(session.app, expiresAt);
+        console.log('[QuickTaskDialog] Quick Task timer stored in native:', {
+          app: session.app,
+          durationMs,
+          expiresAt,
+          note: 'System Brain will receive TIMER_SET event via HeadlessTask',
+        });
+      }
       
       // End session and return to app
       console.log('[QuickTaskDialog] Dispatching END_SESSION (shouldLaunchHome: false)...');

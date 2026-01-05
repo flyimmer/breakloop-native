@@ -579,6 +579,8 @@ class ForegroundDetectionService : AccessibilityService() {
      * MECHANICAL ONLY: Native reports what happened, not what it means.
      * System Brain JS classifies semantic meaning.
      * 
+     * Uses HeadlessJsTaskService to ensure single event delivery path.
+     * 
      * @param eventType - Mechanical event type ("TIMER_EXPIRED", "FOREGROUND_CHANGED")
      * @param packageName - Package name of the app
      * @param timestamp - Timestamp of the event
@@ -593,20 +595,27 @@ class ForegroundDetectionService : AccessibilityService() {
                     putDouble("timestamp", timestamp.toDouble())
                 }
                 
-                // Start headless task with GENERIC event name
+                // Start headless task (single event path)
                 val taskConfig = HeadlessJsTaskConfig(
-                    "SystemEvent",  // Generic mechanical event
+                    "SystemEvent",
                     taskData,
-                    5000,  // 5 second timeout
+                    10000, // 10 second timeout
                     false  // not in foreground
                 )
                 
                 HeadlessJsTaskService.acquireWakeLockNow(reactContext)
-                reactContext.javaScriptContextHolder?.get()?.let {
-                    reactContext.catalystInstance?.getJSModule(com.facebook.react.bridge.JavaScriptModule::class.java)
-                }
                 
-                Log.d(TAG, "📤 Emitted SystemEvent: $eventType for $packageName")
+                // Execute headless task
+                reactContext.runOnJSQueueThread {
+                    try {
+                        reactContext.catalystInstance
+                            ?.getJSModule(com.facebook.react.bridge.JavaScriptModule::class.java)
+                        
+                        Log.d(TAG, "📤 Emitted SystemEvent (HeadlessTask): $eventType for $packageName")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to execute headless task", e)
+                    }
+                }
             } else {
                 Log.w(TAG, "⚠️ Cannot emit SystemEvent - React context not available")
             }

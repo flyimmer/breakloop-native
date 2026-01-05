@@ -585,8 +585,63 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             
             val remainingSec = (expiresAtLong - System.currentTimeMillis()) / 1000
             android.util.Log.i("AppMonitorModule", "🚀 Stored Quick Task timer for $packageName (expires in ${remainingSec}s)")
+            
+            // Emit MECHANICAL event to System Brain JS (single path via HeadlessTask)
+            emitSystemEventToSystemBrain("TIMER_SET", packageName, System.currentTimeMillis(), expiresAtLong)
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "Failed to store Quick Task timer", e)
+        }
+    }
+    
+    /**
+     * Emit system event to System Brain JS via HeadlessTask.
+     * 
+     * This ensures single event delivery path (no duplication).
+     * 
+     * @param eventType - Event type ("TIMER_SET", "TIMER_EXPIRED", etc.)
+     * @param packageName - Package name
+     * @param timestamp - Event timestamp
+     * @param expiresAt - Optional expiration timestamp (for TIMER_SET)
+     */
+    private fun emitSystemEventToSystemBrain(
+        eventType: String, 
+        packageName: String, 
+        timestamp: Long,
+        expiresAt: Long? = null
+    ) {
+        try {
+            val reactContext = reactApplicationContext
+            val taskData = Arguments.createMap().apply {
+                putString("type", eventType)
+                putString("packageName", packageName)
+                putDouble("timestamp", timestamp.toDouble())
+                if (expiresAt != null) {
+                    putDouble("expiresAt", expiresAt.toDouble())
+                }
+            }
+            
+            // Start headless task (single event path)
+            val taskConfig = com.facebook.react.jstasks.HeadlessJsTaskConfig(
+                "SystemEvent",
+                taskData,
+                10000,
+                false
+            )
+            
+            com.facebook.react.HeadlessJsTaskService.acquireWakeLockNow(reactContext)
+            
+            reactContext.runOnJSQueueThread {
+                try {
+                    reactContext.catalystInstance
+                        ?.getJSModule(com.facebook.react.bridge.JavaScriptModule::class.java)
+                    
+                    android.util.Log.d("AppMonitorModule", "📤 Emitted SystemEvent (HeadlessTask): $eventType")
+                } catch (e: Exception) {
+                    android.util.Log.e("AppMonitorModule", "Failed to execute headless task", e)
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to emit SystemEvent", e)
         }
     }
 
