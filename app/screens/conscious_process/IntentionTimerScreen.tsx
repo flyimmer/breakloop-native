@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
-import { setIntentionTimer, onInterventionCompleted } from '@/src/os/osTriggerBrain';
+import { setIntentionTimer } from '@/src/os/osTriggerBrain';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -79,10 +79,7 @@ export default function IntentionTimerScreen() {
         console.log('[IntentionTimer] Stored intention timer in native SharedPreferences');
       }
       
-      // Mark intervention as completed so future expirations can trigger new interventions
-      onInterventionCompleted(interventionState.targetApp);
-      
-      console.log('[IntentionTimer] Timer set and intervention marked complete');
+      console.log('[IntentionTimer] Timer set successfully');
     }
 
     // Dispatch action to reset intervention state to idle

@@ -133,11 +133,6 @@ const lastExitTimestamps: Map<string, number> = new Map();
  */
 const intentionTimers: Map<string, { expiresAt: number }> = new Map();
 
-/**
- * Track interventions in progress per app.
- * Prevents repeated intervention triggers for the same app until intervention completes.
- */
-const interventionsInProgress: Set<string> = new Set();
 
 /**
  * Quick Task usage history GLOBAL across all apps.
@@ -283,34 +278,6 @@ function startInterventionFlow(packageName: string, timestamp: number): void {
     return;
   }
 
-  // CRITICAL CHECK: If there's already an intervention in progress for a DIFFERENT app,
-  // DO NOT trigger a new intervention. This prevents cross-app interference.
-  // Each app should have its own independent intervention flow.
-  if (interventionsInProgress.size > 0) {
-    const oldApps = Array.from(interventionsInProgress);
-    const isDifferentApp = !oldApps.includes(packageName);
-    
-    if (isDifferentApp) {
-      console.log('[OS Trigger Brain] ⚠️  Intervention already in progress for different app — BLOCKING new intervention', {
-        requestedApp: packageName,
-        appsInProgress: oldApps,
-        reason: 'Prevent cross-app interference',
-        note: 'Intervention will trigger when user returns to this app',
-      });
-      console.log('[OS Trigger Brain] ========================================');
-      return;
-    }
-    
-    // Same app - clear and restart (this shouldn't happen normally, but handle it)
-    interventionsInProgress.clear();
-    console.log('[OS Trigger Brain] Clearing previous intervention for same app', {
-      app: packageName,
-    });
-  }
-
-  // Mark intervention as in-progress for this app
-  interventionsInProgress.add(packageName);
-
   // Delete t_intention (per spec: "intervention flow starts → t_intention deleted")
   intentionTimers.delete(packageName);
   console.log('[OS Trigger Brain] t_intention deleted (intervention starting)');
@@ -361,9 +328,6 @@ function showQuickTaskDialog(packageName: string, remaining: number): void {
     return;
   }
 
-  // NOTE: We do NOT set interventionsInProgress flag here
-  // Quick Task is separate from intervention
-  
   // RULE 2: Dispatch SystemSession event
   if (systemSessionDispatcher) {
     systemSessionDispatcher({
@@ -495,70 +459,6 @@ export function setInterventionStateGetter(getter: () => { state: string; target
   console.log('[OS Trigger Brain] Intervention state getter connected');
 }
 
-/**
- * Check if an app has an incomplete intervention that should be cancelled.
- * 
- * Incomplete intervention states (should be cancelled when user switches away):
- * - breathing: User hasn't finished breathing countdown
- * - root-cause: User hasn't selected causes
- * - alternatives: User hasn't chosen alternative
- * - action: User hasn't started activity
- * - reflection: User hasn't finished reflection
- * 
- * Complete/Preserved states (should NOT be cancelled):
- * - action_timer: User is doing alternative activity (preserve)
- * - timer: User set t_intention (transitions to idle, app launches normally)
- * - idle: No intervention active
- * 
- * @param packageName - App package name to check
- * @returns true if app has incomplete intervention that should be cancelled
- */
-function hasIncompleteIntervention(packageName: string): boolean {
-  if (!interventionStateGetter) {
-    return false;
-  }
-  
-  const { state, targetApp } = interventionStateGetter();
-  
-  // Check if this app has an intervention
-  if (targetApp !== packageName) {
-    return false; // Different app or no intervention
-  }
-  
-  // States that are considered "incomplete" (should be cancelled when user switches away)
-  const incompleteStates = ['breathing', 'root-cause', 'alternatives', 'action', 'reflection'];
-  
-  return incompleteStates.includes(state);
-}
-
-/**
- * Cancel incomplete intervention for an app.
- * Called when user switches away from an app with incomplete intervention.
- * 
- * @param packageName - App package name
- */
-function cancelIncompleteIntervention(packageName: string): void {
-  console.log('[OS Trigger Brain] ========================================');
-  console.log('[OS Trigger Brain] Cancelling incomplete intervention for:', packageName);
-  
-  if (!interventionDispatcher) {
-    console.warn('[OS Trigger Brain] No intervention dispatcher set - cannot cancel');
-    console.log('[OS Trigger Brain] ========================================');
-    return;
-  }
-  
-  // Clear the in-progress flag
-  interventionsInProgress.delete(packageName);
-  
-  // Dispatch RESET_INTERVENTION with cancelled flag to indicate cancellation
-  interventionDispatcher({
-    type: 'RESET_INTERVENTION',
-    cancelled: true, // Mark as cancelled (not completed)
-  });
-  
-  console.log('[OS Trigger Brain] Incomplete intervention cancelled, state reset to idle');
-  console.log('[OS Trigger Brain] ========================================');
-}
 
 /**
  * Dispatch SHOW_EXPIRED action to show Quick Task expired screen.
@@ -581,80 +481,7 @@ export function dispatchQuickTaskExpired(packageName: string): void {
   });
 }
 
-/**
- * Mark intervention as completed for an app.
- * Clears the in-progress flag so future expirations can trigger new interventions.
- * 
- * Called by intervention flow when user completes or dismisses the intervention.
- * 
- * @param packageName - App package name
- */
-/**
- * Mark intervention as started for a package.
- * Called when user chooses "Continue" from Quick Task dialog to start intervention.
- */
-export function onInterventionStarted(packageName: string): void {
-  // Clear any existing interventions (only one at a time)
-  if (interventionsInProgress.size > 0) {
-    const oldApps = Array.from(interventionsInProgress);
-    interventionsInProgress.clear();
-    console.log('[OS Trigger Brain] Clearing previous intervention(s) for new intervention', {
-      oldApps,
-      newApp: packageName,
-    });
-  }
 
-  interventionsInProgress.add(packageName);
-  
-  // Reset intention timer for this app (will be set again after intervention completes)
-  intentionTimers.delete(packageName);
-  
-  console.log('[OS Trigger Brain] Intervention started, set in-progress flag', {
-    packageName,
-  });
-}
-
-export function onInterventionCompleted(packageName: string): void {
-  interventionsInProgress.delete(packageName);
-  console.log('[OS Trigger Brain] Intervention completed, cleared in-progress flag', {
-    packageName,
-  });
-}
-
-// ============================================================================
-// DEV-ONLY TESTING HOOKS
-// ============================================================================
-
-/**
- * [DEV ONLY] Manually complete an intervention for testing.
- * Simulates the intervention flow calling onInterventionCompleted().
- * 
- * This function does NOTHING in production builds.
- * 
- * @param packageName - App package name
- */
-export function completeInterventionDEV(packageName: string): void {
-  if (__DEV__) {
-    interventionsInProgress.delete(packageName);
-    console.log('[OS Trigger Brain][DEV] Intervention completed for', {
-      packageName,
-      note: 'Manual completion via DEV hook',
-    });
-  }
-}
-
-/**
- * [DEV ONLY] Get list of apps currently with interventions in progress.
- * Useful for debugging and testing.
- * 
- * @returns Array of package names with active interventions
- */
-export function getInterventionsInProgressDEV(): string[] {
-  if (__DEV__) {
-    return Array.from(interventionsInProgress);
-  }
-  return [];
-}
 
 /**
  * Handles foreground app change events from the OS.
@@ -738,31 +565,7 @@ export function handleForegroundAppChange(
   lastLauncherEventTime = 0;
   
   // ============================================================================
-  // Step 4: Cancel incomplete intervention if user switched away
-  // ============================================================================
-  
-  // Check if user switched away from an app with incomplete intervention
-  // This runs AFTER launcher filtering and transition detection
-  // This ensures we only cancel on real app switches, not transient launcher events
-  // Uses lastMeaningfulApp (not lastForegroundApp) to skip intermediate launchers
-  // 
-  // IMPORTANT: Do NOT cancel when BreakLoop comes to foreground - that's the intervention UI itself!
-  if (lastMeaningfulApp !== null && 
-      lastMeaningfulApp !== packageName && 
-      packageName !== 'com.anonymous.breakloopnative') {
-    // User switched from lastMeaningfulApp to packageName
-    // Check if lastMeaningfulApp had an incomplete intervention
-    if (hasIncompleteIntervention(lastMeaningfulApp)) {
-      console.log('[OS Trigger Brain] User switched away from app with incomplete intervention:', {
-        fromApp: lastMeaningfulApp,
-        toApp: packageName,
-      });
-      cancelIncompleteIntervention(lastMeaningfulApp);
-    }
-  }
-  
-  // ============================================================================
-  // Step 5: Handle meaningful app entry
+  // Step 4: Handle meaningful app entry
   // ============================================================================
   
   // Log the new meaningful app entering foreground (only on actual change)
@@ -1238,7 +1041,6 @@ export function resetTrackingState(): void {
   lastMeaningfulApp = null;
   lastExitTimestamps.clear();
   intentionTimers.clear();
-  interventionsInProgress.clear();
   quickTaskTimers.clear();
   // NOTE: Do NOT clear quickTaskUsageHistory!
   // Usage quota is time-based (15-minute rolling window) and should persist

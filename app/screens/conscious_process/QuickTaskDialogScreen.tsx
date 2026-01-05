@@ -3,7 +3,7 @@ import { BackHandler, Pressable, StyleSheet, Text, View, Platform, NativeModules
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useQuickTask } from '@/src/contexts/QuickTaskProvider';
-import { setQuickTaskTimer, onInterventionStarted } from '@/src/os/osTriggerBrain';
+import { setQuickTaskTimer } from '@/src/os/osTriggerBrain';
 import { getQuickTaskDurationMs, getQuickTaskWindowMs, getInterventionDurationSec } from '@/src/os/osConfig';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
@@ -91,11 +91,6 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] Set isProcessing to true');
     
     try {
-      // Mark intervention as started (set in-progress flag)
-      console.log('[QuickTaskDialog] Calling onInterventionStarted...');
-      onInterventionStarted(targetApp);
-      console.log('[QuickTaskDialog] onInterventionStarted called successfully');
-      
       // Hide Quick Task screen
       console.log('[QuickTaskDialog] Dispatching DECLINE_QUICK_TASK...');
       dispatchQuickTask({ type: 'DECLINE_QUICK_TASK' });
@@ -147,7 +142,6 @@ export default function QuickTaskDialogScreen() {
       setQuickTaskTimer(targetApp, durationMs, now);
       console.log('[QuickTaskDialog] Quick Task timer set successfully');
       
-      // NOTE: We do NOT call onInterventionCompleted() here because no intervention was started
       // Quick Task and Intervention are separate systems
       // Quick Task bypasses intervention entirely
       
