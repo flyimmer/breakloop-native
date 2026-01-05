@@ -19,6 +19,10 @@ import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.bridge.ReactContext
+import com.facebook.react.HeadlessJsTaskService
+import com.facebook.react.jstasks.HeadlessJsTaskConfig
 import com.facebook.react.modules.core.DeviceEventManagerModule
 
 /**
@@ -546,45 +550,71 @@ class ForegroundDetectionService : AccessibilityService() {
     }
     
     /**
-     * Launch SystemSurfaceActivity specifically for Quick Task expiration.
+     * Check if any Quick Task timers have expired (SILENT cleanup).
      * 
-     * CRITICAL: Sets WAKE_REASON = QUICK_TASK_EXPIRED
-     * JavaScript MUST check this and bypass the normal priority chain.
+     * IMPORTANT: Expiration is SILENT - no UI shown, no activity launched.
+     * Expired timers are simply removed from memory.
+     * Normal intervention rules resume on next app trigger.
      * 
-     * @param packageName Package name of the app whose Quick Task expired
+     * Called periodically (every 1 second) to detect and clean up expired timers.
      */
-    private fun launchInterventionActivityForQuickTaskExpired(packageName: String) {
-        Log.i(TAG, "[Quick Task Expired] Launching SystemSurfaceActivity with WAKE_REASON=QUICK_TASK_EXPIRED")
-        
-        try {
-            val intent = Intent(this, SystemSurfaceActivity::class.java).apply {
-                // Pass the package name (for reference only)
-                putExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP, packageName)
-                
-                // CRITICAL: Set wake reason so JS knows to bypass priority chain
-                putExtra(SystemSurfaceActivity.EXTRA_WAKE_REASON, SystemSurfaceActivity.WAKE_REASON_QUICK_TASK_EXPIRED)
-                
-                // Required flags for launching from Service context
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-                addFlags(Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT)
-            }
-            
-            startActivity(intent)
-            Log.d(TAG, "  └─ SystemSurfaceActivity launched for Quick Task expiration")
-            
+    /**
+     * Get React context for emitting events to System Brain JS.
+     * 
+     * @return ReactContext if available, null otherwise
+     */
+    private fun getReactContext(): ReactContext? {
+        return try {
+            val reactNativeHost = (application as? com.facebook.react.ReactApplication)?.reactNativeHost
+            reactNativeHost?.reactInstanceManager?.currentReactContext
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Failed to launch SystemSurfaceActivity for Quick Task expiration", e)
+            Log.w(TAG, "Failed to get React context", e)
+            null
         }
     }
     
     /**
-     * Check if any Quick Task timers have expired.
-     * Called periodically (every 1 second) to detect expiration.
-     * When expired, launches SystemSurfaceActivity to show QuickTaskExpiredScreen.
+     * Emit mechanical system event to System Brain JS.
+     * 
+     * MECHANICAL ONLY: Native reports what happened, not what it means.
+     * System Brain JS classifies semantic meaning.
+     * 
+     * @param eventType - Mechanical event type ("TIMER_EXPIRED", "FOREGROUND_CHANGED")
+     * @param packageName - Package name of the app
+     * @param timestamp - Timestamp of the event
      */
+    private fun emitSystemEvent(eventType: String, packageName: String, timestamp: Long) {
+        try {
+            val reactContext = getReactContext()
+            if (reactContext != null) {
+                val taskData = Arguments.createMap().apply {
+                    putString("type", eventType)
+                    putString("packageName", packageName)
+                    putDouble("timestamp", timestamp.toDouble())
+                }
+                
+                // Start headless task with GENERIC event name
+                val taskConfig = HeadlessJsTaskConfig(
+                    "SystemEvent",  // Generic mechanical event
+                    taskData,
+                    5000,  // 5 second timeout
+                    false  // not in foreground
+                )
+                
+                HeadlessJsTaskService.acquireWakeLockNow(reactContext)
+                reactContext.javaScriptContextHolder?.get()?.let {
+                    reactContext.catalystInstance?.getJSModule(com.facebook.react.bridge.JavaScriptModule::class.java)
+                }
+                
+                Log.d(TAG, "📤 Emitted SystemEvent: $eventType for $packageName")
+            } else {
+                Log.w(TAG, "⚠️ Cannot emit SystemEvent - React context not available")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to emit SystemEvent", e)
+        }
+    }
+    
     private fun checkQuickTaskTimerExpirations() {
         try {
             val now = System.currentTimeMillis()
@@ -595,19 +625,19 @@ class ForegroundDetectionService : AccessibilityService() {
                 if (now >= expiresAt) {
                     expiredApps.add(packageName)
                     val expiredSec = (now - expiresAt) / 1000
-                    Log.i(TAG, "⏰ Quick Task timer EXPIRED for $packageName (expired ${expiredSec}s ago)")
+                    Log.i(TAG, "⏰ Timer expired for app: $packageName (expired ${expiredSec}s ago)")
                 }
             }
             
-            // Process expired timers
+            // Process expired timers - emit MECHANICAL events (no semantic labels)
             for (packageName in expiredApps) {
                 // Remove from map
                 quickTaskTimers.remove(packageName)
                 
-                // Launch SystemSurfaceActivity with Quick Task expired flag
-                // The React Native layer will detect this and navigate to QuickTaskExpiredScreen
-                Log.i(TAG, "🚨 Launching SystemSurfaceActivity for expired Quick Task: $packageName")
-                launchInterventionActivityForQuickTaskExpired(packageName)
+                // Emit MECHANICAL event to System Brain JS
+                emitSystemEvent("TIMER_EXPIRED", packageName, now)
+                
+                Log.d(TAG, "  └─ Removed expired timer for $packageName, emitted TIMER_EXPIRED event")
             }
             
         } catch (e: Exception) {

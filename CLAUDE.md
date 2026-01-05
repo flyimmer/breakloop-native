@@ -85,15 +85,25 @@ This project includes comprehensive design documentation that serves as the sour
 
 ### System Surface Architecture (Critical)
 
-**IMPORTANT:** BreakLoop uses a dual-context architecture with separate React Native instances for Main App and System Surface.
+**IMPORTANT:** BreakLoop uses a three-runtime architecture with System Brain JS as the semantic decision-maker.
 
 **Core Concepts:**
 
-**1. Runtime Context** - Determines which UI world React Native is running in:
-- `MAIN_APP` - Normal app launched by user (MainActivity)
+**1. Runtime Context** - Determines which JavaScript runtime is active:
+- `SYSTEM_BRAIN` - Event-driven headless runtime for semantic logic (NEW)
 - `SYSTEM_SURFACE` - OS-level overlay for interventions (SystemSurfaceActivity, conceptually named, currently `InterventionActivity`)
+- `MAIN_APP` - Normal app launched by user (MainActivity)
 
-**2. System Session** - Defines whether SystemSurfaceActivity has a legitimate reason to exist:
+**2. System Brain JS** - Event-driven, headless JavaScript runtime:
+- Runs as React Native Headless JS task
+- Receives MECHANICAL events from native ("TIMER_EXPIRED", "FOREGROUND_CHANGED")
+- Classifies semantic meaning (Quick Task vs Intention)
+- Evaluates OS Trigger Brain logic
+- Decides when to launch SystemSurface
+- Loads/saves state on each event invocation
+- Does NOT run continuously or maintain in-memory state
+
+**3. System Session** - Defines whether SystemSurfaceActivity has a legitimate reason to exist:
 ```typescript
 type SystemSession =
   | { kind: 'INTERVENTION'; app: AppId }
@@ -104,7 +114,7 @@ type SystemSession =
 
 **Invariant:** `SystemSurfaceActivity.isAlive === (SystemSession !== null)`
 
-**3. Bootstrap State** - Protects cold start lifecycle:
+**4. Bootstrap State** - Protects cold start lifecycle:
 ```typescript
 type SessionBootstrapState = 'BOOTSTRAPPING' | 'READY';
 ```
@@ -140,6 +150,9 @@ function SystemSurfaceRoot() {
 ```
 
 **Key Principles:**
+- ✅ THREE JavaScript runtimes (System Brain, SystemSurface, MainApp)
+- ✅ System Brain is event-driven, headless, semantic logic
+- ✅ Native emits MECHANICAL events, System Brain classifies SEMANTIC meaning
 - ✅ ONE shared OS-level activity (System Surface)
 - ✅ THREE distinct states (BOOTSTRAPPING, ACTIVE SESSION, NO SESSION)
 - ✅ Multiple separate, mutually exclusive flows
@@ -147,35 +160,43 @@ function SystemSurfaceRoot() {
 - ✅ Main app UI NEVER appears in System Surface
 - ✅ Each context has separate React Native instances and separate state
 
-See `docs/SYSTEM_SURFACE_ARCHITECTURE.md` for complete architecture documentation.
+See `docs/SYSTEM_SURFACE_ARCHITECTURE.md` and `docs/SYSTEM_BRAIN_ARCHITECTURE.md` for complete architecture documentation.
 
 ### Native–JavaScript Boundary (Critical)
 
 **IMPORTANT:** All code changes must respect the architectural boundary defined in `docs/NATIVE_JAVASCRIPT_BOUNDARY.md`.
 
 **Core Principle:**
-- **Native code (Kotlin) decides WHEN to wake the app** (mechanics)
-- **JavaScript decides WHAT the user sees and WHY** (semantics)
+- **Native code (Kotlin) emits MECHANICAL events** (what happened)
+- **System Brain JS classifies SEMANTIC meaning** (what it means)
+- **SystemSurface JS renders UI** (what user sees)
 
 **Key Rules:**
-- Native code: Detects events, persists timestamps, wakes System Surface with wake reason
-- JavaScript: Owns OS Trigger Brain, evaluates priority chain, decides all flows and navigation
-- Never duplicate logic across the boundary
-- Always pass and consume wake reasons (`MONITORED_APP_FOREGROUND`, `INTENTION_EXPIRED`, `QUICK_TASK_EXPIRED`, `DEV_DEBUG`)
+- Native code: Detects events, persists timestamps, emits mechanical events ("TIMER_EXPIRED", "FOREGROUND_CHANGED")
+- System Brain JS: Receives mechanical events, classifies semantic meaning (Quick Task vs Intention), evaluates OS Trigger Brain, decides when to launch SystemSurface
+- SystemSurface JS: Renders intervention screens, handles user input, reports decisions to System Brain
+- Never duplicate logic across boundaries
+- System Brain loads/saves state on each event invocation (event-driven, not continuous)
 
 **Wake Reason Contract:**
-Every native launch of SystemSurfaceActivity MUST include a wake reason. JavaScript MUST read and branch on it.
+- Native emits mechanical events to System Brain JS
+- System Brain classifies and decides whether to launch SystemSurface
+- System Brain passes wake reason to SystemSurface (`MONITORED_APP_FOREGROUND`, `INTENTION_EXPIRED_FOREGROUND`, `QUICK_TASK_EXPIRED_FOREGROUND`, `DEV_DEBUG`)
+- SystemSurface reads wake reason and renders appropriate UI
 
 **Red Flags (Immediate Failure):**
 - ❌ Kotlin code checks `n_quickTask`
 - ❌ Kotlin code chooses Quick Task vs Intervention
 - ❌ Kotlin code decides navigation or screens
-- ❌ JavaScript skips priority chain based on native assumptions
-- ❌ `QUICK_TASK_EXPIRED` triggers Quick Task dialog again
+- ❌ Kotlin code labels events with semantic meaning
+- ❌ System Brain JS skips priority chain based on native assumptions
+- ❌ SystemSurface JS uses setTimeout for semantic timers
+- ❌ `QUICK_TASK_EXPIRED_FOREGROUND` triggers Quick Task dialog again
 - ❌ Main app UI appears in System Surface
 - ❌ Native logic duplicates JS logic
+- ❌ Semantic logic in SystemSurface or MainApp contexts
 
-See `docs/NATIVE_JAVASCRIPT_BOUNDARY.md` for complete boundary rules and verification checklist.
+See `docs/NATIVE_JAVASCRIPT_BOUNDARY.md` and `docs/SYSTEM_BRAIN_ARCHITECTURE.md` for complete boundary rules and verification checklist.
 
 ### OS Trigger Priority Chain (LOCKED)
 
@@ -220,25 +241,37 @@ See `docs/OS_Trigger_Contract V1.md` for complete trigger rules and timer logic.
 
 ### Architecture Overview
 
-**Dual-Context Architecture:**
+**Three-Runtime Architecture:**
 
-BreakLoop uses TWO separate React Native instances that run in different Android activities:
+BreakLoop uses THREE separate JavaScript runtimes:
 
-1. **Main App Context** (`MainActivity`)
-   - Normal app launched by user from home screen
-   - Persistent, stays alive in background
-   - Bottom tabs: Insights, Community, Inbox, Settings
-   - Uses React Navigation for in-app navigation
-   - NEVER creates SystemSession or runs OS Trigger Brain
-   - Requests native wake via AppMonitorModule when needed
+1. **System Brain JS** (Event-Driven Headless Runtime)
+   - Runs as React Native Headless JS task
+   - Event-driven, not continuously running
+   - Receives MECHANICAL events from native ("TIMER_EXPIRED", "FOREGROUND_CHANGED")
+   - Classifies semantic meaning (Quick Task vs Intention)
+   - Evaluates OS Trigger Brain logic
+   - Decides when to launch SystemSurface
+   - Loads/saves state on each event invocation
+   - NEVER renders UI
+   - Single source of semantic truth
 
 2. **System Surface Context** (`InterventionActivity`, conceptually `SystemSurfaceActivity`)
    - OS-level overlay that appears on top of other apps
    - Ephemeral, created on-demand and destroyed after use
    - Renders ONE of three flows: Quick Task, Intervention, or Alternative Activity
-   - Runs OS Trigger Brain to decide which flow to show
+   - Receives wake reason from System Brain JS
    - Manages bootstrap lifecycle (BOOTSTRAPPING → READY)
    - Finishes itself when session is null and bootstrap is READY
+   - UI-only, NO semantic logic or setTimeout timers
+
+3. **Main App Context** (`MainActivity`)
+   - Normal app launched by user from home screen
+   - Persistent, stays alive in background
+   - Bottom tabs: Insights, Community, Inbox, Settings
+   - Uses React Navigation for in-app navigation
+   - NEVER creates SystemSession or runs OS Trigger Brain
+   - User features only (settings, community)
 
 **Navigation Architecture:**
 
@@ -248,11 +281,15 @@ BreakLoop uses TWO separate React Native instances that run in different Android
 - **Intervention Screens**: Modal-style screens for the intervention flow (breathing → root-cause → alternatives → action → reflection)
 
 **Key Principles:**
-- ✅ TWO separate React Native instances (Main App and System Surface)
+- ✅ THREE separate JavaScript runtimes (System Brain, SystemSurface, MainApp)
+- ✅ System Brain is event-driven, headless, semantic logic
+- ✅ System Brain receives mechanical events, classifies semantic meaning
+- ✅ System Brain evaluates OS Trigger Brain logic
+- ✅ SystemSurface is ephemeral, UI-only, no semantic timers
+- ✅ MainApp is persistent, user features only
 - ✅ Separate state, separate contexts, separate lifecycles
-- ✅ System Surface is ephemeral, Main App is persistent
-- ✅ Only System Surface runs OS Trigger Brain
-- ✅ Only System Surface creates SystemSession
+- ✅ Only System Brain runs OS Trigger Brain
+- ✅ Only System Brain creates SystemSession
 - ✅ Main App NEVER appears in System Surface
 
 **Note:** The core intervention business logic is framework-agnostic and shared between web and mobile implementations. UI components and navigation are React Native-specific.
@@ -273,6 +310,11 @@ app/                            # React Native app directory (Expo Router struct
 ├── roots/                      # Root components for different contexts
 │   ├── MainAppRoot.tsx        # Main app root (MAIN_APP context)
 │   └── SystemSurfaceRoot.tsx  # System Surface root (SYSTEM_SURFACE context)
+├── systemBrain/                # System Brain JS (event-driven headless runtime)
+│   ├── index.ts               # Entry point, registers headless task
+│   ├── eventHandler.ts        # Event classification and semantic decisions
+│   ├── stateManager.ts        # State persistence (load/save on each event)
+│   └── nativeBridge.ts        # Native communication
 ├── navigation/                 # Navigation configuration
 │   ├── RootNavigator.tsx      # Root stack navigator (main tabs + intervention screens)
 │   ├── MainNavigation.tsx     # Bottom tab navigator (Insights, Community, Inbox, Settings)
@@ -402,18 +444,43 @@ hooks/                          # React Native hooks
   - Quick Task settings (duration options, limits, window duration)
   - Default settings for monitored apps, user account, intervention behavior
 
+### System Brain JS
+
+**Location:** `src/systemBrain/` (NEW)
+
+System Brain JS is an **event-driven, headless JavaScript runtime** that runs as a React Native Headless JS task. It is the single source of semantic truth for intervention decisions.
+
+**Lifecycle:**
+- Invoked by native when mechanical events occur
+- Loads state from persistent storage on each invocation
+- Recomputes state deterministically
+- Saves state to persistent storage after processing
+- Does NOT run continuously or maintain in-memory state
+
+**Responsibilities:**
+- Receive MECHANICAL events from native ("TIMER_EXPIRED", "FOREGROUND_CHANGED")
+- Classify semantic meaning (Quick Task vs Intention)
+- Evaluate OS Trigger Brain logic
+- Decide when to launch SystemSurface
+- Maintain semantic state (t_quickTask, t_intention)
+- Persist/restore state on each invocation
+
+**Event Classification:**
+- Native emits: "TIMER_EXPIRED for app X at timestamp Y"
+- System Brain classifies: "Is this Quick Task or Intention?"
+- System Brain decides: "Should I launch SystemSurface or stay silent?"
+
+**Integration:**
+- Registered as React Native Headless JS task in `index.js`
+- Receives events from ForegroundDetectionService
+- Launches SystemSurface via AppMonitorModule when needed
+- Passes wake reason to SystemSurface
+
 ### OS Trigger Brain
 
 **Location:** `src/os/osTriggerBrain.ts`
 
-The OS Trigger Brain is the single source of semantic truth for intervention decisions. It evaluates the priority chain and decides which flow to show.
-
-**Responsibilities:**
-- Evaluate the LOCKED priority chain on every monitored app foreground entry
-- Check all timers and states (t_quickTask, t_intention, n_quickTask, alternative activity)
-- Decide which flow to show (Quick Task, Intervention, or suppress)
-- Dispatch appropriate SystemSession event
-- NEVER run in MainApp context (only in SystemSurface context)
+The OS Trigger Brain logic is now invoked by System Brain JS (not directly by SystemSurface).
 
 **Priority Chain (LOCKED ORDER):**
 1. Quick Task ACTIVE (per-app: t_quickTask) → Suppress
@@ -423,11 +490,10 @@ The OS Trigger Brain is the single source of semantic truth for intervention dec
 5. Else → Start Intervention Flow
 
 **Integration:**
-- Called by SystemSurfaceRoot during bootstrap phase
-- Reads wake reason from native module
-- Reads triggeringApp from native module
-- Dispatches SystemSession event based on decision
-- Sets bootstrap state to READY after decision
+- Called by System Brain JS event handler
+- Evaluates priority chain based on current state
+- Returns decision to System Brain
+- System Brain launches SystemSurface if needed
 
 ### Native Module Integration
 
@@ -445,9 +511,15 @@ TypeScript interface for native Kotlin modules. Provides bridge between JavaScri
 - `finishSystemSurfaceActivity()` - Close System Surface and return to previous app
 
 **Native Implementation:**
-- `plugins/src/android/java/.../AppMonitorModule.kt` - Native module implementation
-- `plugins/src/android/java/.../ForegroundDetectionService.kt` - Accessibility service for app detection
+- `plugins/src/android/java/.../AppMonitorModule.kt` - Native module implementation (includes `launchSystemSurface()`)
+- `plugins/src/android/java/.../ForegroundDetectionService.kt` - Accessibility service for app detection (emits mechanical events)
 - `plugins/src/android/java/.../InterventionActivity.kt` - System Surface Activity
+
+**System Brain Implementation:**
+- `src/systemBrain/index.ts` - Registers headless task
+- `src/systemBrain/eventHandler.ts` - Event classification and decisions
+- `src/systemBrain/stateManager.ts` - State persistence
+- `src/systemBrain/nativeBridge.ts` - Native communication
 
 ### Intervention State Machine
 
@@ -473,11 +545,12 @@ idle → breathing → root-cause → alternatives → action → action_timer �
                                    timer (unlock)
 ```
 
-**Relationship to OS Trigger Brain:**
-- OS Trigger Brain decides WHEN to start intervention
+**Relationship to System Brain and OS Trigger Brain:**
+- System Brain JS receives mechanical events and classifies semantic meaning
+- OS Trigger Brain (invoked by System Brain) decides WHEN to start intervention
 - Intervention State Machine manages WHAT happens during intervention
-- OS Trigger Brain runs in SystemSurface context
-- Intervention State Machine runs in both contexts (but only active in SystemSurface)
+- System Brain JS runs as headless task (event-driven)
+- Intervention State Machine runs in SystemSurface context (UI-only)
 
 **Usage in React Native (InterventionProvider.tsx):**
 ```typescript
@@ -1294,30 +1367,50 @@ The codebase underwent incremental refactoring to improve maintainability while 
 
 ## Context Ownership Rules
 
-**JavaScript (SystemSurface Context) MUST:**
-- Run OS Trigger Brain on every wake
-- Decide whether to create SystemSession
+**System Brain JS (Event-Driven Headless) MUST:**
+- Receive mechanical events from native ("TIMER_EXPIRED", "FOREGROUND_CHANGED")
+- Classify semantic meaning (Quick Task vs Intention)
+- Run OS Trigger Brain logic
+- Decide whether to launch SystemSurface
+- Load state from persistent storage on each event
+- Save state to persistent storage after processing
+- Request SystemSurface launch via native module
+
+**System Brain JS MUST NOT:**
+- Render UI
+- Use React components
+- Assume continuous execution
+- Maintain state in memory between events
+
+**SystemSurface JS MUST:**
+- Receive wake reason from System Brain
+- Decide whether to create SystemSession based on wake reason
 - Dispatch START_* events (START_INTERVENTION, START_QUICK_TASK, START_ALTERNATIVE_ACTIVITY)
 - Control bootstrap lifecycle (BOOTSTRAPPING → READY)
 - Render appropriate flow based on session.kind
+- Report user decisions to System Brain
 
-**JavaScript (SystemSurface Context) MUST NOT:**
+**SystemSurface JS MUST NOT:**
+- Use setTimeout for semantic timers
+- Run OS Trigger Brain (this happens in System Brain context)
+- Make semantic decisions about intervention logic
 - Assume session exists on mount
 - Finish activity during BOOTSTRAPPING
-- Skip OS Trigger Brain evaluation
 
-**JavaScript (MainApp Context) MUST:**
+**MainApp JS MUST:**
+- Handle user features (settings, community)
 - Request native wake only (via native module)
-- Never create or modify SystemSession
 
-**JavaScript (MainApp Context) MUST NOT:**
+**MainApp JS MUST NOT:**
 - Create or modify SystemSession
 - Dispatch START_* events
-- Run OS Trigger Brain (this happens in SystemSurface context)
+- Run OS Trigger Brain
+- Handle system-level intervention logic
 
 **Native (Kotlin) MUST:**
-- Wake SystemSurfaceActivity with wake reason
-- Pass wakeReason + triggeringApp to JavaScript
+- Emit MECHANICAL events to System Brain ("TIMER_EXPIRED", "FOREGROUND_CHANGED")
+- Launch SystemSurfaceActivity when requested by System Brain
+- Pass wakeReason + triggeringApp to SystemSurface
 - Detect events and persist timestamps
 
 **Native (Kotlin) MUST NOT:**
@@ -1325,33 +1418,46 @@ The codebase underwent incremental refactoring to improve maintainability while 
 - Interpret session
 - Manage bootstrap state
 - Make semantic decisions (Quick Task vs Intervention)
+- Label events with semantic meaning
 
 **Bootstrap Failure Modes:**
 | Symptom | Root Cause |
 |---------|-----------|
 | App returns to Home immediately | finish() called during BOOTSTRAPPING |
 | App hangs with no UI | Session created in MainApp context |
-| No intervention shows | OS Trigger Brain not run in SystemSurface |
+| No intervention shows | System Brain not receiving events or not launching SystemSurface |
 | Infinite loading | bootstrap never set to READY |
+| Timers don't fire | setTimeout in SystemSurface instead of System Brain |
+| Semantic logic in wrong place | OS Trigger Brain in SystemSurface instead of System Brain |
 
 ## React Native Implementation
 
 **Current Status:** React Native app is actively developed using the shared core logic.
 
-**Dual-Context Architecture:**
-- **Main App Context** (`MainActivity` → `MainAppRoot.tsx`)
-  - Normal app launched by user
-  - Bottom tabs: Insights, Community, Inbox, Settings
-  - Community uses stack navigator for sub-screens
-  - Requests native wake via AppMonitorModule
-  - NEVER creates SystemSession or runs OS Trigger Brain
+**Three-Runtime Architecture:**
+- **System Brain JS** (Headless Task → `src/systemBrain/`)
+  - Event-driven headless runtime
+  - Receives mechanical events from native
+  - Classifies semantic meaning
+  - Runs OS Trigger Brain logic
+  - Decides when to launch SystemSurface
+  - Loads/saves state on each event
+  - NEVER renders UI
 
 - **System Surface Context** (`InterventionActivity` → `SystemSurfaceRoot.tsx`)
   - OS-level overlay for interventions
   - Separate React Native instance
-  - Runs OS Trigger Brain on wake
+  - Receives wake reason from System Brain
   - Creates SystemSession and renders appropriate flow
   - Manages bootstrap lifecycle (BOOTSTRAPPING → READY)
+  - UI-only, NO semantic timers
+
+- **Main App Context** (`MainActivity` → `MainAppRoot.tsx`)
+  - Normal app launched by user
+  - Bottom tabs: Insights, Community, Inbox, Settings
+  - Community uses stack navigator for sub-screens
+  - User features only
+  - NEVER creates SystemSession or runs OS Trigger Brain
 
 **Framework-Agnostic Core:**
 - `src/core/intervention/` contains pure JavaScript with no React dependencies
@@ -1377,6 +1483,7 @@ The codebase underwent incremental refactoring to improve maintainability while 
 - ✅ Intervention state machine (`src/core/intervention/`)
 - ✅ Core business logic (framework-agnostic)
 - ✅ OS Trigger Brain logic (`src/os/osTriggerBrain.ts`)
+- ✅ System Brain event-driven architecture (`src/systemBrain/`)
 
 **React Native Specific:**
 - ✅ UI components use React Native primitives (View, Text, ScrollView, etc.)
@@ -1384,7 +1491,8 @@ The codebase underwent incremental refactoring to improve maintainability while 
 - ✅ Navigation uses React Navigation instead of context switching
 - ✅ Icons use `lucide-react-native` instead of `lucide-react`
 - ✅ Screens are separate components instead of conditional rendering
-- ✅ Dual-context architecture with separate React Native instances
+- ✅ Three-runtime architecture (System Brain, SystemSurface, MainApp)
+- ✅ System Brain runs as React Native Headless JS task
 
 ## Git Workflow
 
@@ -1410,7 +1518,8 @@ Recent commit themes:
 
 **For Developers (Architecture):**
 - `CLAUDE.md` (this file) - Architecture, implementation details, development workflow
-- `docs/SYSTEM_SURFACE_ARCHITECTURE.md` - **AUTHORITATIVE** System Surface architecture (dual-context, bootstrap lifecycle, flows)
+- `docs/SYSTEM_SURFACE_ARCHITECTURE.md` - **AUTHORITATIVE** System Surface architecture (three-runtime, bootstrap lifecycle, flows)
+- `docs/SYSTEM_BRAIN_ARCHITECTURE.md` - **NEW** System Brain JS event-driven runtime architecture
 - `docs/NATIVE_JAVASCRIPT_BOUNDARY.md` - **Critical** architectural boundary rules (must follow for all native/JS integration)
 - `docs/OS_Trigger_Contract V1.md` - Intervention trigger rules, timer logic, monitored apps
 - `docs/System_Session_Definition.md` - System session definitions and lifecycle
@@ -1436,7 +1545,8 @@ Recent commit themes:
 
 **Key Documentation Hierarchy:**
 1. **SYSTEM_SURFACE_ARCHITECTURE.md** - Start here for overall architecture
-2. **NATIVE_JAVASCRIPT_BOUNDARY.md** - Understand the boundary contract
-3. **OS_Trigger_Contract V1.md** - Learn trigger rules and timer logic
-4. **KOTLIN_FILE_SYNC.md** - Follow Kotlin editing workflow
-5. **CLAUDE.md** - Reference for implementation details
+2. **SYSTEM_BRAIN_ARCHITECTURE.md** - Understand System Brain JS event-driven runtime (NEW)
+3. **NATIVE_JAVASCRIPT_BOUNDARY.md** - Understand the boundary contract
+4. **OS_Trigger_Contract V1.md** - Learn trigger rules and timer logic
+5. **KOTLIN_FILE_SYNC.md** - Follow Kotlin editing workflow
+6. **CLAUDE.md** - Reference for implementation details

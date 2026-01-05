@@ -148,10 +148,13 @@ const quickTaskUsageHistory: number[] = [];
 
 /**
  * Active Quick Task timers per app.
- * Maps packageName -> { expiresAt: timestamp }
+ * Maps packageName -> { expiresAt: timestamp, timeoutId: NodeJS.Timeout | null }
  * When a Quick Task timer is active, the app can be used without intervention.
+ * 
+ * The timeoutId is used to schedule expiration callbacks that trigger
+ * intervention if the user is still on the app when the timer expires.
  */
-const quickTaskTimers: Map<string, { expiresAt: number }> = new Map();
+const quickTaskTimers: Map<string, { expiresAt: number; timeoutId: NodeJS.Timeout | null }> = new Map();
 
 /**
  * Dispatch function for triggering interventions in React layer.
@@ -182,18 +185,18 @@ let interventionStateGetter: (() => { state: string; targetApp: string | null })
  * IMPORTANT: This is GLOBAL across all apps, not per-app.
  * Using Quick Task on Instagram consumes the same quota as TikTok.
  * 
- * @param packageName - App package name (for logging only)
  * @param currentTimestamp - Current timestamp
  * @returns Number of Quick Task uses remaining GLOBALLY
  */
-export function getQuickTaskRemaining(packageName: string, currentTimestamp: number): number {
+export function getQuickTaskRemaining(currentTimestamp: number): number {
   const windowMs = getQuickTaskWindowMs();
   const maxUses = getQuickTaskUsesPerWindow();
   
   // Filter out timestamps older than 15 minutes from GLOBAL history
+  // This is the JS-owned reset logic - no UI or native inference
   const recentUsages = quickTaskUsageHistory.filter(ts => currentTimestamp - ts < windowMs);
   
-  // Update global history with filtered timestamps
+  // Update global history with filtered timestamps (automatic window reset)
   if (recentUsages.length !== quickTaskUsageHistory.length) {
     quickTaskUsageHistory.length = 0;
     quickTaskUsageHistory.push(...recentUsages);
@@ -203,12 +206,11 @@ export function getQuickTaskRemaining(packageName: string, currentTimestamp: num
   if (maxUses === -1) {
     if (__DEV__) {
       console.log('[OS Trigger Brain] Quick Task availability check (GLOBAL):', {
-        packageName,
         maxUses: 'Unlimited',
         recentUsagesGlobal: recentUsages.length,
         remaining: 'Unlimited',
         windowMinutes: windowMs / (60 * 1000),
-        note: 'Usage is GLOBAL across all apps - UNLIMITED MODE (testing)',
+        note: 'Usage is GLOBAL across all apps - UNLIMITED MODE',
       });
     }
     // Return a very large number to represent unlimited
@@ -220,7 +222,6 @@ export function getQuickTaskRemaining(packageName: string, currentTimestamp: num
   
   if (__DEV__) {
     console.log('[OS Trigger Brain] Quick Task availability check (GLOBAL):', {
-      packageName,
       maxUses,
       recentUsagesGlobal: recentUsages.length,
       remaining,
@@ -368,6 +369,9 @@ function evaluateTriggerLogic(packageName: string, timestamp: number): void {
   console.log('[OS Trigger Brain] Evaluating nested trigger logic for:', packageName);
   console.log('[OS Trigger Brain] Timestamp:', new Date(timestamp).toISOString());
 
+  // Clean up any expired Quick Task timers (silent operation)
+  cleanupExpiredQuickTaskTimers(timestamp);
+
   // ============================================================================
   // Step 1: Check t_intention (per-app)
   // ============================================================================
@@ -385,7 +389,7 @@ function evaluateTriggerLogic(packageName: string, timestamp: number): void {
   // ============================================================================
   // Step 2: t_intention = 0 → Check n_quickTask (global)
   // ============================================================================
-  const quickTaskRemaining = getQuickTaskRemaining(packageName, timestamp);
+  const quickTaskRemaining = getQuickTaskRemaining(timestamp);
   
   if (quickTaskRemaining > 0) {
     console.log('[OS Trigger Brain] ✓ n_quickTask != 0 (uses remaining: ' + quickTaskRemaining + ')');
@@ -616,6 +620,11 @@ export function handleForegroundAppChange(
     // ============================================================================
     const quickTaskTimer = quickTaskTimers.get(packageName);
     if (quickTaskTimer && timestamp >= quickTaskTimer.expiresAt) {
+      // Clear timeout if it hasn't fired yet
+      if (quickTaskTimer.timeoutId) {
+        clearTimeout(quickTaskTimer.timeoutId);
+      }
+      
       quickTaskTimers.delete(packageName);
       
       // Also clear from native layer
@@ -812,20 +821,32 @@ export function setQuickTaskTimer(packageName: string, durationMs: number, curre
     return; // Don't set a new timer or record usage
   }
   
+  // Clear existing timeout if any (cleanup from old implementation)
+  if (existingTimer?.timeoutId) {
+    clearTimeout(existingTimer.timeoutId);
+  }
+  
   const expiresAt = currentTimestamp + durationMs;
   const durationMin = Math.round(durationMs / (60 * 1000));
-  quickTaskTimers.set(packageName, { expiresAt });
+  
+  // ❌ REMOVED: setTimeout is in ephemeral UI context
+  // Native will emit MECHANICAL event when timer expires
+  // System Brain will classify and decide semantic response
+  
+  // Store timer WITHOUT callback - System Brain will handle expiration
+  quickTaskTimers.set(packageName, { expiresAt, timeoutId: null });
   
   // Record usage
   recordQuickTaskUsage(packageName, currentTimestamp);
   
-  // Store timer in native layer so ForegroundDetectionService can check it
-  // This prevents InterventionActivity from being launched during Quick Task
+  // Store timer in native layer - native will emit mechanical event on expiration
+  // Native emits: { type: "TIMER_EXPIRED", packageName, timestamp }
+  // System Brain classifies: Quick Task vs Intention vs Unknown
   try {
     const { NativeModules, Platform } = require('react-native');
     if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
       NativeModules.AppMonitorModule.storeQuickTaskTimer(packageName, expiresAt);
-      console.log('[OS Trigger Brain] Quick Task timer stored in native layer');
+      console.log('[OS Trigger Brain] Quick Task timer stored in native (mechanical expiration will be emitted)');
     }
   } catch (e) {
     console.warn('[OS Trigger Brain] Failed to store Quick Task timer in native layer:', e);
@@ -837,6 +858,7 @@ export function setQuickTaskTimer(packageName: string, durationMs: number, curre
     durationMin: `${durationMin}min`,
     expiresAt,
     expiresAtTime: new Date(expiresAt).toISOString(),
+    note: 'Native will emit mechanical event, System Brain will classify',
   });
 }
 
@@ -864,26 +886,44 @@ function hasActiveQuickTaskTimer(packageName: string, timestamp: number): boolea
   if (!timer) {
     return false;
   }
-  return timestamp < timer.expiresAt;
+
+  // Check if timer is still valid
+  const isValid = timestamp < timer.expiresAt;
+  
+  if (!isValid && timer.timeoutId) {
+    // Timer expired but timeout hasn't fired yet - clear it
+    clearTimeout(timer.timeoutId);
+    quickTaskTimers.delete(packageName);
+  }
+  
+  return isValid;
 }
 
 /**
- * Check if any Quick Task timer has expired.
- * Should be called periodically to detect expiration and show QuickTaskExpired screen.
+ * Clean up expired Quick Task timers (SILENT operation).
+ * 
+ * IMPORTANT: Expiration is SILENT - no UI shown, no session created.
+ * Expired timers are simply removed from memory.
+ * Normal intervention rules resume on next app trigger.
+ * 
+ * This function should be called during normal trigger evaluation
+ * (e.g., when checking if an app should trigger intervention).
  * 
  * @param currentTimestamp - Current timestamp
- * @returns Package name of app whose Quick Task expired, or null if none expired
  */
-export function checkQuickTaskExpiration(currentTimestamp: number): string | null {
+export function cleanupExpiredQuickTaskTimers(currentTimestamp: number): void {
   for (const [packageName, timer] of quickTaskTimers.entries()) {
     if (currentTimestamp >= timer.expiresAt) {
-      // Quick Task expired!
-      console.log('[OS Trigger Brain] Quick Task timer expired!', {
+      console.log('[OS Trigger Brain] Quick Task timer expired (cleanup during trigger evaluation):', {
         packageName,
         expiresAt: timer.expiresAt,
-        expiresAtTime: new Date(timer.expiresAt).toISOString(),
-        currentTime: new Date(currentTimestamp).toISOString(),
+        note: 'Expired while in background - cleanup only',
       });
+      
+      // Clear timeout if it hasn't fired yet
+      if (timer.timeoutId) {
+        clearTimeout(timer.timeoutId);
+      }
       
       // Remove the expired timer from JS memory
       quickTaskTimers.delete(packageName);
@@ -893,16 +933,21 @@ export function checkQuickTaskExpiration(currentTimestamp: number): string | nul
         const { NativeModules, Platform } = require('react-native');
         if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
           NativeModules.AppMonitorModule.clearQuickTaskTimer(packageName);
-          console.log('[OS Trigger Brain] Quick Task timer cleared from native layer');
         }
       } catch (e) {
         console.warn('[OS Trigger Brain] Failed to clear Quick Task timer from native layer:', e);
       }
-      
-      return packageName;
     }
   }
-  
+}
+
+/**
+ * @deprecated Use cleanupExpiredQuickTaskTimers() instead.
+ * Quick Task expiration is now silent - no UI shown.
+ */
+export function checkQuickTaskExpiration(currentTimestamp: number): string | null {
+  console.warn('[OS Trigger Brain] checkQuickTaskExpiration() is deprecated - use cleanupExpiredQuickTaskTimers()');
+  cleanupExpiredQuickTaskTimers(currentTimestamp);
   return null;
 }
 

@@ -1,12 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { BackHandler, Pressable, StyleSheet, Text, View, Platform, NativeModules } from 'react-native';
+import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useIntervention } from '@/src/contexts/InterventionProvider';
-import { useQuickTask } from '@/src/contexts/QuickTaskProvider';
-import { setQuickTaskTimer } from '@/src/os/osTriggerBrain';
-import { getQuickTaskDurationMs, getQuickTaskWindowMs, getInterventionDurationSec } from '@/src/os/osConfig';
-
-const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
+import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
+import { getQuickTaskRemaining, setQuickTaskTimer } from '@/src/os/osTriggerBrain';
+import { getQuickTaskDurationMs, getQuickTaskWindowMs } from '@/src/os/osConfig';
 
 /**
  * QuickTaskDialogScreen
@@ -39,12 +36,16 @@ export default function QuickTaskDialogScreen() {
   console.log('[QuickTaskDialog] COMPONENT FUNCTION CALLED!');
   console.log('[QuickTaskDialog] ========================================');
 
-  const { dispatchIntervention } = useIntervention();
-  const { quickTaskState, dispatchQuickTask } = useQuickTask();
+  const { session, dispatchSystemEvent } = useSystemSession();
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const { targetApp, remaining: quickTaskRemaining } = quickTaskState;
+  // Calculate remaining uses dynamically (GLOBAL across all apps)
+  const now = Date.now();
+  const quickTaskRemaining = getQuickTaskRemaining(now);
   const quickTaskWindowMinutes = Math.round(getQuickTaskWindowMs() / (60 * 1000));
+  
+  // Get app from session
+  const targetApp = session?.kind === 'QUICK_TASK' ? session.app : null;
 
   // Disable Android hardware back button during Quick Task decision
   useEffect(() => {
@@ -61,20 +62,18 @@ export default function QuickTaskDialogScreen() {
   useEffect(() => {
     console.log('[QuickTaskDialog] ========================================');
     console.log('[QuickTaskDialog] Component mounted!');
+    console.log('[QuickTaskDialog] session:', JSON.stringify(session));
     console.log('[QuickTaskDialog] targetApp:', targetApp);
-    console.log('[QuickTaskDialog] quickTaskRemaining:', quickTaskRemaining);
+    console.log('[QuickTaskDialog] quickTaskRemaining (GLOBAL):', quickTaskRemaining);
     console.log('[QuickTaskDialog] quickTaskWindowMinutes:', quickTaskWindowMinutes);
-    console.log('[QuickTaskDialog] Full quickTaskState:', JSON.stringify(quickTaskState));
-    console.log('[QuickTaskDialog] quickTaskState.visible:', quickTaskState.visible);
-    console.log('[QuickTaskDialog] quickTaskState.targetApp:', quickTaskState.targetApp);
-    console.log('[QuickTaskDialog] quickTaskState.remaining:', quickTaskState.remaining);
     console.log('[QuickTaskDialog] ========================================');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   
-  // Debug: Log whenever quickTaskState changes
+  // Debug: Log whenever session changes
   useEffect(() => {
-    console.log('[QuickTaskDialog] quickTaskState changed:', JSON.stringify(quickTaskState));
-  }, [quickTaskState]);
+    console.log('[QuickTaskDialog] session changed:', JSON.stringify(session));
+  }, [session]);
 
   // Navigation handlers
   const handleConsciousProcess = () => {
@@ -82,8 +81,8 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] handleConsciousProcess called!');
     console.log('[QuickTaskDialog] isProcessing:', isProcessing);
     
-    if (isProcessing) {
-      console.log('[QuickTaskDialog] Already processing, ignoring tap');
+    if (isProcessing || !session || session.kind !== 'QUICK_TASK') {
+      console.log('[QuickTaskDialog] Already processing or invalid session, ignoring tap');
       return;
     }
     
@@ -91,19 +90,16 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] Set isProcessing to true');
     
     try {
-      // Hide Quick Task screen
-      console.log('[QuickTaskDialog] Dispatching DECLINE_QUICK_TASK...');
-      dispatchQuickTask({ type: 'DECLINE_QUICK_TASK' });
-      console.log('[QuickTaskDialog] DECLINE_QUICK_TASK dispatched successfully');
-      
-      // Start intervention
-      console.log('[QuickTaskDialog] Dispatching BEGIN_INTERVENTION...');
-      dispatchIntervention({
-        type: 'BEGIN_INTERVENTION',
-        app: targetApp,
-        breathingDuration: getInterventionDurationSec(),
+      // Atomic session replacement - no transient null state
+      // This prevents race condition where END_SESSION → session === null → activity finishes
+      console.log('[QuickTaskDialog] Dispatching REPLACE_SESSION (QUICK_TASK → INTERVENTION)...');
+      dispatchSystemEvent({ 
+        type: 'REPLACE_SESSION', 
+        newKind: 'INTERVENTION', 
+        app: session.app 
       });
-      console.log('[QuickTaskDialog] BEGIN_INTERVENTION dispatched successfully');
+      console.log('[QuickTaskDialog] REPLACE_SESSION dispatched successfully');
+      console.log('[QuickTaskDialog] SystemSurface will transition to InterventionFlow');
       
       // Reset isProcessing after a delay
       setTimeout(() => {
@@ -121,13 +117,12 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] ========================================');
     console.log('[QuickTaskDialog] handleQuickTask called!');
     console.log('[QuickTaskDialog] isProcessing:', isProcessing);
+    console.log('[QuickTaskDialog] session:', JSON.stringify(session));
     console.log('[QuickTaskDialog] targetApp:', targetApp);
-    console.log('[QuickTaskDialog] quickTaskRemaining:', quickTaskRemaining);
-    console.log('[QuickTaskDialog] Full quickTaskState:', JSON.stringify(quickTaskState));
+    console.log('[QuickTaskDialog] quickTaskRemaining (GLOBAL):', quickTaskRemaining);
     
-    if (isProcessing || !targetApp) {
-      console.log('[QuickTaskDialog] Already processing or no targetApp, ignoring tap');
-      console.log('[QuickTaskDialog] Condition check: isProcessing =', isProcessing, ', !targetApp =', !targetApp);
+    if (isProcessing || !session || session.kind !== 'QUICK_TASK') {
+      console.log('[QuickTaskDialog] Already processing or invalid session, ignoring tap');
       return;
     }
     
@@ -135,21 +130,30 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] Set isProcessing to true');
     
     try {
-      // Set Quick Task timer
-      const durationMs = getQuickTaskDurationMs();
       const now = Date.now();
-      console.log('[QuickTaskDialog] Setting Quick Task timer:', { targetApp, durationMs, now });
-      setQuickTaskTimer(targetApp, durationMs, now);
+      const remaining = getQuickTaskRemaining(now); // GLOBAL - no packageName
+      
+      if (remaining <= 0) {
+        console.error('[QuickTaskDialog] No Quick Task uses remaining (GLOBAL quota exhausted)');
+        setIsProcessing(false);
+        return;
+      }
+      
+      // Set per-app timer (also records GLOBAL usage internally)
+      const durationMs = getQuickTaskDurationMs();
+      console.log('[QuickTaskDialog] Setting Quick Task timer:', { 
+        app: session.app, 
+        durationMs, 
+        remainingBefore: remaining 
+      });
+      setQuickTaskTimer(session.app, durationMs, now);
       console.log('[QuickTaskDialog] Quick Task timer set successfully');
+      console.log('[QuickTaskDialog] GLOBAL usage recorded, remaining uses decreased');
       
-      // Quick Task and Intervention are separate systems
-      // Quick Task bypasses intervention entirely
-      
-      // Hide Quick Task screen (App.tsx will finish InterventionActivity when this changes)
-      console.log('[QuickTaskDialog] Dispatching HIDE_QUICK_TASK...');
-      dispatchQuickTask({ type: 'HIDE_QUICK_TASK' });
-      console.log('[QuickTaskDialog] HIDE_QUICK_TASK dispatched successfully');
-      console.log('[QuickTaskDialog] App.tsx will finish InterventionActivity when Quick Task state changes to hidden');
+      // End session and return to app
+      console.log('[QuickTaskDialog] Dispatching END_SESSION (shouldLaunchHome: false)...');
+      dispatchSystemEvent({ type: 'END_SESSION', shouldLaunchHome: false });
+      console.log('[QuickTaskDialog] END_SESSION dispatched - SystemSurface will finish, user returns to app');
       
       // Reset isProcessing after a delay
       setTimeout(() => {
@@ -177,9 +181,11 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] Set isProcessing to true');
     
     try {
-      console.log('[QuickTaskDialog] Dispatching RESET_INTERVENTION...');
-      dispatchIntervention({ type: 'RESET_INTERVENTION' });
-      console.log('[QuickTaskDialog] RESET_INTERVENTION dispatched successfully');
+      // End session and launch home
+      console.log('[QuickTaskDialog] Dispatching END_SESSION (shouldLaunchHome: true)...');
+      dispatchSystemEvent({ type: 'END_SESSION', shouldLaunchHome: true });
+      console.log('[QuickTaskDialog] END_SESSION dispatched - SystemSurface will finish and launch home');
+      console.log('[QuickTaskDialog] Quick Task uses unchanged (GLOBAL quota preserved)');
       
       // Reset isProcessing after a delay in case dismissal doesn't happen
       setTimeout(() => {
@@ -187,7 +193,7 @@ export default function QuickTaskDialogScreen() {
         console.log('[QuickTaskDialog] Reset isProcessing to false (timeout)');
       }, 2000);
     } catch (error) {
-      console.error('[QuickTaskDialog] Error dispatching RESET_INTERVENTION:', error);
+      console.error('[QuickTaskDialog] Error in handleClose:', error);
       setIsProcessing(false);
     }
     console.log('[QuickTaskDialog] ========================================');
@@ -222,7 +228,7 @@ export default function QuickTaskDialogScreen() {
         {/* Usage limit info */}
         <View style={styles.infoSection}>
           <Text style={styles.infoText}>
-            {quickTaskRemaining >= 1000 ? 'Unlimited' : quickTaskRemaining} left in this {quickTaskWindowMinutes}-minute window.
+            {quickTaskRemaining >= Number.MAX_SAFE_INTEGER ? 'Unlimited' : quickTaskRemaining} left in this {quickTaskWindowMinutes}-minute window.
           </Text>
         </View>
 

@@ -193,17 +193,49 @@ function SystemSurfaceRoot() {
 - **Native = mechanics**
 - **JavaScript = semantics**
 
+### Three JavaScript Runtimes
+
+BreakLoop uses THREE distinct JavaScript runtimes:
+
+1. **System Brain JS** - Event-driven, headless, semantic logic (NEW)
+2. **SystemSurface JS** - Ephemeral, UI-only, intervention screens
+3. **MainApp JS** - User-initiated, settings and community
+
+### System Brain JS (Event-Driven Semantic Runtime)
+
+**Definition:**
+System Brain JS is an **event-driven, headless JavaScript runtime** that runs as a React Native Headless JS task.
+
+**Lifecycle (CRITICAL):**
+- Invoked by native when mechanical events occur
+- Recomputes state deterministically on each invocation
+- Does NOT rely on continuous execution
+- Does NOT maintain in-memory state between invocations
+- Must load/save state from persistent storage on each event
+
+**Responsibilities:**
+- Receive MECHANICAL events from native (timer expired, foreground changed)
+- Classify semantic meaning (Quick Task vs Intention vs other)
+- Evaluate OS Trigger Brain logic
+- Decide when to launch SystemSurface
+- Maintain semantic state (t_quickTask, t_intention)
+- Persist/restore state on each invocation
+
+**Forbidden:**
+- UI rendering
+- React components
+- Depending on SystemSurface or MainApp contexts
+- Assuming continuous execution
+- Maintaining state in memory between events
+
 ### Native (Kotlin) — Allowed Responsibilities
 
 **Native Code MAY:**
 - Detect foreground app changes (AccessibilityService)
 - Detect timer expiration using persisted timestamps
 - Persist timestamps (SharedPreferences)
-- Answer binary questions:
-  - "Is Quick Task active?"
-  - "Did a timer expire?"
-- Wake the System Surface Activity
-- Pass a WAKE REASON to JavaScript
+- Emit MECHANICAL events: "timer expired for app X", "foreground is app X"
+- Launch SystemSurfaceActivity when requested by System Brain
 
 **Native Code MUST NOT:**
 - Decide Quick Task vs Intervention
@@ -213,12 +245,14 @@ function SystemSurfaceRoot() {
 - Decide which screen to show
 - Interpret user intent
 - Navigate inside flows
+- Label events with semantic meaning (no "QuickTaskExpired", "IntentionExpired")
 
 ### JavaScript — Required Responsibilities
 
-**JavaScript MUST:**
+**System Brain JS MUST:**
 - Own the OS Trigger Brain
 - Evaluate the full priority chain
+- Classify timer type (Quick Task vs Intention)
 - Decide:
   - Quick Task Flow
   - Intervention Flow
@@ -226,28 +260,46 @@ function SystemSurfaceRoot() {
 - Manage `t_intention` semantics
 - Manage Quick Task semantics
 - Reset timers on Quick Task expiry
-- Decide navigation within System Surface
+- Load/save state on each event invocation
 
-**JavaScript MUST NOT:**
-- Assume native semantics
-- Duplicate native timestamp logic
-- Bypass the priority chain
-- React to wake-ups without checking WAKE REASON
+**SystemSurface JS MUST:**
+- Render intervention screens
+- Handle user interactions
+- Report decisions to System Brain
+
+**SystemSurface JS MUST NOT:**
+- Use setTimeout for semantic timers
+- Decide whether to intervene
+- Maintain persistent state
+
+**MainApp JS MUST:**
+- Handle user-initiated features (settings, community)
+
+**MainApp JS MUST NOT:**
+- Handle system-level intervention logic
+- Handle timer expiration
+- Monitor foreground apps
 
 ### Wake Reason Contract (Critical)
 
 Every native launch of `SystemSurfaceActivity` MUST include a wake reason.
 
 **Valid Wake Reasons:**
-- `MONITORED_APP_FOREGROUND`
-- `INTENTION_EXPIRED`
-- `QUICK_TASK_EXPIRED`
-- `DEV_DEBUG`
+- `MONITORED_APP_FOREGROUND` - User opened monitored app
+- `INTENTION_EXPIRED_FOREGROUND` - Intention timer expired while user still on app
+- `QUICK_TASK_EXPIRED_FOREGROUND` - Quick Task timer expired while user still on app
+- `DEV_DEBUG` - Debug/testing wake
 
-**JavaScript Requirements:**
+**System Brain JS Requirements:**
+- Receive mechanical events from native: "TIMER_EXPIRED", "FOREGROUND_CHANGED"
+- Classify semantic meaning (Quick Task vs Intention)
+- Decide whether to launch SystemSurface
+- Pass wake reason to SystemSurface when launching
+
+**SystemSurface JS Requirements:**
 - Read wake reason on startup
 - Branch behavior based on wake reason
-- **NEVER** treat `QUICK_TASK_EXPIRED` as a normal trigger
+- **NEVER** use setTimeout for semantic timers
 
 ### Red Flags (Immediate Failure)
 
@@ -256,10 +308,13 @@ If **ANY** of the following are true, **STOP and FIX**:
 - ❌ Kotlin code checks `n_quickTask`
 - ❌ Kotlin code chooses Quick Task vs Intervention
 - ❌ Kotlin code decides navigation or screens
-- ❌ JavaScript skips priority chain based on native assumptions
-- ❌ `QUICK_TASK_EXPIRED` triggers Quick Task dialog again
+- ❌ Kotlin code labels events with semantic meaning
+- ❌ System Brain JS skips priority chain based on native assumptions
+- ❌ SystemSurface JS uses setTimeout for semantic timers
+- ❌ `QUICK_TASK_EXPIRED_FOREGROUND` triggers Quick Task dialog again
 - ❌ Main app UI appears in System Surface
 - ❌ Native logic duplicates JS logic
+- ❌ Semantic logic in SystemSurface or MainApp contexts
 
 ### Verification Checklist
 
@@ -267,22 +322,38 @@ When reviewing code changes, verify:
 
 **1. Native Code Review:**
 - [ ] Only detects events and persists timestamps
+- [ ] Emits ONLY mechanical events ("TIMER_EXPIRED", "FOREGROUND_CHANGED")
 - [ ] Never makes semantic decisions
-- [ ] Always passes wake reason to JavaScript
+- [ ] Never labels events with semantic meaning
 - [ ] Never checks Quick Task availability or counts
 
-**2. JavaScript Code Review:**
-- [ ] Always reads wake reason on startup
+**2. System Brain JS Review:**
+- [ ] Runs as React Native Headless JS task
+- [ ] Loads state from persistent storage on each event
+- [ ] Classifies timer type (Quick Task vs Intention)
 - [ ] Runs full priority chain evaluation
 - [ ] Makes all flow decisions (Quick Task vs Intervention)
-- [ ] Handles `QUICK_TASK_EXPIRED` as special case
-- [ ] Never duplicates native timestamp logic
+- [ ] Saves state to persistent storage after each event
+- [ ] Never assumes continuous execution
+- [ ] Never maintains state in memory between events
 
-**3. Integration Points:**
-- [ ] Wake reason is always provided
-- [ ] Wake reason is always consumed
+**3. SystemSurface JS Review:**
+- [ ] UI-only (no semantic logic)
+- [ ] Never uses setTimeout for semantic timers
+- [ ] Reads wake reason on startup
+- [ ] Reports user decisions to System Brain
+
+**4. MainApp JS Review:**
+- [ ] User features only (settings, community)
+- [ ] Never handles system-level intervention logic
+- [ ] Never handles timer expiration
+
+**5. Integration Points:**
+- [ ] System Brain registered as headless task
+- [ ] Native can launch SystemSurface via System Brain request
+- [ ] Wake reason always provided to SystemSurface
 - [ ] No semantic logic in native layer
-- [ ] No mechanical logic in JavaScript layer
+- [ ] No mechanical logic in UI layers
 
 ---
 
@@ -822,18 +893,34 @@ START INTERVENTION FLOW
 
 **Native Code (ForegroundDetectionService):**
 - ✅ Detects foreground app changes
-- ✅ Launches System Surface Activity
+- ✅ Detects timer expirations
+- ✅ Emits mechanical events to System Brain JS
 - ❌ Does NOT decide which flow to show
 - ❌ Does NOT interpret timers or states
+- ❌ Does NOT label events with semantic meaning
 
-**JavaScript (OS Trigger Brain):**
+**System Brain JS (Event-Driven Headless Runtime):**
+- ✅ Receives mechanical events from native
+- ✅ Classifies semantic meaning (Quick Task vs Intention)
 - ✅ Evaluates priority chain
 - ✅ Checks all timers and states
 - ✅ Decides which flow to show
-- ✅ Dispatches appropriate action
+- ✅ Requests SystemSurface launch from native
 - ✅ Single source of semantic truth
+- ✅ Loads/saves state on each event invocation
 
-**Principle:** Native code is infrastructure. JavaScript is semantics.
+**SystemSurface JS (Ephemeral UI):**
+- ✅ Renders intervention screens
+- ✅ Handles user interactions
+- ✅ Reports decisions to System Brain
+- ❌ Does NOT use setTimeout for semantic timers
+- ❌ Does NOT decide whether to intervene
+
+**MainApp JS (User-Initiated):**
+- ✅ Settings and community features
+- ❌ Does NOT handle system-level intervention logic
+
+**Principle:** Native code is infrastructure. System Brain JS is semantics. SystemSurface/MainApp JS are UI.
 
 ---
 
@@ -858,15 +945,16 @@ This architecture allows for:
 ## Summary
 
 1. **System Surface** = Neutral OS-level container
-2. **Runtime Context** = MAIN_APP vs SYSTEM_SURFACE (separate React Native instances)
-3. **Bootstrap Lifecycle** = BOOTSTRAPPING → READY (protects cold start)
-4. **Native–JavaScript Boundary** = Native decides WHEN, JavaScript decides WHAT
-5. **Wake Reason Contract** = Every wake includes reason, JS branches on it
-6. **Quick Task Flow** = Emergency bypass (global quota, per-app timer)
-7. **Intervention Flow** = Conscious process (per-app)
-8. **Flows are separate** = Different purposes, different scopes
-9. **Priority chain is locked** = 5 conditions, strict order
-10. **JavaScript decides** = Native code just launches the surface
+2. **Runtime Context** = THREE JS runtimes (System Brain, SystemSurface, MainApp)
+3. **System Brain JS** = Event-driven, headless, semantic logic (NEW)
+4. **Bootstrap Lifecycle** = BOOTSTRAPPING → READY (protects cold start)
+5. **Native–JavaScript Boundary** = Native emits MECHANICAL events, System Brain classifies SEMANTIC meaning
+6. **Wake Reason Contract** = System Brain receives mechanical events, classifies, then launches SystemSurface with wake reason
+7. **Quick Task Flow** = Emergency bypass (global quota, per-app timer)
+8. **Intervention Flow** = Conscious process (per-app)
+9. **Flows are separate** = Different purposes, different scopes
+10. **Priority chain is locked** = 5 conditions, strict order, evaluated by System Brain
+11. **System Brain decides** = Native emits events, System Brain classifies and decides, SystemSurface renders
 
 **This is the canonical model. All implementation must follow this.**
 
@@ -874,6 +962,7 @@ This architecture allows for:
 
 ## Related Documentation
 
+- `SYSTEM_BRAIN_ARCHITECTURE.md` - System Brain JS event-driven runtime (NEW)
 - `system_surface_bootstrap.md` - Authoritative cold-start bootstrap lifecycle
 - `OS_Trigger_Contract V1.md` - Intervention trigger rules and timer logic
 - `NATIVE_JAVASCRIPT_BOUNDARY.md` - Native-JS boundary contract

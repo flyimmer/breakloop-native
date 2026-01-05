@@ -19,11 +19,9 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { DarkTheme, DefaultTheme, NavigationContainerRef } from '@react-navigation/native';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
 import QuickTaskDialogScreen from '../screens/conscious_process/QuickTaskDialogScreen';
-import QuickTaskExpiredScreen from '../screens/conscious_process/QuickTaskExpiredScreen';
 
 export type QuickTaskStackParamList = {
   QuickTaskDialog: undefined;
-  QuickTaskExpired: undefined;
 };
 
 const Stack = createNativeStackNavigator<QuickTaskStackParamList>();
@@ -51,56 +49,18 @@ interface QuickTaskFlowProps {
 export default function QuickTaskFlow({ app }: QuickTaskFlowProps) {
   const navigationRef = useRef<NavigationContainerRef<QuickTaskStackParamList>>(null);
   const colorScheme = useColorScheme();
-  const { dispatchSystemEvent } = useSystemSession();
 
   /**
    * Initialize Quick Task flow
    * 
-   * Note: The actual Quick Task state (visible, expired) is managed by
-   * the old QuickTaskProvider for now. This will be migrated to SystemSession
-   * in a future step.
+   * Quick Task expiration is SILENT - no UI shown, no acknowledgment required.
+   * Expired timers are cleaned up automatically by JS logic.
    */
   useEffect(() => {
     if (__DEV__) {
       console.log('[QuickTaskFlow] Initializing Quick Task flow for app:', app);
     }
   }, [app]);
-
-  /**
-   * Handle user choosing "Quick Task"
-   * Dispatches END_SESSION to close SystemSurface and launch the app
-   */
-  const handleQuickTaskChosen = () => {
-    if (__DEV__) {
-      console.log('[QuickTaskFlow] User chose Quick Task - dispatching END_SESSION');
-    }
-    // RULE 3: Dispatch event instead of navigating
-    dispatchSystemEvent({ type: 'END_SESSION' });
-  };
-
-  /**
-   * Handle user choosing "Conscious Process"
-   * Dispatches START_INTERVENTION to transition to intervention flow
-   */
-  const handleConsciousProcessChosen = () => {
-    if (__DEV__) {
-      console.log('[QuickTaskFlow] User chose Conscious Process - dispatching START_INTERVENTION');
-    }
-    // RULE 3: Dispatch event instead of navigating
-    dispatchSystemEvent({ type: 'START_INTERVENTION', app });
-  };
-
-  /**
-   * Handle Quick Task expired acknowledgment
-   * Dispatches END_SESSION to close SystemSurface and launch home
-   */
-  const handleExpiredAcknowledged = () => {
-    if (__DEV__) {
-      console.log('[QuickTaskFlow] User acknowledged expiry - dispatching END_SESSION');
-    }
-    // RULE 3: Dispatch event instead of navigating
-    dispatchSystemEvent({ type: 'END_SESSION' });
-  };
 
   return (
     <NavigationContainer
@@ -117,7 +77,6 @@ export default function QuickTaskFlow({ app }: QuickTaskFlowProps) {
         }}
       >
         <Stack.Screen name="QuickTaskDialog" component={QuickTaskDialogScreen} />
-        <Stack.Screen name="QuickTaskExpired" component={QuickTaskExpiredScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

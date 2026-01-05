@@ -6,3 +6,6 @@ import App from './app/App';
 // the environment is set up appropriately
 registerRootComponent(App);
 
+// Register System Brain JS (event-driven headless runtime)
+// This must be imported AFTER registerRootComponent to ensure proper initialization
+import './src/systemBrain';

@@ -45,6 +45,7 @@ export type SystemSessionEvent =
   | { type: 'START_INTERVENTION'; app: string }
   | { type: 'START_QUICK_TASK'; app: string }
   | { type: 'START_ALTERNATIVE_ACTIVITY'; app: string; shouldLaunchHome?: boolean }
+  | { type: 'REPLACE_SESSION'; newKind: 'INTERVENTION' | 'ALTERNATIVE_ACTIVITY'; app: string }
   | { type: 'END_SESSION'; shouldLaunchHome?: boolean };
 
 /**
@@ -159,6 +160,21 @@ function systemSessionReducer(
         bootstrapState: 'READY',
         // Alternative activity: don't launch home (default to false)
         shouldLaunchHome: event.shouldLaunchHome ?? false,
+      };
+
+    case 'REPLACE_SESSION':
+      if (__DEV__) {
+        console.log('[SystemSession] Replacing session atomically:', {
+          from: state.session?.kind,
+          to: event.newKind,
+          app: event.app,
+        });
+      }
+      return {
+        ...state,
+        session: { kind: event.newKind, app: event.app },
+        bootstrapState: 'READY',
+        shouldLaunchHome: false, // Keep SystemSurface alive
       };
 
     case 'END_SESSION':

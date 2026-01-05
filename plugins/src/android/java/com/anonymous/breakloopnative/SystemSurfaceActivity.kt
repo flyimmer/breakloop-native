@@ -1,6 +1,9 @@
 package com.anonymous.breakloopnative
 
+import android.content.Context
 import android.content.Intent
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -76,6 +79,9 @@ import expo.modules.ReactActivityDelegateWrapper
  */
 class SystemSurfaceActivity : ReactActivity() {
 
+    private var audioManager: AudioManager? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
+
     companion object {
         private const val TAG = "SystemSurfaceActivity"
         
@@ -94,17 +100,17 @@ class SystemSurfaceActivity : ReactActivity() {
          * 
          * Possible values:
          * - "MONITORED_APP_FOREGROUND" - Normal monitored app detected, run priority chain
-         * - "QUICK_TASK_EXPIRED" - Quick Task timer expired, show expired screen ONLY
          * - "INTENTION_EXPIRED" - Intention timer expired while app in foreground
+         * - "DEV_DEBUG" - Developer-triggered wake for testing
+         * 
+         * REMOVED: "QUICK_TASK_EXPIRED" - Quick Task expiration is now silent (no UI)
          * 
          * IMPORTANT: JavaScript MUST check this FIRST before running any logic.
-         * If wake reason is QUICK_TASK_EXPIRED, the priority chain MUST NOT run.
          */
         const val EXTRA_WAKE_REASON = "wakeReason"
         
         // Wake reason values
         const val WAKE_REASON_MONITORED_APP = "MONITORED_APP_FOREGROUND"
-        const val WAKE_REASON_QUICK_TASK_EXPIRED = "QUICK_TASK_EXPIRED"
         const val WAKE_REASON_INTENTION_EXPIRED = "INTENTION_EXPIRED"
     }
 
@@ -231,10 +237,71 @@ class SystemSurfaceActivity : ReactActivity() {
     override fun onPause() {
         super.onPause()
         Log.d(TAG, "SystemSurfaceActivity paused")
+        releaseAudioFocus()
     }
 
     override fun onResume() {
         super.onResume()
         Log.d(TAG, "SystemSurfaceActivity resumed")
+        requestAudioFocus()
+    }
+
+    /**
+     * Request audio focus to pause background audio during intervention
+     * 
+     * Uses AUDIOFOCUS_GAIN_TRANSIENT to politely request temporary audio focus.
+     * Background apps (like Instagram, Spotify) will pause their audio automatically.
+     * Audio will resume when we release focus.
+     */
+    private fun requestAudioFocus() {
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Android 8.0+ - Use AudioFocusRequest
+            audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                .setOnAudioFocusChangeListener { focusChange ->
+                    Log.d(TAG, "Audio focus changed: $focusChange")
+                }
+                .build()
+            
+            val result = audioManager?.requestAudioFocus(audioFocusRequest!!)
+            if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+                Log.i(TAG, "✅ Audio focus granted - background audio paused")
+            } else {
+                Log.w(TAG, "⚠️ Audio focus request failed")
+            }
+        } else {
+            // Android 7.1 and below - Use deprecated API
+            @Suppress("DEPRECATION")
+            val result = audioManager?.requestAudioFocus(
+                null,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+            )
+            if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+                Log.i(TAG, "✅ Audio focus granted (legacy API)")
+            }
+        }
+    }
+
+    /**
+     * Release audio focus when SystemSurface finishes
+     * 
+     * Allows background apps to resume their audio playback.
+     */
+    private fun releaseAudioFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest?.let {
+                audioManager?.abandonAudioFocusRequest(it)
+                Log.d(TAG, "Audio focus released")
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager?.abandonAudioFocus(null)
+            Log.d(TAG, "Audio focus released (legacy API)")
+        }
+        
+        audioManager = null
+        audioFocusRequest = null
     }
 }

@@ -230,6 +230,17 @@ interface IAppMonitorModule {
    * @returns Promise resolving to wake reason string or null
    */
   getWakeReason(): Promise<string | null>;
+
+  /**
+   * Launch SystemSurfaceActivity from System Brain JS.
+   * 
+   * This allows the event-driven headless runtime to trigger UI when needed.
+   * System Brain decides WHEN and WHY, native handles HOW.
+   * 
+   * @param wakeReason - Wake reason string (e.g., "QUICK_TASK_EXPIRED_FOREGROUND", "INTENTION_EXPIRED_FOREGROUND")
+   * @param triggeringApp - Package name of the app that triggered the wake
+   */
+  launchSystemSurface(wakeReason: string, triggeringApp: string): void;
 }
 
 /**

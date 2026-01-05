@@ -427,9 +427,11 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
      * 
      * Possible return values:
      * - "MONITORED_APP_FOREGROUND" - Normal monitored app detected, run priority chain
-     * - "QUICK_TASK_EXPIRED" - Quick Task timer expired, show expired screen ONLY
      * - "INTENTION_EXPIRED" - Intention timer expired while app in foreground
+     * - "DEV_DEBUG" - Developer-triggered wake for testing
      * - null - Not in SystemSurfaceActivity or no wake reason set
+     * 
+     * REMOVED: "QUICK_TASK_EXPIRED" - Quick Task expiration is now silent (no UI)
      * 
      * @param promise Resolves with wake reason string or null
      */
@@ -449,6 +451,28 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             android.util.Log.e("AppMonitorModule", "Failed to get wake reason", e)
             promise.resolve(null)
         }
+    }
+    
+    /**
+     * Launch SystemSurfaceActivity from System Brain JS.
+     * 
+     * This allows the event-driven headless runtime to trigger UI when needed.
+     * System Brain decides WHEN and WHY, native handles HOW.
+     * 
+     * @param wakeReason - Wake reason string (e.g., "QUICK_TASK_EXPIRED_FOREGROUND", "INTENTION_EXPIRED_FOREGROUND")
+     * @param triggeringApp - Package name of the app that triggered the wake
+     */
+    @ReactMethod
+    fun launchSystemSurface(wakeReason: String, triggeringApp: String) {
+        android.util.Log.d("AppMonitorModule", "📱 System Brain requested SystemSurface launch: $wakeReason for $triggeringApp")
+        
+        val intent = Intent(reactApplicationContext, SystemSurfaceActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(SystemSurfaceActivity.EXTRA_WAKE_REASON, wakeReason)
+            putExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP, triggeringApp)
+        }
+        
+        reactApplicationContext.startActivity(intent)
     }
 
     /**
