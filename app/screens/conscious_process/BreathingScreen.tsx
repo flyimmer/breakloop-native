@@ -27,6 +27,15 @@ export default function BreathingScreen() {
   // Soft breathing animation (opacity-based, organic feel)
   const breatheAnim = useRef(new Animated.Value(1)).current;
 
+  // Log breathing screen mount state for debugging
+  useEffect(() => {
+    if (__DEV__) {
+      console.log('[BreathingScreen] Mounted with breathingCount:', breathingCount);
+      console.log('[BreathingScreen] Current state:', state);
+      console.log('[BreathingScreen] Target app:', targetApp);
+    }
+  }, []);
+
   // Disable Android hardware back button during intervention
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {

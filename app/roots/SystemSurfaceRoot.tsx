@@ -38,6 +38,10 @@ function isBreakLoopInfrastructure(packageName: string | null): boolean {
   // BreakLoop's own app package
   if (packageName === 'com.anonymous.breakloopnative') return true;
   
+  // Android system navigation/gesture package
+  // This appears briefly during React Navigation swipe gestures
+  if (packageName === 'android') return true;
+  
   // Add other infrastructure packages if needed
   // if (packageName === 'com.android.systemui') return true;
   

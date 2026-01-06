@@ -108,16 +108,31 @@ export default function AlternativesScreen() {
   const { selectedCauses, selectedAlternative } = interventionState;
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
-  // Disable Android hardware back button during intervention
+  // Allow Android hardware back button to go back to Root Cause
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
-      // Return true to prevent default back behavior
-      // User must use the close button (X) or "I really need to use it" to exit
-      return true;
+      // Update intervention state to root-cause
+      dispatchIntervention({ type: 'GO_BACK_TO_ROOT_CAUSE' });
+      // Allow back navigation to Root Cause screen
+      navigation.goBack();
+      return true; // Prevent default to use our custom navigation
     });
 
     return () => backHandler.remove();
-  }, []);
+  }, [navigation, dispatchIntervention]);
+
+  // Handle swipe back gesture - update intervention state when navigating back
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      // Only handle back navigation (not forward navigation or other actions)
+      if (e.data.action.type === 'GO_BACK' || e.data.action.type === 'POP') {
+        // Update intervention state to root-cause
+        dispatchIntervention({ type: 'GO_BACK_TO_ROOT_CAUSE' });
+      }
+    });
+
+    return unsubscribe;
+  }, [navigation, dispatchIntervention]);
 
   // Local state for tabs and saved activities (persisted to AsyncStorage)
   const [activeTab, setActiveTab] = useState<TabId>('discover');

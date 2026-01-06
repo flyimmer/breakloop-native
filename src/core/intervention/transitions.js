@@ -194,6 +194,15 @@ export const interventionReducer = (context, action) => {
         selectedAlternative: null,
       };
 
+    case 'GO_BACK_TO_ROOT_CAUSE':
+      // User goes back from alternatives to root-cause (swipe back navigation)
+      if (context.state !== 'alternatives') return context;
+      return {
+        ...context,
+        state: 'root-cause',
+        // Keep selectedCauses so user can see their previous selections
+      };
+
     case 'SET_INTENTION_TIMER':
       // User selected intention timer duration - reset to idle and release app
       // The OS Trigger Brain will handle setting the actual timer

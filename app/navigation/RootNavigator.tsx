@@ -58,49 +58,62 @@ export default function RootNavigator() {
         name="Breathing" 
         component={BreathingScreen}
         options={{
+          presentation: 'fullScreenModal', // Full screen modal prevents swipe gesture
           gestureEnabled: false, // Disable swipe back gesture
+          animation: 'none', // Disable animation to prevent gesture detection
         }}
       />
       <Stack.Screen 
         name="RootCause" 
         component={RootCauseScreen}
         options={{
+          presentation: 'fullScreenModal', // Full screen modal prevents swipe gesture
           gestureEnabled: false, // Disable swipe back gesture
+          animation: 'none', // Disable animation to prevent gesture detection
         }}
       />
       <Stack.Screen 
         name="Alternatives" 
         component={AlternativesScreen}
         options={{
-          gestureEnabled: false, // Disable swipe back gesture
+          gestureEnabled: true, // Enable swipe back to Root Cause
+          animation: 'slide_from_right', // Smooth transition animation
         }}
       />
       <Stack.Screen 
         name="ActionConfirmation" 
         component={ActionConfirmationScreen}
         options={{
+          presentation: 'fullScreenModal', // Full screen modal prevents swipe gesture
           gestureEnabled: false, // Disable swipe back gesture
+          animation: 'none', // Disable animation to prevent gesture detection
         }}
       />
       <Stack.Screen 
         name="ActivityTimer" 
         component={ActivityTimerScreen}
         options={{
+          presentation: 'fullScreenModal', // Full screen modal prevents swipe gesture
           gestureEnabled: false, // Disable swipe back gesture
+          animation: 'none', // Disable animation to prevent gesture detection
         }}
       />
       <Stack.Screen 
         name="Reflection" 
         component={ReflectionScreen}
         options={{
+          presentation: 'fullScreenModal', // Full screen modal prevents swipe gesture
           gestureEnabled: false, // Disable swipe back gesture
+          animation: 'none', // Disable animation to prevent gesture detection
         }}
       />
       <Stack.Screen 
         name="IntentionTimer" 
         component={IntentionTimerScreen}
         options={{
+          presentation: 'fullScreenModal', // Full screen modal prevents swipe gesture
           gestureEnabled: false, // Disable swipe back gesture
+          animation: 'none', // Disable animation to prevent gesture detection
         }}
       />
       <Stack.Screen

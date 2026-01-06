@@ -84,16 +84,35 @@ export default function InterventionFlow({ app }: InterventionFlowProps) {
       console.log('[InterventionFlow] Mounted for app:', app);
     }
     
-    // If reducer is not already in breathing state, initialize it
-    if (interventionState.state === 'idle' || interventionState.targetApp !== app) {
+    // Idempotent initialization: dispatch BEGIN_INTERVENTION only if needed
+    // - Different app: need fresh intervention for new app
+    // - Not in breathing state: need to initialize/reset to breathing
+    if (
+      interventionState.targetApp !== app ||
+      interventionState.state !== 'breathing'
+    ) {
       if (__DEV__) {
-        console.log('[InterventionFlow] Initializing reducer state for app:', app);
+        console.log('[InterventionFlow] Initializing intervention for app:', app);
+        console.log('[InterventionFlow] Current state:', interventionState.state);
+        console.log('[InterventionFlow] Current targetApp:', interventionState.targetApp);
       }
+      
       dispatchIntervention({
         type: 'BEGIN_INTERVENTION',
         app,
         breathingDuration: getInterventionDurationSec(), // ✅ Use config (5 seconds)
       });
+      
+      // Log state after dispatch (with delay to allow reducer to process)
+      if (__DEV__) {
+        setTimeout(() => {
+          console.log('[InterventionFlow] State after BEGIN_INTERVENTION:', {
+            state: interventionState.state,
+            targetApp: interventionState.targetApp,
+            breathingCount: interventionState.breathingCount,
+          });
+        }, 100);
+      }
     }
   }, [app]); // Only run on mount or app change
 

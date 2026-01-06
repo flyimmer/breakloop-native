@@ -51,6 +51,13 @@ export default function RootCauseScreen() {
     return () => backHandler.remove();
   }, []);
 
+  // Disable swipe-back gesture on iOS
+  useEffect(() => {
+    navigation.setOptions({
+      gestureEnabled: false,
+    });
+  }, [navigation]);
+
   // Check if cause is selected (from intervention context)
   const isCauseSelected = (causeId: string) => {
     return selectedCauses.includes(causeId);
