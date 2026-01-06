@@ -137,7 +137,6 @@ function finishSystemSurfaceActivity(shouldLaunchHome: boolean = true, targetApp
  */
 export default function SystemSurfaceRoot() {
   const { session, bootstrapState, foregroundApp, shouldLaunchHome, dispatchSystemEvent, getTransientTargetApp, setTransientTargetApp } = useSystemSession();
-  const [bootstrapInitialized, setBootstrapInitialized] = useState(false);
 
   /**
    * BOOTSTRAP INITIALIZATION (Cold Start)
@@ -146,25 +145,39 @@ export default function SystemSurfaceRoot() {
    * 1. Read wakeReason + triggeringApp from Intent extras
    * 2. Map wake reason → START_QUICK_TASK or START_INTERVENTION
    * 3. Dispatch exactly one session
-   * 4. Set bootstrapState = READY
+   * 4. bootstrapState automatically transitions to READY via reducer
+   * 
+   * CRITICAL LIFECYCLE ASSUMPTION:
+   * SystemSurfaceRoot bootstrap runs exactly once per Activity instance.
+   * 
+   * Architectural assumption:
+   * - SystemSurfaceActivity is disposable and never reused.
+   * - Each launch is a cold start with fresh intent extras.
+   * - We do NOT support intent re-delivery or Activity reuse.
+   * 
+   * If this assumption changes in the future, bootstrap logic must be revisited.
+   * 
+   * This effect runs ONCE on mount (empty dependency array []).
+   * This is safe because SystemSurfaceActivity is DISPOSABLE:
+   * - Each launch creates a fresh Activity instance
+   * - Activity finishes when session ends (never reused)
+   * - Intent extras are read once and never change during Activity lifetime
+   * - No intent re-delivery handling needed (Activity is single-use)
    * 
    * NO OS Trigger Brain evaluation in SystemSurface.
-   * System Brain already made the decision.
+   * System Brain already made the decision - we just consume it.
    */
   useEffect(() => {
-    if (bootstrapInitialized) return;
-
     const initializeBootstrap = async () => {
       try {
         if (__DEV__) {
           console.log('[SystemSurfaceRoot] 🚀 Bootstrap initialization starting...');
         }
 
-        // t9: Read Intent extras from native
+        // Read Intent extras from native
         if (!AppMonitorModule) {
           console.error('[SystemSurfaceRoot] ❌ AppMonitorModule not available');
           dispatchSystemEvent({ type: 'END_SESSION' });
-          setBootstrapInitialized(true);
           return;
         }
 
@@ -173,7 +186,6 @@ export default function SystemSurfaceRoot() {
         if (!extras || !extras.triggeringApp) {
           console.error('[SystemSurfaceRoot] ❌ No Intent extras - finishing activity');
           dispatchSystemEvent({ type: 'END_SESSION' });
-          setBootstrapInitialized(true);
           return;
         }
 
@@ -225,22 +237,17 @@ export default function SystemSurfaceRoot() {
           });
         }
 
-        // Bootstrap complete, session dispatched
-
-        setBootstrapInitialized(true);
-
         if (__DEV__) {
           console.log('[SystemSurfaceRoot] ✅ Bootstrap initialization complete');
         }
       } catch (error) {
         console.error('[SystemSurfaceRoot] ❌ Bootstrap initialization failed:', error);
         dispatchSystemEvent({ type: 'END_SESSION' });
-        setBootstrapInitialized(true);
       }
     };
 
     initializeBootstrap();
-  }, [bootstrapInitialized, dispatchSystemEvent]);
+  }, []); // ✅ CRITICAL: Empty dependency array - run once on mount
 
   /**
    * RULE 4: Session is the ONLY authority for SystemSurface existence
@@ -309,14 +316,13 @@ export default function SystemSurfaceRoot() {
    * During cold start, session starts as null but this doesn't mean
    * "no session should exist" - it means "JS hasn't decided yet".
    * 
-   * We must wait for:
-   * 1. Bootstrap initialization to complete (Intent extras read, OS Trigger Brain run)
-   * 2. bootstrapState to become 'READY' (session decision made)
+   * We must wait for bootstrapState to become 'READY' (session decision made).
+   * The bootstrap useEffect runs once on mount and dispatches a session event,
+   * which transitions bootstrapState from BOOTSTRAPPING → READY.
    */
-  if (!bootstrapInitialized || bootstrapState === 'BOOTSTRAPPING') {
+  if (bootstrapState === 'BOOTSTRAPPING') {
     if (__DEV__) {
       console.log('[SystemSurfaceRoot] Bootstrap phase - waiting for session establishment', {
-        bootstrapInitialized,
         bootstrapState,
       });
     }

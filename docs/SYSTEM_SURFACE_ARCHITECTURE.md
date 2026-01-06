@@ -110,6 +110,16 @@ t14 SystemSurfaceRoot renders again
      - If session === null → finish SystemSurfaceActivity
 ```
 
+**Critical Architectural Assumption:**
+
+SystemSurfaceRoot bootstrap runs exactly once per Activity instance.
+
+- SystemSurfaceActivity is disposable and never reused.
+- Each launch is a cold start with fresh intent extras.
+- We do NOT support intent re-delivery or Activity reuse.
+
+**If this assumption changes in the future, bootstrap logic must be revisited.**
+
 ### SystemSurfaceRoot — Authoritative Logic
 
 ```tsx
