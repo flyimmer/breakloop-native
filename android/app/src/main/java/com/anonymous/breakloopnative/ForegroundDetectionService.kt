@@ -233,6 +233,11 @@ class ForegroundDetectionService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     
     /**
+     * Flag to prevent duplicate timer check starts
+     */
+    private var timerCheckStarted = false
+    
+    /**
      * Runnable for checking timer expirations periodically
      * 
      * Checks:
@@ -242,14 +247,79 @@ class ForegroundDetectionService : AccessibilityService() {
      * Both are MECHANICAL checks - native detects expiration, JavaScript decides semantics.
      */
     private val timerCheckRunnable = object : Runnable {
+        private var runCount = 0
+        
         override fun run() {
+            runCount++
+            
+            // 🔧 Loop alive invariant - log once on first run
+            if (runCount == 1) {
+                Log.i(TAG, "🟢 Timer expiration loop confirmed alive")
+            }
+            
+            // Log health check every 5 seconds for visibility (not every second to avoid spam)
+            if (runCount % 5 == 1 && runCount > 1) {
+                Log.d(TAG, "⏰ Timer check running (run #$runCount)")
+                Log.d(TAG, "   Active Quick Task timers: ${quickTaskTimers.size}")
+                
+                if (quickTaskTimers.isNotEmpty()) {
+                    val now = System.currentTimeMillis()
+                    for ((pkg, expiresAt) in quickTaskTimers) {
+                        val remainingSec = (expiresAt - now) / 1000
+                        Log.d(TAG, "   - $pkg: ${remainingSec}s remaining")
+                    }
+                }
+            }
+            
             checkWakeSuppressionExpirations()  // Check wake suppression flags
             checkQuickTaskTimerExpirations()   // Check Quick Task timers
+            
             // Schedule next check in 1 second for accurate expiration detection
             handler.postDelayed(this, 1000)
         }
     }
 
+    /**
+     * Start timer check mechanism if not already started.
+     * 
+     * Defensive initialization with guards:
+     * - Prevents duplicate starts
+     * - Checks handler initialization
+     * - Logs failures loudly
+     * 
+     * Called from multiple entry points for reliability:
+     * - onCreate() (defensive backup)
+     * - onServiceConnected() (primary)
+     */
+    private fun startTimerCheckIfNeeded() {
+        synchronized(this) {
+            if (timerCheckStarted) {
+                Log.d(TAG, "Timer check already started, skipping")
+                return
+            }
+            
+            try {
+                handler.post(timerCheckRunnable)
+                timerCheckStarted = true
+                Log.i(TAG, "✅ Timer check mechanism started")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ FAILED to start timer check mechanism", e)
+            }
+        }
+    }
+    
+    /**
+     * Called when service is created
+     * Defensive timer check start as backup
+     */
+    override fun onCreate() {
+        super.onCreate()
+        Log.i(TAG, "🟢 ForegroundDetectionService.onCreate() called")
+        
+        // Defensive timer check start (backup initialization point)
+        startTimerCheckIfNeeded()
+    }
+    
     /**
      * Called when the service is connected and ready
      * This happens when user enables the service in Settings
@@ -257,6 +327,7 @@ class ForegroundDetectionService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         
+        Log.i(TAG, "🟢 ForegroundDetectionService.onServiceConnected() called")
         Log.i(TAG, "✅ ForegroundDetectionService connected and ready")
         isServiceConnected = true
         
@@ -283,9 +354,9 @@ class ForegroundDetectionService : AccessibilityService() {
         
         Log.d(TAG, "Service configuration applied - listening for window state changes")
         
-        // Start periodic timer expiration checks
-        handler.post(timerCheckRunnable)
-        Log.d(TAG, "Started periodic timer expiration checks (every 1 second)")
+        // Start periodic timer expiration checks (primary initialization point)
+        Log.i(TAG, "🔵 Attempting to start periodic timer checks...")
+        startTimerCheckIfNeeded()
     }
 
     /**
@@ -614,12 +685,15 @@ class ForegroundDetectionService : AccessibilityService() {
             val now = System.currentTimeMillis()
             val expiredApps = mutableListOf<String>()
             
+            Log.d(TAG, "🔍 Checking Quick Task timer expirations (${quickTaskTimers.size} active timers)")
+            
             // Find all expired timers
             for ((packageName, expiresAt) in quickTaskTimers) {
-                if (now >= expiresAt) {
+                val remainingMs = expiresAt - now
+                if (remainingMs <= 0) {
                     expiredApps.add(packageName)
-                    val expiredSec = (now - expiresAt) / 1000
-                    Log.i(TAG, "⏰ Timer expired for app: $packageName (expired ${expiredSec}s ago)")
+                    val expiredSec = (-remainingMs) / 1000
+                    Log.i(TAG, "⏰ TIMER EXPIRED: $packageName (expired ${expiredSec}s ago)")
                 }
             }
             
@@ -628,10 +702,12 @@ class ForegroundDetectionService : AccessibilityService() {
                 // Remove from map
                 quickTaskTimers.remove(packageName)
                 
+                Log.i(TAG, "📤 Emitting TIMER_EXPIRED event to System Brain for $packageName")
+                
                 // Emit MECHANICAL event to System Brain JS
                 emitSystemEvent("TIMER_EXPIRED", packageName, now)
                 
-                Log.d(TAG, "  └─ Removed expired timer for $packageName, emitted TIMER_EXPIRED event")
+                Log.d(TAG, "   └─ Timer removed, event emitted")
             }
             
         } catch (e: Exception) {

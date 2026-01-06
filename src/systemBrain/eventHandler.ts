@@ -309,6 +309,24 @@ async function handleTimerSet(
 }
 
 /**
+ * Check if an app is system infrastructure (should not update lastMeaningfulApp).
+ * 
+ * System infrastructure apps are transient overlays that don't represent
+ * meaningful user navigation away from the current app.
+ * 
+ * Examples:
+ * - com.android.systemui: Notification shade, quick settings, volume slider
+ * - android: Generic Android system package
+ * 
+ * @param packageName - Package name to check
+ * @returns true if app is system infrastructure
+ */
+function isSystemInfrastructureApp(packageName: string | null): boolean {
+  if (!packageName) return true;
+  return packageName === 'com.android.systemui' || packageName === 'android';
+}
+
+/**
  * Handle foreground app change (MECHANICAL event from native).
  * 
  * System Brain ONLY tracks state - ForegroundDetectionService handles intervention launching.
@@ -320,14 +338,21 @@ async function handleForegroundChange(
 ): Promise<void> {
   console.log('[System Brain] Foreground changed to:', packageName);
   
-  // Always update last meaningful app
+  // Update last meaningful app (skip system infrastructure)
   const previousApp = state.lastMeaningfulApp;
-  state.lastMeaningfulApp = packageName;
   
-  console.log('[System Brain] Foreground app updated:', {
-    previous: previousApp,
-    current: packageName,
-  });
+  if (!isSystemInfrastructureApp(packageName)) {
+    state.lastMeaningfulApp = packageName;
+    console.log('[System Brain] Foreground app updated:', {
+      previous: previousApp,
+      current: packageName,
+    });
+  } else {
+    console.log('[System Brain] System infrastructure detected, lastMeaningfulApp unchanged:', {
+      systemApp: packageName,
+      lastMeaningfulApp: state.lastMeaningfulApp,
+    });
+  }
   
   // 🔒 GUARD: only monitored apps are eligible for OS Trigger Brain evaluation
   console.log('[System Brain] Checking if app is monitored:', {
