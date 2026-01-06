@@ -610,38 +610,28 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
         expiresAt: Long? = null
     ) {
         try {
-            val reactContext = reactApplicationContext
-            val taskData = Arguments.createMap().apply {
-                putString("type", eventType)
-                putString("packageName", packageName)
-                putDouble("timestamp", timestamp.toDouble())
+            android.util.Log.i("AppMonitorModule", "🔵 About to emit $eventType to SystemBrainService")
+            
+            val intent = Intent(reactApplicationContext, SystemBrainService::class.java).apply {
+                putExtra(SystemBrainService.EXTRA_EVENT_TYPE, eventType)
+                putExtra(SystemBrainService.EXTRA_PACKAGE_NAME, packageName)
+                putExtra(SystemBrainService.EXTRA_TIMESTAMP, timestamp)
                 if (expiresAt != null) {
-                    putDouble("expiresAt", expiresAt.toDouble())
+                    putExtra(SystemBrainService.EXTRA_EXPIRES_AT, expiresAt)
                 }
             }
             
-            // Start headless task (single event path)
-            val taskConfig = com.facebook.react.jstasks.HeadlessJsTaskConfig(
-                "SystemEvent",
-                taskData,
-                10000,
-                false
-            )
+            android.util.Log.i("AppMonitorModule", "🔵 Intent created, calling startService()...")
             
-            com.facebook.react.HeadlessJsTaskService.acquireWakeLockNow(reactContext)
+            // Start the HeadlessTaskService
+            // This will invoke System Brain JS headless task
+            reactApplicationContext.startService(intent)
             
-            reactContext.runOnJSQueueThread {
-                try {
-                    reactContext.catalystInstance
-                        ?.getJSModule(com.facebook.react.bridge.JavaScriptModule::class.java)
-                    
-                    android.util.Log.d("AppMonitorModule", "📤 Emitted SystemEvent (HeadlessTask): $eventType")
-                } catch (e: Exception) {
-                    android.util.Log.e("AppMonitorModule", "Failed to execute headless task", e)
-                }
-            }
+            android.util.Log.i("AppMonitorModule", "✅ startService() called successfully")
+            android.util.Log.i("AppMonitorModule", "📤 Emitted mechanical event to System Brain: $eventType for $packageName")
+            
         } catch (e: Exception) {
-            android.util.Log.e("AppMonitorModule", "Failed to emit SystemEvent", e)
+            android.util.Log.e("AppMonitorModule", "❌ Failed to emit SystemEvent to System Brain", e)
         }
     }
 

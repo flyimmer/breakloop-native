@@ -1058,15 +1058,36 @@ const SettingsScreen = () => {
                 isAccessibilityEnabled && styles.accessibilityButtonEnabled
               ]}
               onPress={async () => {
-                if (Platform.OS === 'android' && AppMonitorModuleType) {
-                  // Open accessibility settings
-                  try {
-                    await AppMonitorModuleType.openAccessibilitySettings();
-                    // Status will be checked when screen refocuses
-                  } catch (error) {
-                    console.error('[SettingsScreen] Failed to open accessibility settings:', error);
-                    Alert.alert('Error', 'Failed to open Accessibility settings. Please go to Settings > Accessibility manually.');
-                  }
+                console.log('[SettingsScreen] Accessibility button pressed');
+                console.log('[SettingsScreen] Platform.OS:', Platform.OS);
+                console.log('[SettingsScreen] AppMonitorModule available:', !!AppMonitorModule);
+                console.log('[SettingsScreen] AppMonitorModuleType available:', !!AppMonitorModuleType);
+                console.log('[SettingsScreen] NativeModules.AppMonitorModule available:', !!NativeModules.AppMonitorModule);
+                
+                // Try local AppMonitorModule first (has platform check)
+                const moduleToUse = AppMonitorModule || AppMonitorModuleType;
+                
+                if (!moduleToUse) {
+                  console.error('[SettingsScreen] No native module available');
+                  Alert.alert(
+                    'Error', 
+                    'Native module not available. This feature requires Android and the native module to be properly linked.\n\nPlease:\n1. Make sure you are on Android\n2. Rebuild the app: npm run android\n3. Restart the app'
+                  );
+                  return;
+                }
+
+                try {
+                  console.log('[SettingsScreen] Opening accessibility settings...');
+                  const result = await moduleToUse.openAccessibilitySettings();
+                  console.log('[SettingsScreen] Accessibility settings opened:', result);
+                  // Status will be checked when screen refocuses
+                } catch (error) {
+                  console.error('[SettingsScreen] Failed to open accessibility settings:', error);
+                  const errorMessage = error instanceof Error ? error.message : String(error);
+                  Alert.alert(
+                    'Error', 
+                    `Failed to open Accessibility settings: ${errorMessage}\n\nPlease go to Settings > Accessibility manually.`
+                  );
                 }
               }}
               disabled={isCheckingAccessibility}

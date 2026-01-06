@@ -346,6 +346,11 @@ class ForegroundDetectionService : AccessibilityService() {
         // This allows JavaScript to track exits and cancel incomplete interventions
         emitForegroundAppChangedEvent(packageName)
         
+        // Emit FOREGROUND_CHANGED to System Brain (for lastMeaningfulApp tracking)
+        // This MUST happen for ALL apps BEFORE launching SystemSurface
+        // so that System Brain knows the current foreground app when making decisions
+        emitSystemEvent("FOREGROUND_CHANGED", packageName, System.currentTimeMillis())
+        
         // Check if this is a monitored app (for launching intervention)
         // Use dynamicMonitoredApps (synced from JavaScript) instead of hardcoded MONITORED_APPS
         if (dynamicMonitoredApps.contains(packageName)) {
@@ -559,68 +564,48 @@ class ForegroundDetectionService : AccessibilityService() {
      * Called periodically (every 1 second) to detect and clean up expired timers.
      */
     /**
-     * Get React context for emitting events to System Brain JS.
-     * 
-     * @return ReactContext if available, null otherwise
-     */
-    private fun getReactContext(): ReactContext? {
-        return try {
-            val reactNativeHost = (application as? com.facebook.react.ReactApplication)?.reactNativeHost
-            reactNativeHost?.reactInstanceManager?.currentReactContext
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to get React context", e)
-            null
-        }
-    }
-    
-    /**
      * Emit mechanical system event to System Brain JS.
      * 
      * MECHANICAL ONLY: Native reports what happened, not what it means.
      * System Brain JS classifies semantic meaning.
      * 
-     * Uses HeadlessJsTaskService to ensure single event delivery path.
+     * Uses Intent to start SystemBrainService (HeadlessTaskService).
+     * This is the proper way to invoke headless tasks from a Service context.
      * 
-     * @param eventType - Mechanical event type ("TIMER_EXPIRED", "FOREGROUND_CHANGED")
+     * @param eventType - Mechanical event type ("TIMER_SET", "TIMER_EXPIRED", "FOREGROUND_CHANGED")
      * @param packageName - Package name of the app
      * @param timestamp - Timestamp of the event
+     * @param expiresAt - Expiration timestamp (only for TIMER_SET events)
      */
-    private fun emitSystemEvent(eventType: String, packageName: String, timestamp: Long) {
+    private fun emitSystemEvent(
+        eventType: String, 
+        packageName: String, 
+        timestamp: Long,
+        expiresAt: Long? = null
+    ) {
         try {
-            val reactContext = getReactContext()
-            if (reactContext != null) {
-                val taskData = Arguments.createMap().apply {
-                    putString("type", eventType)
-                    putString("packageName", packageName)
-                    putDouble("timestamp", timestamp.toDouble())
+            Log.i(TAG, "🔵 About to emit $eventType to SystemBrainService")
+            
+            val intent = Intent(this, SystemBrainService::class.java).apply {
+                putExtra(SystemBrainService.EXTRA_EVENT_TYPE, eventType)
+                putExtra(SystemBrainService.EXTRA_PACKAGE_NAME, packageName)
+                putExtra(SystemBrainService.EXTRA_TIMESTAMP, timestamp)
+                if (expiresAt != null) {
+                    putExtra(SystemBrainService.EXTRA_EXPIRES_AT, expiresAt)
                 }
-                
-                // Start headless task (single event path)
-                val taskConfig = HeadlessJsTaskConfig(
-                    "SystemEvent",
-                    taskData,
-                    10000, // 10 second timeout
-                    false  // not in foreground
-                )
-                
-                HeadlessJsTaskService.acquireWakeLockNow(reactContext)
-                
-                // Execute headless task
-                reactContext.runOnJSQueueThread {
-                    try {
-                        reactContext.catalystInstance
-                            ?.getJSModule(com.facebook.react.bridge.JavaScriptModule::class.java)
-                        
-                        Log.d(TAG, "📤 Emitted SystemEvent (HeadlessTask): $eventType for $packageName")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to execute headless task", e)
-                    }
-                }
-            } else {
-                Log.w(TAG, "⚠️ Cannot emit SystemEvent - React context not available")
             }
+            
+            Log.i(TAG, "🔵 Intent created, calling startService()...")
+            
+            // Start the HeadlessTaskService
+            // This will invoke System Brain JS headless task
+            startService(intent)
+            
+            Log.i(TAG, "✅ startService() called successfully")
+            Log.i(TAG, "📤 Emitted mechanical event to System Brain: $eventType for $packageName")
+            
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Failed to emit SystemEvent", e)
+            Log.e(TAG, "❌ Failed to emit SystemEvent to System Brain", e)
         }
     }
     

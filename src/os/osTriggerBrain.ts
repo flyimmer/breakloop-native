@@ -364,7 +364,7 @@ function showQuickTaskDialog(packageName: string, remaining: number): void {
  * @param packageName - App package name
  * @param timestamp - Current timestamp
  */
-function evaluateTriggerLogic(packageName: string, timestamp: number): void {
+export function evaluateTriggerLogic(packageName: string, timestamp: number): void {
   console.log('[OS Trigger Brain] ========================================');
   console.log('[OS Trigger Brain] Evaluating nested trigger logic for:', packageName);
   console.log('[OS Trigger Brain] Timestamp:', new Date(timestamp).toISOString());

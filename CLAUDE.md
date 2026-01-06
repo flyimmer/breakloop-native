@@ -2,6 +2,21 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 🚨 CRITICAL: Native Module Development
+
+**BEFORE creating or modifying ANY native module, READ:**
+- `docs/AI_ASSISTANT_RULES.md` - Complete mandatory checklist
+- `NATIVE_MODULE_CHECKLIST.md` - Quick reference
+- `.cursor/rules/native-modules.mdc` - Cursor-specific rules
+
+**Key Rule:** When adding native modules, you MUST:
+1. Update plugin to copy files
+2. Update plugin to register package
+3. Update validation script
+4. Run `npm run validate:native` (MUST PASS)
+
+**Validation is mandatory** - if `npm run validate:native` fails, the module won't work.
+
 ## Development Commands
 
 ```bash

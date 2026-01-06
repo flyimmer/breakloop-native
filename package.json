@@ -5,13 +5,14 @@
   "scripts": {
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
-    "android": "npm run sync:kotlin && npm run validate:kotlin && expo run:android",
+    "android": "npm run sync:kotlin && npm run validate:native && expo run:android",
     "android:direct": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
     "sync:kotlin": "node scripts/sync-kotlin-files.js",
     "validate:kotlin": "node scripts/validate-kotlin-plugin.js",
+    "validate:native": "node scripts/validate-native-modules.js",
     "prebuild": "npm run validate:kotlin && expo prebuild"
   },
   "dependencies": {

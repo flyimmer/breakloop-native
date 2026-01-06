@@ -7,7 +7,6 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { loadTimerState, saveTimerState, TimerState } from './stateManager';
-import { evaluateTriggerLogic } from '../os/osTriggerBrain';
 import { launchSystemSurface } from './nativeBridge';
 
 /**
@@ -174,11 +173,21 @@ async function handleTimerExpiration(
   timestamp: number,
   state: TimerState
 ): Promise<void> {
+  console.log('[System Brain] ========================================');
+  console.log('[System Brain] 🔔 TIMER_EXPIRED event received');
   console.log('[System Brain] Timer expired for:', packageName);
+  console.log('[System Brain] Timestamp:', timestamp, new Date(timestamp).toISOString());
   
   // SEMANTIC CLASSIFICATION: What kind of timer expired?
   const quickTaskTimer = state.quickTaskTimers[packageName];
   const intentionTimer = state.intentionTimers[packageName];
+  
+  console.log('[System Brain] Checking stored timers:', {
+    hasQuickTaskTimer: !!quickTaskTimer,
+    quickTaskExpiresAt: quickTaskTimer?.expiresAt,
+    hasIntentionTimer: !!intentionTimer,
+    intentionExpiresAt: intentionTimer?.expiresAt,
+  });
   
   let timerType: 'QUICK_TASK' | 'INTENTION' | 'UNKNOWN' = 'UNKNOWN';
   
@@ -208,6 +217,7 @@ async function handleTimerExpiration(
       quickTaskTimers: Object.keys(state.quickTaskTimers),
       intentionTimers: Object.keys(state.intentionTimers),
     });
+    console.log('[System Brain] ========================================');
     return;
   }
   
@@ -236,6 +246,7 @@ async function handleTimerExpiration(
     console.log('[System Brain] ✓ User switched apps - silent cleanup only (no intervention)');
     console.log('[System Brain] Current foreground app:', currentForegroundApp);
   }
+  console.log('[System Brain] ========================================');
 }
 
 /**
@@ -255,26 +266,31 @@ async function handleTimerSet(
   timestamp: number,
   state: TimerState
 ): Promise<void> {
+  console.log('[System Brain] ========================================');
+  console.log('[System Brain] 🔔 TIMER_SET event received');
   console.log('[System Brain] Timer set for:', packageName);
   console.log('[System Brain] Timer details:', {
     expiresAt,
     expiresAtTime: new Date(expiresAt).toISOString(),
     durationMs: expiresAt - timestamp,
+    durationSec: Math.round((expiresAt - timestamp) / 1000),
   });
   
   // SEMANTIC DECISION: Store timer in semantic state
   state.quickTaskTimers[packageName] = { expiresAt };
+  console.log('[System Brain] ✓ Timer stored in semantic state');
   
   // SEMANTIC DECISION: Record usage (this consumes quota)
   recordQuickTaskUsage(packageName, timestamp, state);
   
-  console.log('[System Brain] Quick Task timer recorded in persisted state');
+  console.log('[System Brain] ✅ Quick Task timer recorded in persisted state');
+  console.log('[System Brain] ========================================');
 }
 
 /**
  * Handle foreground app change (MECHANICAL event from native).
  * 
- * System Brain evaluates OS Trigger Brain logic.
+ * System Brain ONLY tracks state - ForegroundDetectionService handles intervention launching.
  */
 async function handleForegroundChange(
   packageName: string,
@@ -283,7 +299,7 @@ async function handleForegroundChange(
 ): Promise<void> {
   console.log('[System Brain] Foreground changed to:', packageName);
   
-  // Update last meaningful app
+  // Update last meaningful app (this is the ONLY job of System Brain for FOREGROUND_CHANGED)
   const previousApp = state.lastMeaningfulApp;
   state.lastMeaningfulApp = packageName;
   
@@ -292,7 +308,5 @@ async function handleForegroundChange(
     current: packageName,
   });
   
-  // Evaluate OS Trigger Brain logic (semantic decision)
-  // Note: evaluateTriggerLogic will handle its own intervention launching
-  evaluateTriggerLogic(packageName, timestamp);
+  console.log('[System Brain] State tracking complete - ForegroundDetectionService handles intervention launching');
 }

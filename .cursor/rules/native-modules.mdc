@@ -1,0 +1,61 @@
+# Native Module Development Rules
+
+## CRITICAL: Always Follow These Steps
+
+When creating or modifying native modules in this project, you MUST complete ALL of these steps:
+
+### 1. Create Files in `plugins/src/android/` (NOT `android/app/`)
+- Create `YourModule.kt` in `plugins/src/android/java/com/anonymous/breakloopnative/`
+- Create `YourPackage.kt` in the same directory
+- Create TypeScript interface in `src/native-modules/YourModule.ts`
+
+### 2. Update `plugins/withForegroundService.js`
+- Add paths to `getSourcePaths()` and `getDestinationPaths()`
+- Add copy logic to `copyKotlinFiles()`
+- Add registration function (like `registerAppMonitorPackage()`)
+- Call registration function in main plugin function
+
+### 3. Update `scripts/validate-native-modules.js`
+- Add new package to `requiredPackages` array with:
+  - `name`: Package class name
+  - `registration`: Exact string like `add(YourPackage())`
+  - `description`: What the module does
+
+### 4. Test and Verify
+```bash
+npx expo prebuild --clean
+npm run validate:native  # MUST PASS
+npm run android
+```
+
+### 5. Verify Registration
+```bash
+grep "add(YourPackage())" android/app/src/main/java/com/anonymous/breakloopnative/MainApplication.kt
+```
+
+## Validation is Mandatory
+
+**NEVER** skip `npm run validate:native` after native module changes.
+
+If validation fails, the module will not work at runtime.
+
+## Common Mistakes
+
+❌ Editing files in `android/app/` instead of `plugins/src/`  
+❌ Forgetting to update the plugin  
+❌ Forgetting to update validation script  
+❌ Not running validation before building  
+❌ Skipping clean prebuild  
+
+## Quick Check
+
+Before marking native module work as complete:
+- [ ] Files in `plugins/src/android/`?
+- [ ] Plugin updated?
+- [ ] Validation script updated?
+- [ ] `npm run validate:native` passes?
+- [ ] Tested in app?
+
+## Full Documentation
+
+See `docs/AI_ASSISTANT_RULES.md` for complete details and examples.

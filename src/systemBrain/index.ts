@@ -43,13 +43,21 @@ import { handleSystemEvent } from './eventHandler';
  * System Brain classifies semantic meaning and decides action.
  */
 AppRegistry.registerHeadlessTask('SystemEvent', () => async (taskData) => {
-  console.log('[System Brain] Event received (HeadlessTask):', taskData);
+  console.log('[System Brain] ========================================');
+  console.log('[System Brain] 📨 Event received (HeadlessTask)');
+  console.log('[System Brain] Event data:', JSON.stringify(taskData, null, 2));
+  console.log('[System Brain] Event type:', taskData?.type);
+  console.log('[System Brain] Package name:', taskData?.packageName);
+  console.log('[System Brain] Timestamp:', taskData?.timestamp);
   
   try {
     await handleSystemEvent(taskData);
+    console.log('[System Brain] ✅ Event processed successfully');
   } catch (error) {
-    console.error('[System Brain] Error processing event:', error);
+    console.error('[System Brain] ❌ Error processing event:', error);
   }
+  
+  console.log('[System Brain] ========================================');
 });
 
 console.log('[System Brain] Headless JS task registered (single event path)');

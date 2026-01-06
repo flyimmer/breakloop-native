@@ -49,11 +49,11 @@ function getSourcePaths(projectRoot) {
   const javaPath = path.join(pluginSrcPath, 'java', 'com', 'anonymous', 'breakloopnative');
   return {
     foregroundService: path.join(javaPath, 'ForegroundDetectionService.kt'),
-    interventionActivity: path.join(javaPath, 'InterventionActivity.kt'),
     appMonitorModule: path.join(javaPath, 'AppMonitorModule.kt'),
     appMonitorPackage: path.join(javaPath, 'AppMonitorPackage.kt'),
     appMonitorService: path.join(javaPath, 'AppMonitorService.kt'),
     systemSurfaceActivity: path.join(javaPath, 'SystemSurfaceActivity.kt'),
+    systemBrainService: path.join(javaPath, 'SystemBrainService.kt'),
     accessibilityXml: path.join(pluginSrcPath, 'res', 'xml', 'accessibility_service.xml'),
     stringsXml: path.join(pluginSrcPath, 'res', 'values', 'strings.xml'),
     stylesXml: path.join(pluginSrcPath, 'res', 'values', 'styles.xml'),
@@ -68,11 +68,11 @@ function getDestinationPaths(projectRoot) {
   const javaPath = path.join(androidMainPath, 'java', 'com', 'anonymous', 'breakloopnative');
   return {
     foregroundService: path.join(javaPath, 'ForegroundDetectionService.kt'),
-    interventionActivity: path.join(javaPath, 'InterventionActivity.kt'),
     appMonitorModule: path.join(javaPath, 'AppMonitorModule.kt'),
     appMonitorPackage: path.join(javaPath, 'AppMonitorPackage.kt'),
     appMonitorService: path.join(javaPath, 'AppMonitorService.kt'),
     systemSurfaceActivity: path.join(javaPath, 'SystemSurfaceActivity.kt'),
+    systemBrainService: path.join(javaPath, 'SystemBrainService.kt'),
     accessibilityXml: path.join(androidMainPath, 'res', 'xml', 'accessibility_service.xml'),
   };
 }
@@ -98,13 +98,6 @@ function copyKotlinFiles(projectRoot) {
     throw new Error(`[${PLUGIN_NAME}] Source file not found: ${sourcePaths.foregroundService}`);
   }
   
-  // Copy InterventionActivity.kt (Phase F3.5)
-  if (fs.existsSync(sourcePaths.interventionActivity)) {
-    fs.copyFileSync(sourcePaths.interventionActivity, destPaths.interventionActivity);
-    console.log(`[${PLUGIN_NAME}] Copied InterventionActivity.kt`);
-  } else {
-    throw new Error(`[${PLUGIN_NAME}] Source file not found: ${sourcePaths.interventionActivity}`);
-  }
   
   // Copy AppMonitorModule.kt (Phase F3.5)
   if (fs.existsSync(sourcePaths.appMonitorModule)) {
@@ -136,6 +129,62 @@ function copyKotlinFiles(projectRoot) {
     console.log(`[${PLUGIN_NAME}] Copied SystemSurfaceActivity.kt`);
   } else {
     console.warn(`[${PLUGIN_NAME}] SystemSurfaceActivity.kt not found, skipping (optional)`);
+  }
+  
+  // Copy SystemBrainService.kt
+  if (fs.existsSync(sourcePaths.systemBrainService)) {
+    fs.copyFileSync(sourcePaths.systemBrainService, destPaths.systemBrainService);
+    console.log(`[${PLUGIN_NAME}] Copied SystemBrainService.kt`);
+  } else {
+    console.warn(`[${PLUGIN_NAME}] SystemBrainService.kt not found, skipping (optional)`);
+  }
+}
+
+/**
+ * Modify MainApplication.kt to register AppMonitorPackage
+ */
+function registerAppMonitorPackage(projectRoot) {
+  const mainApplicationPath = path.join(
+    projectRoot,
+    'android',
+    'app',
+    'src',
+    'main',
+    'java',
+    'com',
+    'anonymous',
+    'breakloopnative',
+    'MainApplication.kt'
+  );
+  
+  if (!fs.existsSync(mainApplicationPath)) {
+    console.warn(`[${PLUGIN_NAME}] MainApplication.kt not found, skipping package registration`);
+    return;
+  }
+  
+  let content = fs.readFileSync(mainApplicationPath, 'utf-8');
+  
+  // Check if already registered
+  if (content.includes('add(AppMonitorPackage())')) {
+    console.log(`[${PLUGIN_NAME}] AppMonitorPackage already registered in MainApplication.kt`);
+    return;
+  }
+  
+  // Find the closing brace of the apply block and add the package before it
+  // Pattern: PackageList(this).packages.apply { ... }
+  const applyBlockPattern = /(PackageList\(this\)\.packages\.apply\s*\{[\s\S]*?)(            \})/;
+  
+  if (applyBlockPattern.test(content)) {
+    content = content.replace(
+      applyBlockPattern,
+      '$1              add(AppMonitorPackage())\n$2'
+    );
+    
+    fs.writeFileSync(mainApplicationPath, content);
+    console.log(`[${PLUGIN_NAME}] ✅ Registered AppMonitorPackage in MainApplication.kt`);
+  } else {
+    console.warn(`[${PLUGIN_NAME}] Could not find package registration location in MainApplication.kt`);
+    console.warn(`[${PLUGIN_NAME}] Please manually add: add(AppMonitorPackage()) to getPackages() in MainApplication.kt`);
   }
 }
 
@@ -174,7 +223,7 @@ function withAndroidManifestModifications(config) {
       throw new Error('[withForegroundService] AndroidManifest.xml not found');
     }
     
-    // Add BIND_ACCESSIBILITY_SERVICE permission if not present
+    // Add required permissions
     if (!manifest['uses-permission']) {
       manifest['uses-permission'] = [];
     }
@@ -183,6 +232,7 @@ function withAndroidManifestModifications(config) {
       ? manifest['uses-permission']
       : [manifest['uses-permission']];
     
+    // Add BIND_ACCESSIBILITY_SERVICE permission
     const hasAccessibilityPermission = permissions.some(
       (perm) => perm.$['android:name'] === 'android.permission.BIND_ACCESSIBILITY_SERVICE'
     );
@@ -194,9 +244,24 @@ function withAndroidManifestModifications(config) {
           'tools:ignore': 'ProtectedPermissions',
         },
       });
-      manifest['uses-permission'] = permissions;
       console.log(`[${PLUGIN_NAME}] Added BIND_ACCESSIBILITY_SERVICE permission`);
     }
+    
+    // Add WAKE_LOCK permission (required for HeadlessTaskService)
+    const hasWakeLockPermission = permissions.some(
+      (perm) => perm.$['android:name'] === 'android.permission.WAKE_LOCK'
+    );
+    
+    if (!hasWakeLockPermission) {
+      permissions.push({
+        $: {
+          'android:name': 'android.permission.WAKE_LOCK',
+        },
+      });
+      console.log(`[${PLUGIN_NAME}] Added WAKE_LOCK permission`);
+    }
+    
+    manifest['uses-permission'] = permissions;
     
     // Add AccessibilityService and InterventionActivity to application
     if (!manifest.application) {
@@ -244,25 +309,41 @@ function withAndroidManifestModifications(config) {
           },
         ],
       });
-      application.service = services;
       console.log(`[${PLUGIN_NAME}] Registered ForegroundDetectionService in AndroidManifest.xml`);
     }
     
-    // Register InterventionActivity (Phase F3.5)
+    // Register SystemBrainService (HeadlessTaskService for System Brain JS)
+    const hasSystemBrainService = services.some(
+      (service) => service.$['android:name'] === '.SystemBrainService'
+    );
+    
+    if (!hasSystemBrainService) {
+      services.push({
+        $: {
+          'android:name': '.SystemBrainService',
+          'android:exported': 'false',
+        },
+      });
+      console.log(`[${PLUGIN_NAME}] Registered SystemBrainService in AndroidManifest.xml`);
+    }
+    
+    application.service = services;
+    
+    // Register SystemSurfaceActivity
     if (!application.activity) {
       application.activity = [];
     }
     
     const activities = Array.isArray(application.activity) ? application.activity : [application.activity];
     
-    const hasInterventionActivity = activities.some(
-      (activity) => activity.$['android:name'] === '.InterventionActivity'
+    const hasSystemSurfaceActivity = activities.some(
+      (activity) => activity.$['android:name'] === '.SystemSurfaceActivity'
     );
     
-    if (!hasInterventionActivity) {
+    if (!hasSystemSurfaceActivity) {
       activities.push({
         $: {
-          'android:name': '.InterventionActivity',
+          'android:name': '.SystemSurfaceActivity',
           'android:configChanges': 'keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode',
           'android:launchMode': 'singleInstance',
           'android:excludeFromRecents': 'true',
@@ -274,7 +355,7 @@ function withAndroidManifestModifications(config) {
         },
       });
       application.activity = activities;
-      console.log(`[${PLUGIN_NAME}] Registered InterventionActivity in AndroidManifest.xml`);
+      console.log(`[${PLUGIN_NAME}] Registered SystemSurfaceActivity in AndroidManifest.xml`);
     }
     
     return config;
@@ -409,6 +490,9 @@ const withForegroundService = (config) => {
       // Copy files
       copyKotlinFiles(projectRoot);
       copyAccessibilityXml(projectRoot);
+      
+      // Register AppMonitorPackage in MainApplication.kt
+      registerAppMonitorPackage(projectRoot);
       
       return config;
     },
