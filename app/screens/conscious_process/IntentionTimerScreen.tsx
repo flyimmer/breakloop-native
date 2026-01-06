@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
+import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
 import { setIntentionTimer } from '@/src/os/osTriggerBrain';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
@@ -43,6 +44,7 @@ const DURATION_OPTIONS = [
 
 export default function IntentionTimerScreen() {
   const { interventionState, dispatchIntervention } = useIntervention();
+  const { setTransientTargetApp } = useSystemSession();
 
   // Disable Android hardware back button during intervention
   useEffect(() => {
@@ -88,6 +90,11 @@ export default function IntentionTimerScreen() {
       }
       
       console.log('[IntentionTimer] Timer set successfully');
+      
+      // Set transient targetApp for finish-time navigation
+      // This ensures SystemSurface launches the target app after finishing
+      setTransientTargetApp(interventionState.targetApp);
+      console.log('[IntentionTimer] Set transient targetApp:', interventionState.targetApp);
     }
 
     // Dispatch action to reset intervention state to idle

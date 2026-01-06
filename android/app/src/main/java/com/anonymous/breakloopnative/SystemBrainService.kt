@@ -62,6 +62,7 @@ class SystemBrainService : HeadlessJsTaskService() {
         const val EXTRA_PACKAGE_NAME = "packageName"
         const val EXTRA_TIMESTAMP = "timestamp"
         const val EXTRA_EXPIRES_AT = "expiresAt"  // For TIMER_SET events
+        const val EXTRA_TIMER_TYPE = "timerType"  // For TIMER_SET events (QUICK_TASK or INTENTION)
     }
 
     /**
@@ -101,11 +102,17 @@ class SystemBrainService : HeadlessJsTaskService() {
             putString("packageName", packageName)
             putDouble("timestamp", timestamp.toDouble())
             
-            // For TIMER_SET events, include expiration timestamp
+            // For TIMER_SET events, include expiration timestamp and timer type
             if (eventType == "TIMER_SET") {
                 val expiresAt = extras.getLong(EXTRA_EXPIRES_AT, 0L)
                 if (expiresAt > 0) {
                     putDouble("expiresAt", expiresAt.toDouble())
+                }
+                
+                // Include explicit timer type (QUICK_TASK or INTENTION)
+                val timerType = extras.getString(EXTRA_TIMER_TYPE)
+                if (timerType != null) {
+                    putString("timerType", timerType)
                 }
             }
         }

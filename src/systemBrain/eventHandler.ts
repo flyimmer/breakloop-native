@@ -131,6 +131,7 @@ export async function handleSystemEvent(event: {
   packageName: string;
   timestamp: number;
   expiresAt?: number; // For TIMER_SET events
+  timerType?: 'QUICK_TASK' | 'INTENTION'; // For TIMER_SET events (explicit type)
 }): Promise<void> {
   const { type, packageName, timestamp } = event;
   
@@ -146,7 +147,7 @@ export async function handleSystemEvent(event: {
   } else if (type === 'FOREGROUND_CHANGED') {
     await handleForegroundChange(packageName, timestamp, state);
   } else if (type === 'TIMER_SET') {
-    await handleTimerSet(packageName, event.expiresAt!, timestamp, state);
+    await handleTimerSet(packageName, event.expiresAt!, timestamp, event.timerType!, state);
   }
   
   // Save updated semantic state
@@ -191,7 +192,19 @@ async function handleTimerExpiration(
   
   let timerType: 'QUICK_TASK' | 'INTENTION' | 'UNKNOWN' = 'UNKNOWN';
   
-  if (quickTaskTimer && timestamp >= quickTaskTimer.expiresAt) {
+  // Check intention timer first (higher priority in expiration handling)
+  if (intentionTimer && timestamp >= intentionTimer.expiresAt) {
+    timerType = 'INTENTION';
+    console.log('[System Brain] ✓ Classified as Intention Timer expiration');
+    console.log('[System Brain] Intention timer details:', {
+      expiresAt: intentionTimer.expiresAt,
+      expiresAtTime: new Date(intentionTimer.expiresAt).toISOString(),
+      expiredMs: timestamp - intentionTimer.expiresAt,
+    });
+    // Remove per-app suppressor
+    delete state.intentionTimers[packageName];
+    console.log('[System Brain] Intention timer removed from state');
+  } else if (quickTaskTimer && timestamp >= quickTaskTimer.expiresAt) {
     timerType = 'QUICK_TASK';
     console.log('[System Brain] ✓ Classified as Quick Task expiration');
     console.log('[System Brain] Quick Task timer details:', {
@@ -200,15 +213,6 @@ async function handleTimerExpiration(
       expiredMs: timestamp - quickTaskTimer.expiresAt,
     });
     delete state.quickTaskTimers[packageName];
-  } else if (intentionTimer && timestamp >= intentionTimer.expiresAt) {
-    timerType = 'INTENTION';
-    console.log('[System Brain] ✓ Classified as Intention expiration');
-    console.log('[System Brain] Intention timer details:', {
-      expiresAt: intentionTimer.expiresAt,
-      expiresAtTime: new Date(intentionTimer.expiresAt).toISOString(),
-      expiredMs: timestamp - intentionTimer.expiresAt,
-    });
-    delete state.intentionTimers[packageName];
   }
   
   if (timerType === 'UNKNOWN') {
@@ -254,38 +258,53 @@ async function handleTimerExpiration(
 /**
  * Handle timer set (MECHANICAL event from native).
  * 
- * Native reports: "A timer was stored for app X with expiration Y"
- * System Brain makes semantic decision: "Record this as Quick Task usage"
+ * Native reports: "A timer was stored for app X with expiration Y and type Z"
+ * System Brain uses explicit timer type to store in correct semantic state.
  * 
  * @param packageName - App package name
  * @param expiresAt - Timer expiration timestamp
  * @param timestamp - Current timestamp
+ * @param timerType - Explicit timer type (QUICK_TASK or INTENTION)
  * @param state - Semantic state
  */
 async function handleTimerSet(
   packageName: string,
   expiresAt: number,
   timestamp: number,
+  timerType: 'QUICK_TASK' | 'INTENTION',
   state: TimerState
 ): Promise<void> {
+  const durationMs = expiresAt - timestamp;
+  const durationSec = Math.round(durationMs / 1000);
+  
   console.log('[System Brain] ========================================');
   console.log('[System Brain] 🔔 TIMER_SET event received');
+  console.log('[System Brain] Timer type:', timerType);  // ✅ Log explicit type
   console.log('[System Brain] Timer set for:', packageName);
   console.log('[System Brain] Timer details:', {
+    durationMs,
+    durationSec,
     expiresAt,
     expiresAtTime: new Date(expiresAt).toISOString(),
-    durationMs: expiresAt - timestamp,
-    durationSec: Math.round((expiresAt - timestamp) / 1000),
   });
   
-  // SEMANTIC DECISION: Store timer in semantic state
-  state.quickTaskTimers[packageName] = { expiresAt };
-  console.log('[System Brain] ✓ Timer stored in semantic state');
+  // ✅ Explicit type classification (no duration inference)
+  if (timerType === 'QUICK_TASK') {
+    // Store Quick Task timer and track usage
+    state.quickTaskTimers[packageName] = { expiresAt };
+    console.log('[System Brain] ✓ Quick Task timer stored');
+    
+    // Record usage (this consumes quota)
+    recordQuickTaskUsage(packageName, timestamp, state);
+    
+    console.log('[System Brain] ✅ Quick Task timer recorded in persisted state');
+  } else if (timerType === 'INTENTION') {
+    // Store per-app intention timer (NO usage tracking)
+    state.intentionTimers[packageName] = { expiresAt };
+    console.log('[System Brain] ✓ Intention timer stored (per-app suppressor)');
+    console.log('[System Brain] ✅ Intention timer recorded in persisted state');
+  }
   
-  // SEMANTIC DECISION: Record usage (this consumes quota)
-  recordQuickTaskUsage(packageName, timestamp, state);
-  
-  console.log('[System Brain] ✅ Quick Task timer recorded in persisted state');
   console.log('[System Brain] ========================================');
 }
 
@@ -330,14 +349,18 @@ async function handleForegroundChange(
   // Phase 2: Evaluate OS Trigger Brain and pre-decide UI flow
   console.log('[System Brain] Evaluating OS Trigger Brain for:', packageName);
   
-  // Step 1: Check t_intention (per-app)
+  // Priority #3: Check t_intention (per-app suppressor)
   const intentionTimer = state.intentionTimers[packageName];
   if (intentionTimer && timestamp < intentionTimer.expiresAt) {
-    console.log('[System Brain] ✓ t_intention VALID - suppressing intervention');
+    console.log('[System Brain] ✓ t_intention ACTIVE - suppressing intervention', {
+      packageName,
+      expiresAt: intentionTimer.expiresAt,
+      expiresAtTime: new Date(intentionTimer.expiresAt).toISOString(),
+    });
     return;
   }
   
-  // Step 2: Check t_quickTask (per-app)
+  // Priority #1: Check t_quickTask (per-app timer)
   const quickTaskTimer = state.quickTaskTimers[packageName];
   if (quickTaskTimer && timestamp < quickTaskTimer.expiresAt) {
     console.log('[System Brain] ✓ t_quickTask ACTIVE - suppressing intervention');

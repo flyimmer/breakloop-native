@@ -531,6 +531,9 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             
             val remainingSec = (expiresAtLong - System.currentTimeMillis()) / 1000
             android.util.Log.i("AppMonitorModule", "Stored intention timer for $packageName (expires in ${remainingSec}s) [NOTE: Native no longer checks this]")
+            
+            // Emit MECHANICAL event to System Brain JS with explicit timer type
+            emitSystemEventToSystemBrain("TIMER_SET", packageName, System.currentTimeMillis(), expiresAtLong, "INTENTION")
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "Failed to store intention timer", e)
         }
@@ -592,8 +595,8 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             val remainingSec = (expiresAtLong - System.currentTimeMillis()) / 1000
             android.util.Log.i("AppMonitorModule", "🚀 Stored Quick Task timer for $packageName (expires in ${remainingSec}s)")
             
-            // Emit MECHANICAL event to System Brain JS (single path via HeadlessTask)
-            emitSystemEventToSystemBrain("TIMER_SET", packageName, System.currentTimeMillis(), expiresAtLong)
+            // Emit MECHANICAL event to System Brain JS with explicit timer type
+            emitSystemEventToSystemBrain("TIMER_SET", packageName, System.currentTimeMillis(), expiresAtLong, "QUICK_TASK")
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "Failed to store Quick Task timer", e)
         }
@@ -613,7 +616,8 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
         eventType: String, 
         packageName: String, 
         timestamp: Long,
-        expiresAt: Long? = null
+        expiresAt: Long? = null,
+        timerType: String? = null
     ) {
         try {
             android.util.Log.i("AppMonitorModule", "🔵 About to emit $eventType to SystemBrainService")
@@ -625,6 +629,9 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
                 if (expiresAt != null) {
                     putExtra(SystemBrainService.EXTRA_EXPIRES_AT, expiresAt)
                 }
+                if (timerType != null) {
+                    putExtra(SystemBrainService.EXTRA_TIMER_TYPE, timerType)
+                }
             }
             
             android.util.Log.i("AppMonitorModule", "🔵 Intent created, calling startService()...")
@@ -634,7 +641,8 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             reactApplicationContext.startService(intent)
             
             android.util.Log.i("AppMonitorModule", "✅ startService() called successfully")
-            android.util.Log.i("AppMonitorModule", "📤 Emitted mechanical event to System Brain: $eventType for $packageName")
+            android.util.Log.i("AppMonitorModule", "📤 Emitted mechanical event to System Brain: $eventType for $packageName" + 
+                if (timerType != null) " (timerType: $timerType)" else "")
             
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "❌ Failed to emit SystemEvent to System Brain", e)
