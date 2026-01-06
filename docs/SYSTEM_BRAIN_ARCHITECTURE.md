@@ -40,8 +40,9 @@ System Brain JS is **event-driven**, NOT continuously running:
 
 - Receive MECHANICAL events from native (timer expired, foreground changed)
 - Classify semantic meaning (Quick Task vs Intention vs other)
-- Evaluate OS Trigger Brain logic
-- Decide when to launch SystemSurface
+- **Evaluate OS Trigger Brain priority chain** (Phase 2)
+- **Pre-decide UI flow** before launching SystemSurface (Phase 2)
+- Launch SystemSurface with **explicit wake reason** (`SHOW_QUICK_TASK_DIALOG` or `START_INTERVENTION_FLOW`)
 - Maintain semantic state (t_quickTask, t_intention)
 - Persist/restore state on each invocation
 
@@ -110,19 +111,58 @@ User-initiated JavaScript runtime for app features.
 - Timer expiration handling
 - Foreground app monitoring
 
-## Communication Flow
+## Communication Flow (Phase 2 - Explicit Pre-Decision)
 
 ```
 Native (ForegroundDetectionService)
-  ↓ (emit MECHANICAL event: "timer expired for app X")
+  ↓ (emit MECHANICAL event: "FOREGROUND_CHANGED", app X, timestamp)
 System Brain JS (event-driven headless)
-  ↓ (load state, classify as Quick Task, decide to intervene)
-Native (launch SystemSurfaceActivity)
-  ↓ (render UI with wake reason)
+  ↓ (load state, evaluate OS Trigger Brain priority chain)
+  ↓ (pre-decide: SHOW_QUICK_TASK or START_INTERVENTION)
+  ↓ (call launchSystemSurface with EXPLICIT wake reason)
+Native (AppMonitorModule.launchSystemSurface)
+  ↓ (launch SystemSurfaceActivity with wake reason)
 SystemSurface JS (ephemeral)
-  ↓ (user decision)
-System Brain JS (update state, save)
+  ↓ (read wake reason, directly dispatch session - NO logic)
+  ↓ (render appropriate flow based on session.kind)
+  ↓ (user makes decision)
+System Brain JS (receive decision, update state, save)
 ```
+
+**Key Phase 2 Principle:** System Brain **pre-decides** the UI flow. SystemSurface **only renders** based on explicit wake reason.
+
+## Phase 2: Explicit Wake Reasons (Current Architecture)
+
+### Overview
+
+Phase 2 eliminates ambiguity by having System Brain **pre-decide** the UI flow before launching SystemSurface.
+
+**Before Phase 2 (Transitional):**
+- Native launched SystemSurface with ambiguous wake reason (`MONITORED_APP_FOREGROUND`)
+- SystemSurface called `evaluateTriggerLogic()` to decide Quick Task vs Intervention
+- Wake reason didn't fully represent System Brain's decision
+
+**After Phase 2 (Current):**
+- System Brain evaluates OS Trigger Brain priority chain
+- System Brain pre-decides: Quick Task OR Intervention
+- System Brain launches SystemSurface with **explicit wake reason**
+- SystemSurface directly dispatches based on wake reason (no logic)
+
+### Explicit Wake Reasons
+
+**System Brain passes explicit UI decisions:**
+- `SHOW_QUICK_TASK_DIALOG` - System Brain decided: Show Quick Task dialog
+- `START_INTERVENTION_FLOW` - System Brain decided: Start Intervention flow
+- `QUICK_TASK_EXPIRED_FOREGROUND` - Quick Task expired, show Intervention
+
+**Key Principle:** Wake reason **IS** the decision. No re-evaluation needed.
+
+### Benefits
+
+- ✅ Zero ambiguity - wake reason is explicit
+- ✅ SystemSurface has zero decision logic
+- ✅ Clean separation: System Brain decides, SystemSurface renders
+- ✅ Single evaluation of priority chain (in System Brain only)
 
 ## Core Rules (LOCKED)
 

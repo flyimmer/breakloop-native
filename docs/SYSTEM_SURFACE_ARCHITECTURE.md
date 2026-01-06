@@ -183,6 +183,105 @@ function SystemSurfaceRoot() {
 
 ---
 
+## Part 1B: Final Responsibility Split (Phase 2 - Stable Architecture)
+
+This section defines the **final, stable architecture** after Phase 2 completion. This is not a transition state.
+
+### Native Layer (Android/Kotlin)
+
+**Responsibilities:**
+- Detect foreground app changes (AccessibilityService)
+- Detect timer expirations (using persisted timestamps)
+- Emit **mechanical events only**: `"TIMER_EXPIRED"`, `"FOREGROUND_CHANGED"`
+- Launch SystemSurfaceActivity when requested by System Brain
+- Pass wake reason via Intent extras
+
+**Explicitly Forbidden:**
+- ❌ Semantic decisions (Quick Task vs Intervention)
+- ❌ Knowing about Quick Task / Intervention logic
+- ❌ Launching SystemSurface directly based on app type
+- ❌ Checking `n_quickTask` or `t_intention`
+- ❌ Labeling events with semantic meaning
+- ❌ Running OS Trigger Brain logic
+
+**Key Rule:**
+> **Native decides WHEN, never WHY**
+
+---
+
+### System Brain JS (Headless, Semantic Core)
+
+**Responsibilities:**
+- **Single semantic authority** for all intervention logic
+- Owns all decision logic:
+  - **Monitored vs unmonitored apps** (via `isMonitoredApp()` from `src/os/osConfig.ts`)
+  - Quick Task availability (n_quickTask quota)
+  - Intervention triggering (OS Trigger Brain evaluation)
+  - Suppression rules (t_intention, t_quickTask)
+- Owns all persistent semantic state (AsyncStorage)
+- **Pre-decides UI flow** before launching SystemSurface
+- Launches SystemSurface with **explicit wake reason**
+- **Monitored App Guard**: MUST check `isMonitoredApp()` before any evaluation
+
+**Guarantees:**
+- **Kill-safe**: State persisted in AsyncStorage, logic reconstructable on each event
+- **Idempotent**: Same inputs → same decision
+- **Event-driven**: Invoked by native events, not continuously running
+- **No in-memory state**: Loads/saves state on each invocation
+
+**Key Rule:**
+> **System Brain decides WHY and WHAT UI to show**
+
+**Critical Guard Rule:**
+> **OS Trigger Brain logic runs ONLY for monitored apps. System Brain MUST check `isMonitoredApp(packageName)` before Quick Task evaluation or Intervention evaluation. BreakLoop app itself is explicitly excluded.**
+
+---
+
+### SystemSurface JS (UI Runtime)
+
+**Responsibilities:**
+- Render UI only (intervention screens, Quick Task dialog)
+- Consume wake reasons from System Brain (declarative instructions)
+- Dispatch exactly one session per launch based on wake reason
+- Handle user interactions
+- Report decisions back to System Brain
+- Manage bootstrap lifecycle (BOOTSTRAPPING → READY)
+
+**Explicitly Forbidden:**
+- ❌ Semantic decisions (Quick Task vs Intervention)
+- ❌ Availability checks (n_quickTask, t_intention)
+- ❌ Reading System Brain internal state from AsyncStorage
+- ❌ Re-running OS Trigger Brain logic
+- ❌ Calling `evaluateTriggerLogic()`
+- ❌ Using setTimeout for semantic timers
+- ❌ Re-evaluating priority chain
+
+**Key Rule:**
+> **SystemSurface never thinks, it only renders. Wake reasons are declarative instructions, not triggers for re-evaluation.**
+
+---
+
+### Main App JS (User Features)
+
+**Responsibilities:**
+- Settings UI
+- Community features
+- Insights and statistics display
+- User-initiated navigation
+
+**Explicitly Excluded From:**
+- ❌ System-level intervention logic
+- ❌ Quick Task execution
+- ❌ Intervention triggering
+- ❌ Timer expiration handling
+- ❌ Foreground app monitoring
+- ❌ Creating SystemSession
+
+**Key Rule:**
+> **Main App is for user features only, never system logic**
+
+---
+
 ## Part 2: Native–JavaScript Boundary
 
 ### Core Principle (Non-Negotiable)
@@ -280,25 +379,61 @@ System Brain JS is an **event-driven, headless JavaScript runtime** that runs as
 - Handle timer expiration
 - Monitor foreground apps
 
-### Wake Reason Contract (Critical)
+### Wake Reason Contract (Critical - Final Form)
 
 Every native launch of `SystemSurfaceActivity` MUST include a wake reason.
 
-**Valid Wake Reasons:**
-- `MONITORED_APP_FOREGROUND` - User opened monitored app
-- `INTENTION_EXPIRED_FOREGROUND` - Intention timer expired while user still on app
-- `QUICK_TASK_EXPIRED_FOREGROUND` - Quick Task timer expired while user still on app
-- `DEV_DEBUG` - Debug/testing wake
+**Core Principle:**
+> **Wake reasons are declarative instructions, not triggers for re-evaluation.**
+
+System Brain pre-decides the UI flow. SystemSurface consumes the wake reason and renders accordingly.
+
+---
+
+**Valid Wake Reasons (Phase 2 - Explicit Pre-Decision):**
+
+1. **`SHOW_QUICK_TASK_DIALOG`**
+   - **Meaning**: System Brain evaluated priority chain → User is eligible for Quick Task
+   - **SystemSurface Action**: Dispatch `START_QUICK_TASK` session
+   - **UI**: Show Quick Task dialog
+
+2. **`START_INTERVENTION_FLOW`**
+   - **Meaning**: System Brain evaluated priority chain → Intervention must start
+   - **SystemSurface Action**: Dispatch `START_INTERVENTION` session
+   - **UI**: Show Intervention flow (breathing screen)
+
+3. **`QUICK_TASK_EXPIRED_FOREGROUND`**
+   - **Meaning**: Quick Task timer expired while user stayed in app
+   - **SystemSurface Action**: Dispatch `START_INTERVENTION` session
+   - **UI**: Show QuickTaskExpiredScreen → Intervention
+
+4. **`DEV_DEBUG`**
+   - **Meaning**: Developer-triggered wake for testing
+   - **SystemSurface Action**: Depends on test scenario
+   - **UI**: Varies (testing only)
+
+---
+
+**Deprecated Wake Reasons (Phase 1 - Transitional):**
+- ~~`MONITORED_APP_FOREGROUND`~~ - Ambiguous, replaced by explicit wake reasons above
+- ~~`INTENTION_EXPIRED_FOREGROUND`~~ - Now handled by System Brain event classification
+
+---
 
 **System Brain JS Requirements:**
-- Receive mechanical events from native: "TIMER_EXPIRED", "FOREGROUND_CHANGED"
+- Receive mechanical events from native: `"TIMER_EXPIRED"`, `"FOREGROUND_CHANGED"`
+- **Check `isMonitoredApp(packageName)`** before any evaluation (Monitored App Guard)
 - Classify semantic meaning (Quick Task vs Intention)
-- Decide whether to launch SystemSurface
-- Pass wake reason to SystemSurface when launching
+- **Evaluate OS Trigger Brain priority chain**
+- **Pre-decide UI flow** (Quick Task OR Intervention)
+- Launch SystemSurface with **explicit wake reason**
 
 **SystemSurface JS Requirements:**
-- Read wake reason on startup
-- Branch behavior based on wake reason
+- Read wake reason from Intent extras on startup
+- **Directly dispatch session based on wake reason** (no logic, no re-evaluation)
+- **NEVER** call `evaluateTriggerLogic()` (System Brain already decided)
+- **NEVER** re-evaluate OS Trigger Brain priority chain
+- **NEVER** read AsyncStorage semantic state
 - **NEVER** use setTimeout for semantic timers
 
 ### Red Flags (Immediate Failure)
@@ -354,6 +489,124 @@ When reviewing code changes, verify:
 - [ ] Wake reason always provided to SystemSurface
 - [ ] No semantic logic in native layer
 - [ ] No mechanical logic in UI layers
+
+---
+
+## Part 2B: Single Source of Truth for State
+
+This table defines **where each piece of state lives** and **who owns it**. This is the authoritative reference for state management.
+
+| State | Owner | Storage Location | Storage Key | Scope | Notes |
+|-------|-------|------------------|-------------|-------|-------|
+| **n_quickTask** (max uses) | System Brain | AsyncStorage | `quick_task_settings_v1` | Global | User config from Settings, immutable at runtime |
+| **Quick Task usage history** | System Brain | AsyncStorage | `system_brain_state_v1` | Global | Array of timestamps, kill-safe, cleaned on each event |
+| **t_quickTask** (timer) | System Brain | AsyncStorage | `system_brain_state_v1` | Per-app | Quick Task active timer per monitored app |
+| **t_intention** (timer) | System Brain | AsyncStorage | `system_brain_state_v1` | Per-app | Intention timer per monitored app |
+| **Monitored apps list** | Main App | AsyncStorage | `mindful_*_v17_2` | Global | User-configured list, read by System Brain via `isMonitoredApp()` |
+| **SystemSession** | SystemSurface | In-memory | N/A | UI only | Ephemeral, destroyed when SystemSurface finishes |
+| **Bootstrap state** | SystemSurface | In-memory | N/A | UI only | BOOTSTRAPPING → READY lifecycle |
+| **Intervention state** | SystemSurface | In-memory | N/A | UI only | Breathing, root-cause, alternatives, etc. |
+
+---
+
+**Hard Rules:**
+
+1. **SystemSurface may NOT read or infer semantic state from AsyncStorage**
+   - SystemSurface receives all decisions via wake reason
+   - No direct AsyncStorage reads for `n_quickTask`, `t_intention`, etc.
+
+2. **System Brain is the ONLY writer of semantic state**
+   - Only System Brain writes to `system_brain_state_v1`
+   - Only System Brain updates usage history and timers
+
+3. **State must be kill-safe**
+   - System Brain loads state on each event invocation
+   - No reliance on in-memory state between events
+
+4. **Monitored App Guard**
+   - System Brain MUST call `isMonitoredApp(packageName)` before any evaluation
+   - BreakLoop app itself is explicitly excluded from monitoring
+
+---
+
+## Part 2C: Canonical Event Flow (Phase 2 - Final)
+
+This is the **single, authoritative event flow** for Phase 2. There are no alternative paths or legacy flows.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. Native Layer (ForegroundDetectionService)                    │
+│    - AccessibilityService detects foreground app change         │
+│    - Emits MECHANICAL event: "FOREGROUND_CHANGED"               │
+│    - Event data: { packageName, timestamp }                     │
+│    - NO semantic decisions, NO app type checks                  │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 2. System Brain JS (Event-Driven Headless)                      │
+│    - Receives mechanical event from native                      │
+│    - Loads semantic state from AsyncStorage                     │
+│    - CHECK: isMonitoredApp(packageName)?                        │
+│      → If NO: Early exit (no action)                            │
+│      → If YES: Continue to priority chain                       │
+│    - Evaluates OS Trigger Brain priority chain:                 │
+│      1. Check t_intention (per-app) → Suppress?                 │
+│      2. Check t_quickTask (per-app) → Suppress?                 │
+│      3. Check n_quickTask (global) → Show Quick Task?           │
+│      4. Else → Start Intervention                               │
+│    - PRE-DECIDES UI flow (Quick Task OR Intervention)           │
+│    - Calls launchSystemSurface(packageName, wakeReason)         │
+│    - Saves updated state to AsyncStorage                        │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 3. Native Layer (AppMonitorModule.launchSystemSurface)          │
+│    - Receives explicit wake reason from System Brain            │
+│    - Launches SystemSurfaceActivity                             │
+│    - Passes wake reason + triggeringApp via Intent extras       │
+│    - NO semantic decisions, just mechanical launch              │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 4. SystemSurface JS (Ephemeral UI Runtime)                      │
+│    - Reads wake reason from Intent extras                       │
+│    - NO evaluateTriggerLogic() call                             │
+│    - NO priority chain re-evaluation                            │
+│    - NO AsyncStorage semantic state reads                       │
+│    - Directly dispatches session based on wake reason:          │
+│      • SHOW_QUICK_TASK_DIALOG → START_QUICK_TASK                │
+│      • START_INTERVENTION_FLOW → START_INTERVENTION             │
+│    - Manages bootstrap lifecycle (BOOTSTRAPPING → READY)        │
+│    - Renders appropriate flow (QuickTaskFlow / InterventionFlow)│
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 5. User Interaction                                             │
+│    - User makes decision (Quick Task / Intervention)            │
+│    - SystemSurface reports decision to System Brain             │
+│    - System Brain updates semantic state                        │
+│    - SystemSurface finishes (session = null)                    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key Principles:**
+
+1. **Linear Flow**: Native → System Brain → SystemSurface (no loops)
+2. **Single Evaluation**: OS Trigger Brain evaluated once in System Brain only
+3. **Explicit Wake Reasons**: Wake reason IS the decision (no ambiguity)
+4. **Monitored App Guard**: System Brain checks `isMonitoredApp()` before evaluation
+5. **No Re-Evaluation**: SystemSurface never re-runs priority chain
+
+**What This Diagram Does NOT Show:**
+
+- ❌ Alternative paths (there are none)
+- ❌ Legacy flows (Phase 1 is deprecated)
+- ❌ SystemSurface decision logic (it has none)
+- ❌ Native semantic decisions (it makes none)
 
 ---
 
@@ -673,6 +926,61 @@ When user switches away from a monitored app, cancel intervention ONLY if it's i
 
 ---
 
+### Intervention Flow Initialization Contract
+
+**Critical Rule:** `BEGIN_INTERVENTION` must be dispatched **idempotently** to prevent countdown/hang bugs.
+
+**Initialization Condition:**
+
+`BEGIN_INTERVENTION` should be dispatched when:
+- `targetApp` changes (switching to a different monitored app), OR
+- Intervention state is NOT already in `breathing`
+
+**Implementation:**
+
+```typescript
+// CORRECT (Idempotent)
+useEffect(() => {
+  if (interventionState.targetApp !== triggeringApp || 
+      interventionState.state !== 'breathing') {
+    dispatchIntervention({
+      type: 'BEGIN_INTERVENTION',
+      targetApp: triggeringApp,
+    });
+  }
+}, [triggeringApp, interventionState.targetApp, interventionState.state]);
+
+// WRONG (Unconditional reset)
+useEffect(() => {
+  dispatchIntervention({
+    type: 'BEGIN_INTERVENTION',
+    targetApp: triggeringApp,
+  });
+}, [triggeringApp]); // ❌ Resets on every mount, causes countdown restart
+```
+
+**Forbidden Patterns:**
+- ❌ Unconditional reset on component mount
+- ❌ Relying on previous reducer state accidentally
+- ❌ Multiple `BEGIN_INTERVENTION` dispatches for same app
+
+**Why This Matters:**
+
+Without idempotent initialization:
+- Breathing countdown restarts unexpectedly
+- User sees screen hang or flicker
+- Intervention state becomes inconsistent
+
+**Verification:**
+
+When reviewing intervention initialization code:
+- [ ] Check if `BEGIN_INTERVENTION` is conditional
+- [ ] Verify `targetApp` comparison
+- [ ] Verify `state !== 'breathing'` check
+- [ ] Ensure no unconditional dispatch on mount
+
+---
+
 ## Shared System Surface
 
 ```
@@ -933,12 +1241,69 @@ This architecture allows for:
 - ✅ Clear boundaries between concerns
 - ✅ Easy mental model for developers
 
-**Anti-Patterns to Avoid:**
-- ❌ Nesting Quick Task inside Intervention Flow
-- ❌ Making native code interpret semantic logic
-- ❌ Mixing Main App UI with System Surface UI
-- ❌ Sharing state between flows
-- ❌ Changing priority order without reviewing this document
+**Anti-Patterns to Avoid (Critical - Must Never Happen Again):**
+
+These patterns have caused bugs in the past and must be explicitly avoided:
+
+1. **❌ SystemSurface calling OS Trigger Brain logic**
+   - SystemSurface must NEVER call `evaluateTriggerLogic()`
+   - SystemSurface must NEVER re-evaluate priority chain
+   - Wake reason IS the decision, no re-evaluation needed
+
+2. **❌ UI computing Quick Task availability**
+   - SystemSurface must NEVER check `n_quickTask`
+   - SystemSurface must NEVER read `t_intention` or `t_quickTask`
+   - All availability checks happen in System Brain only
+
+3. **❌ UI reading AsyncStorage semantic state**
+   - SystemSurface must NEVER read `system_brain_state_v1`
+   - SystemSurface must NEVER read `quick_task_settings_v1`
+   - SystemSurface receives all decisions via wake reason
+
+4. **❌ Native launching SystemSurface based on app type**
+   - Native must NEVER check if app is monitored
+   - Native must NEVER decide Quick Task vs Intervention
+   - Native emits mechanical events only
+
+5. **❌ Multiple semantic authorities**
+   - System Brain is the ONLY semantic authority
+   - No semantic logic in Native, SystemSurface, or MainApp
+   - Single source of truth for all intervention decisions
+
+6. **❌ Nesting Quick Task inside Intervention Flow**
+   - Quick Task and Intervention are separate, mutually exclusive flows
+   - Never show Quick Task dialog during intervention
+   - Never mix flow states
+
+7. **❌ Making native code interpret semantic logic**
+   - Native decides WHEN, never WHY
+   - No semantic meaning in native event labels
+   - No timer type classification in native
+
+8. **❌ Mixing Main App UI with System Surface UI**
+   - Main App and System Surface are separate contexts
+   - Never show Main App screens in System Surface
+   - Never show System Surface screens in Main App
+
+9. **❌ Sharing state between flows**
+   - Each flow has independent state
+   - No state leakage between Quick Task and Intervention
+   - Clean state on flow transition
+
+10. **❌ Changing priority order without reviewing this document**
+    - Priority chain order is LOCKED
+    - Changes require architecture review
+    - Must update all documentation
+
+11. **❌ Unconditional BEGIN_INTERVENTION on mount**
+    - Must check if already in breathing state
+    - Must check if targetApp changed
+    - Idempotent initialization only
+
+12. **❌ Skipping Monitored App Guard**
+    - System Brain MUST check `isMonitoredApp()` before evaluation
+    - BreakLoop app itself must be excluded
+    - No intervention for unmonitored apps
 
 ---
 

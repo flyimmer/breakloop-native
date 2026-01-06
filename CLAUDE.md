@@ -193,11 +193,16 @@ See `docs/SYSTEM_SURFACE_ARCHITECTURE.md` and `docs/SYSTEM_BRAIN_ARCHITECTURE.md
 - Never duplicate logic across boundaries
 - System Brain loads/saves state on each event invocation (event-driven, not continuous)
 
-**Wake Reason Contract:**
-- Native emits mechanical events to System Brain JS
-- System Brain classifies and decides whether to launch SystemSurface
-- System Brain passes wake reason to SystemSurface (`MONITORED_APP_FOREGROUND`, `INTENTION_EXPIRED_FOREGROUND`, `QUICK_TASK_EXPIRED_FOREGROUND`, `DEV_DEBUG`)
-- SystemSurface reads wake reason and renders appropriate UI
+**Wake Reason Contract (Phase 2 - Explicit Pre-Decision):**
+- Native emits mechanical events to System Brain JS ("TIMER_EXPIRED", "FOREGROUND_CHANGED")
+- System Brain classifies semantic meaning and evaluates OS Trigger Brain priority chain
+- System Brain pre-decides UI flow and launches SystemSurface with **explicit wake reason**
+- System Brain passes wake reason to SystemSurface:
+  - `SHOW_QUICK_TASK_DIALOG` - System Brain decided to show Quick Task dialog
+  - `START_INTERVENTION_FLOW` - System Brain decided to start Intervention flow
+  - `QUICK_TASK_EXPIRED_FOREGROUND` - Quick Task expired, show Intervention
+  - `DEV_DEBUG` - Debug/testing wake
+- SystemSurface reads wake reason and **directly dispatches session** (no logic, no re-evaluation)
 
 **Red Flags (Immediate Failure):**
 - ❌ Kotlin code checks `n_quickTask`
@@ -472,24 +477,28 @@ System Brain JS is an **event-driven, headless JavaScript runtime** that runs as
 - Saves state to persistent storage after processing
 - Does NOT run continuously or maintain in-memory state
 
-**Responsibilities:**
+**Responsibilities (Phase 2 - Explicit Pre-Decision):**
 - Receive MECHANICAL events from native ("TIMER_EXPIRED", "FOREGROUND_CHANGED")
 - Classify semantic meaning (Quick Task vs Intention)
-- Evaluate OS Trigger Brain logic
-- Decide when to launch SystemSurface
+- **Evaluate OS Trigger Brain priority chain**
+- **Pre-decide UI flow** (Quick Task OR Intervention)
+- Launch SystemSurface with **explicit wake reason** (`SHOW_QUICK_TASK_DIALOG` or `START_INTERVENTION_FLOW`)
 - Maintain semantic state (t_quickTask, t_intention)
 - Persist/restore state on each invocation
 
-**Event Classification:**
-- Native emits: "TIMER_EXPIRED for app X at timestamp Y"
-- System Brain classifies: "Is this Quick Task or Intention?"
-- System Brain decides: "Should I launch SystemSurface or stay silent?"
+**Event Classification & Pre-Decision:**
+- Native emits: "FOREGROUND_CHANGED for app X at timestamp Y"
+- System Brain classifies: "Is this a monitored app?"
+- System Brain evaluates: "Check t_intention, t_quickTask, n_quickTask"
+- System Brain pre-decides: "SHOW_QUICK_TASK or START_INTERVENTION"
+- System Brain launches SystemSurface with explicit wake reason
 
 **Integration:**
 - Registered as React Native Headless JS task in `index.js`
 - Receives events from ForegroundDetectionService
-- Launches SystemSurface via AppMonitorModule when needed
-- Passes wake reason to SystemSurface
+- Evaluates OS Trigger Brain priority chain
+- Launches SystemSurface via AppMonitorModule with explicit wake reason
+- SystemSurface directly dispatches based on wake reason (no re-evaluation)
 
 ### OS Trigger Brain
 
@@ -517,7 +526,7 @@ The OS Trigger Brain logic is now invoked by System Brain JS (not directly by Sy
 TypeScript interface for native Kotlin modules. Provides bridge between JavaScript and native code.
 
 **Key Functions:**
-- `getWakeReason()` - Read wake reason from native (MONITORED_APP_FOREGROUND, INTENTION_EXPIRED, etc.)
+- `getWakeReason()` - Read wake reason from native (SHOW_QUICK_TASK_DIALOG, START_INTERVENTION_FLOW, etc.)
 - `getTriggeringApp()` - Read which app triggered the wake
 - `getQuickTaskStatus()` - Check if Quick Task is active for an app
 - `getIntentionTimerStatus()` - Check if intention timer is valid for an app
@@ -1397,17 +1406,18 @@ The codebase underwent incremental refactoring to improve maintainability while 
 - Assume continuous execution
 - Maintain state in memory between events
 
-**SystemSurface JS MUST:**
-- Receive wake reason from System Brain
-- Decide whether to create SystemSession based on wake reason
+**SystemSurface JS MUST (Phase 2 - Render Only):**
+- Receive **explicit wake reason** from System Brain (`SHOW_QUICK_TASK_DIALOG`, `START_INTERVENTION_FLOW`)
+- **Directly dispatch session** based on wake reason (no logic, no re-evaluation)
 - Dispatch START_* events (START_INTERVENTION, START_QUICK_TASK, START_ALTERNATIVE_ACTIVITY)
 - Control bootstrap lifecycle (BOOTSTRAPPING → READY)
 - Render appropriate flow based on session.kind
 - Report user decisions to System Brain
 
 **SystemSurface JS MUST NOT:**
+- Call `evaluateTriggerLogic()` (System Brain already pre-decided)
+- Re-evaluate OS Trigger Brain priority chain
 - Use setTimeout for semantic timers
-- Run OS Trigger Brain (this happens in System Brain context)
 - Make semantic decisions about intervention logic
 - Assume session exists on mount
 - Finish activity during BOOTSTRAPPING
@@ -1533,8 +1543,10 @@ Recent commit themes:
 
 **For Developers (Architecture):**
 - `CLAUDE.md` (this file) - Architecture, implementation details, development workflow
-- `docs/SYSTEM_SURFACE_ARCHITECTURE.md` - **AUTHORITATIVE** System Surface architecture (three-runtime, bootstrap lifecycle, flows)
-- `docs/SYSTEM_BRAIN_ARCHITECTURE.md` - **NEW** System Brain JS event-driven runtime architecture
+- `docs/SYSTEM_SURFACE_ARCHITECTURE.md` - **AUTHORITATIVE** System Surface architecture (three-runtime, bootstrap lifecycle, flows, Phase 2 complete)
+- `docs/SYSTEM_BRAIN_ARCHITECTURE.md` - System Brain JS event-driven runtime architecture (Phase 2 explicit wake reasons)
+- `docs/PHASE2_ARCHITECTURE_UPDATE.md` - Phase 2 architecture summary (explicit wake reasons, pre-decision)
+- `docs/PHASE2_DOCUMENTATION_COMPLETE.md` - **NEW** Phase 2 documentation integration summary (all 7 critical components)
 - `docs/NATIVE_JAVASCRIPT_BOUNDARY.md` - **Critical** architectural boundary rules (must follow for all native/JS integration)
 - `docs/OS_Trigger_Contract V1.md` - Intervention trigger rules, timer logic, monitored apps
 - `docs/System_Session_Definition.md` - System session definitions and lifecycle
@@ -1560,8 +1572,9 @@ Recent commit themes:
 
 **Key Documentation Hierarchy:**
 1. **SYSTEM_SURFACE_ARCHITECTURE.md** - Start here for overall architecture
-2. **SYSTEM_BRAIN_ARCHITECTURE.md** - Understand System Brain JS event-driven runtime (NEW)
-3. **NATIVE_JAVASCRIPT_BOUNDARY.md** - Understand the boundary contract
-4. **OS_Trigger_Contract V1.md** - Learn trigger rules and timer logic
-5. **KOTLIN_FILE_SYNC.md** - Follow Kotlin editing workflow
-6. **CLAUDE.md** - Reference for implementation details
+2. **SYSTEM_BRAIN_ARCHITECTURE.md** - Understand System Brain JS event-driven runtime
+3. **PHASE2_ARCHITECTURE_UPDATE.md** - Phase 2 explicit wake reasons summary (NEW)
+4. **NATIVE_JAVASCRIPT_BOUNDARY.md** - Understand the boundary contract
+5. **OS_Trigger_Contract V1.md** - Learn trigger rules and timer logic
+6. **KOTLIN_FILE_SYNC.md** - Follow Kotlin editing workflow
+7. **CLAUDE.md** - Reference for implementation details

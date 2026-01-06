@@ -65,18 +65,31 @@ This document defines the architectural boundary between native (Kotlin) code an
 
 Every native launch of `SystemSurfaceActivity` MUST include a wake reason.
 
-### Valid Wake Reasons:
+### Valid Wake Reasons (Phase 2 - Explicit Pre-Decision):
 
-- `MONITORED_APP_FOREGROUND`
-- `INTENTION_EXPIRED`
-- `QUICK_TASK_EXPIRED`
-- `DEV_DEBUG`
+**System Brain passes explicit UI decisions:**
+- `SHOW_QUICK_TASK_DIALOG` - System Brain evaluated priority chain → Show Quick Task dialog
+- `START_INTERVENTION_FLOW` - System Brain evaluated priority chain → Start Intervention flow
+- `QUICK_TASK_EXPIRED_FOREGROUND` - Quick Task timer expired, show Intervention
+- `DEV_DEBUG` - Debug/testing wake
 
-### JavaScript Requirements:
+**Deprecated (Phase 1 - Transitional):**
+- ~~`MONITORED_APP_FOREGROUND`~~ - Ambiguous, replaced by explicit wake reasons
+- ~~`INTENTION_EXPIRED`~~ - Now handled by System Brain event classification
+
+### System Brain Requirements:
+
+- Receive mechanical events from native ("TIMER_EXPIRED", "FOREGROUND_CHANGED")
+- **Evaluate OS Trigger Brain priority chain**
+- **Pre-decide UI flow** before launching SystemSurface
+- Pass **explicit wake reason** that represents the decision
+
+### SystemSurface Requirements:
 
 - Read wake reason on startup
-- Branch behavior based on wake reason
-- **NEVER** treat `QUICK_TASK_EXPIRED` as a normal trigger
+- **Directly dispatch session** based on wake reason (no logic)
+- **NEVER** call `evaluateTriggerLogic()` (System Brain already decided)
+- **NEVER** treat `QUICK_TASK_EXPIRED_FOREGROUND` as a normal trigger
 
 ---
 
