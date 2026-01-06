@@ -135,16 +135,10 @@ const intentionTimers: Map<string, { expiresAt: number }> = new Map();
 
 
 /**
- * Quick Task usage history GLOBAL across all apps.
- * Array of timestamps when Quick Task was used (any app).
- * Used to enforce the "N uses per 15-minute window" limit GLOBALLY.
- * 
- * IMPORTANT: This is NOT per-app. Using Quick Task on Instagram
- * consumes the same quota as using it on TikTok.
- * Example: If limit is 2 uses per 15min, user can use Quick Task
- * twice total across ALL monitored apps, not 2 times per app.
+ * Quick Task usage tracking removed from SystemSurface context.
+ * Usage is now tracked ONLY in System Brain's persisted state.
+ * SystemSurface no longer makes availability decisions.
  */
-const quickTaskUsageHistory: number[] = [];
 
 /**
  * Active Quick Task timers per app.
@@ -179,133 +173,20 @@ let systemSessionDispatcher: ((event: any) => void) | null = null;
 let interventionStateGetter: (() => { state: string; targetApp: string | null }) | null = null;
 
 /**
- * Calculate remaining Quick Task uses GLOBALLY in the current 15-minute window.
- * Filters out timestamps older than 15 minutes.
+ * Quick Task availability computation removed from SystemSurface context.
+ * System Brain is the single source of truth for availability decisions.
  * 
- * IMPORTANT: This is GLOBAL across all apps, not per-app.
- * Using Quick Task on Instagram consumes the same quota as TikTok.
+ * REMOVED FUNCTIONS:
+ * - getQuickTaskRemaining() - Availability computed only in System Brain
+ * - recordQuickTaskUsage() - Usage recorded only in System Brain via TIMER_SET events
  * 
- * @param currentTimestamp - Current timestamp
- * @returns Number of Quick Task uses remaining GLOBALLY
+ * SystemSurface no longer makes semantic decisions about Quick Task availability.
  */
-export function getQuickTaskRemaining(currentTimestamp: number): number {
-  const windowMs = getQuickTaskWindowMs();
-  const maxUses = getQuickTaskUsesPerWindow();
-  
-  // Filter out timestamps older than 15 minutes from GLOBAL history
-  // This is the JS-owned reset logic - no UI or native inference
-  const recentUsages = quickTaskUsageHistory.filter(ts => currentTimestamp - ts < windowMs);
-  
-  // Update global history with filtered timestamps (automatic window reset)
-  if (recentUsages.length !== quickTaskUsageHistory.length) {
-    quickTaskUsageHistory.length = 0;
-    quickTaskUsageHistory.push(...recentUsages);
-  }
-  
-  // Handle unlimited case (-1 represents unlimited for testing)
-  if (maxUses === -1) {
-    if (__DEV__) {
-      console.log('[OS Trigger Brain] Quick Task availability check (GLOBAL):', {
-        maxUses: 'Unlimited',
-        recentUsagesGlobal: recentUsages.length,
-        remaining: 'Unlimited',
-        windowMinutes: windowMs / (60 * 1000),
-        note: 'Usage is GLOBAL across all apps - UNLIMITED MODE',
-      });
-    }
-    // Return a very large number to represent unlimited
-    return Number.MAX_SAFE_INTEGER;
-  }
-  
-  // Calculate remaining uses GLOBALLY
-  const remaining = Math.max(0, maxUses - recentUsages.length);
-  
-  if (__DEV__) {
-    console.log('[OS Trigger Brain] Quick Task availability check (GLOBAL):', {
-      maxUses,
-      recentUsagesGlobal: recentUsages.length,
-      remaining,
-      windowMinutes: windowMs / (60 * 1000),
-      note: 'Usage is GLOBAL across all apps',
-    });
-  }
-  
-  return remaining;
-}
 
 /**
- * Record a Quick Task usage GLOBALLY.
- * Adds current timestamp to GLOBAL usage history.
- * 
- * IMPORTANT: This is GLOBAL, not per-app.
- * 
- * @param packageName - App package name (for logging only)
- * @param timestamp - Current timestamp
+ * startInterventionFlow() removed - System Brain handles intervention launching in Phase 2.
+ * System Brain pre-decides UI flow and launches SystemSurface with explicit wake reason.
  */
-function recordQuickTaskUsage(packageName: string, timestamp: number): void {
-  quickTaskUsageHistory.push(timestamp);
-  
-  console.log('[OS Trigger Brain] Quick Task usage recorded (GLOBAL)', {
-    packageName,
-    timestamp,
-    totalUsagesGlobal: quickTaskUsageHistory.length,
-    note: 'Usage is GLOBAL across all apps',
-  });
-}
-
-/**
- * Start intervention flow for a monitored app.
- * Handles cross-app interference prevention and dispatches START_INTERVENTION.
- * 
- * This function is called when the decision tree determines intervention should start.
- * It deletes t_intention as per spec: "intervention flow starts → t_intention deleted"
- * 
- * REFACTORED: Now uses SystemSession dispatcher (Rule 2)
- * 
- * @param packageName - App package name requiring intervention
- * @param timestamp - Current timestamp
- */
-function startInterventionFlow(packageName: string, timestamp: number): void {
-  console.log('[OS Trigger Brain] ========================================');
-  console.log('[OS Trigger Brain] Starting intervention flow for:', packageName);
-  console.log('[OS Trigger Brain] Timestamp:', new Date(timestamp).toISOString());
-
-  // Use SystemSession dispatcher if available (Rule 2)
-  const dispatcher = systemSessionDispatcher || interventionDispatcher;
-  
-  if (!dispatcher) {
-    console.warn('[OS Trigger Brain] No dispatcher set - cannot trigger');
-    console.log('[OS Trigger Brain] ========================================');
-    return;
-  }
-
-  // Delete t_intention (per spec: "intervention flow starts → t_intention deleted")
-  intentionTimers.delete(packageName);
-  console.log('[OS Trigger Brain] t_intention deleted (intervention starting)');
-
-  console.log('[OS Trigger Brain] START_INTERVENTION dispatched', {
-    packageName,
-    timestamp,
-    time: new Date(timestamp).toISOString(),
-  });
-
-  // RULE 2: Dispatch SystemSession event
-  if (systemSessionDispatcher) {
-    systemSessionDispatcher({
-      type: 'START_INTERVENTION',
-      app: packageName,
-    });
-  } else {
-    // Fallback to old dispatcher during migration
-    dispatcher({
-      type: 'BEGIN_INTERVENTION',
-      app: packageName,
-      breathingDuration: getInterventionDurationSec(),
-    });
-  }
-  
-  console.log('[OS Trigger Brain] ========================================');
-}
 
 /**
  * Show Quick Task dialog for a monitored app.
@@ -315,113 +196,17 @@ function startInterventionFlow(packageName: string, timestamp: number): void {
  * @param packageName - App package name
  * @param remaining - Number of Quick Task uses remaining
  */
-function showQuickTaskDialog(packageName: string, remaining: number): void {
-  console.log('[OS Trigger Brain] ========================================');
-  console.log('[OS Trigger Brain] Showing Quick Task dialog for:', packageName);
-  console.log('[OS Trigger Brain] Quick Task uses remaining (global):', remaining);
-
-  // Use SystemSession dispatcher if available (Rule 2)
-  const dispatcher = systemSessionDispatcher || interventionDispatcher;
-  
-  if (!dispatcher) {
-    console.warn('[OS Trigger Brain] No dispatcher set - cannot show dialog');
-    console.log('[OS Trigger Brain] ========================================');
-    return;
-  }
-
-  // RULE 2: Dispatch SystemSession event
-  if (systemSessionDispatcher) {
-    systemSessionDispatcher({
-      type: 'START_QUICK_TASK',
-      app: packageName,
-    });
-  } else {
-    // Fallback to old dispatcher during migration
-    dispatcher({
-      type: 'SHOW_QUICK_TASK',
-      app: packageName,
-      remaining: remaining,
-    });
-  }
-  
-  console.log('[OS Trigger Brain] ========================================');
-}
+/**
+ * showQuickTaskDialog() removed - System Brain makes this decision.
+ * SystemSurface no longer dispatches START_QUICK_TASK based on availability checks.
+ * System Brain's wake reason determines the session type.
+ */
 
 /**
- * Evaluate trigger logic using nested decision tree (OS Trigger Contract V1).
- * 
- * ARCHITECTURE: Implements NESTED priority logic per spec:
- * 1. Check t_intention (per-app)
- *    - If valid: suppress everything
- * 2. If t_intention = 0: Check n_quickTask (global)
- *    - If n_quickTask != 0: Check t_quickTask (per-app)
- *      - If t_quickTask != 0: suppress everything
- *      - If t_quickTask = 0: show Quick Task dialog
- *    - If n_quickTask = 0: start intervention flow
- * 
- * This function is called for EVERY monitored app entry.
- * 
- * @param packageName - App package name
- * @param timestamp - Current timestamp
+ * evaluateTriggerLogic() removed - System Brain handles all decision logic in Phase 2.
+ * SystemSurface no longer evaluates trigger logic or checks suppression.
+ * System Brain pre-decides and passes explicit wake reason.
  */
-export function evaluateTriggerLogic(packageName: string, timestamp: number): void {
-  console.log('[OS Trigger Brain] ========================================');
-  console.log('[OS Trigger Brain] Evaluating nested trigger logic for:', packageName);
-  console.log('[OS Trigger Brain] Timestamp:', new Date(timestamp).toISOString());
-
-  // Clean up any expired Quick Task timers (silent operation)
-  cleanupExpiredQuickTaskTimers(timestamp);
-
-  // ============================================================================
-  // Step 1: Check t_intention (per-app)
-  // ============================================================================
-  if (hasValidIntentionTimer(packageName, timestamp)) {
-    const timer = intentionTimers.get(packageName);
-    const remainingSec = timer ? Math.round((timer.expiresAt - timestamp) / 1000) : 0;
-    console.log('[OS Trigger Brain] ✓ t_intention VALID (per-app)');
-    console.log('[OS Trigger Brain] → SUPPRESS EVERYTHING');
-    console.log('[OS Trigger Brain] → Remaining:', `${remainingSec}s`);
-    console.log('[OS Trigger Brain] ========================================');
-    return; // Suppress
-  }
-  console.log('[OS Trigger Brain] ✗ t_intention = 0 (expired or not set)');
-
-  // ============================================================================
-  // Step 2: t_intention = 0 → Check n_quickTask (global)
-  // ============================================================================
-  const quickTaskRemaining = getQuickTaskRemaining(timestamp);
-  
-  if (quickTaskRemaining > 0) {
-    console.log('[OS Trigger Brain] ✓ n_quickTask != 0 (uses remaining: ' + quickTaskRemaining + ')');
-    
-    // ============================================================================
-    // Step 3: n_quickTask != 0 → Check t_quickTask (per-app)
-    // ============================================================================
-    if (hasActiveQuickTaskTimer(packageName, timestamp)) {
-      const timer = quickTaskTimers.get(packageName);
-      const remainingSec = timer ? Math.round((timer.expiresAt - timestamp) / 1000) : 0;
-      console.log('[OS Trigger Brain] ✓ t_quickTask ACTIVE (per-app)');
-      console.log('[OS Trigger Brain] → SUPPRESS EVERYTHING');
-      console.log('[OS Trigger Brain] → Remaining:', `${remainingSec}s`);
-      console.log('[OS Trigger Brain] ========================================');
-      return; // Suppress
-    }
-    
-    console.log('[OS Trigger Brain] ✗ t_quickTask = 0 (no active timer)');
-    console.log('[OS Trigger Brain] → SHOW QUICK TASK DIALOG');
-    console.log('[OS Trigger Brain] ========================================');
-    showQuickTaskDialog(packageName, quickTaskRemaining);
-    return;
-  }
-  
-  // ============================================================================
-  // Step 4: n_quickTask = 0 → Start intervention flow
-  // ============================================================================
-  console.log('[OS Trigger Brain] ✗ n_quickTask = 0 (no uses remaining)');
-  console.log('[OS Trigger Brain] → START INTERVENTION FLOW');
-  console.log('[OS Trigger Brain] ========================================');
-  startInterventionFlow(packageName, timestamp);
-}
 
 /**
  * Set the intervention dispatcher function.
@@ -689,17 +474,11 @@ export function handleForegroundAppChange(
     }
 
     // ============================================================================
-    // Evaluate trigger logic using nested decision tree
+    // Phase 2: evaluateTriggerLogic() removed
     // ============================================================================
-    // Decision tree per OS Trigger Contract V1:
-    // 1. Check t_intention (per-app)
-    // 2. If t_intention = 0: Check n_quickTask (global)
-    //    - If n_quickTask != 0: Check t_quickTask (per-app)
-    //      - If t_quickTask != 0: suppress
-    //      - If t_quickTask = 0: show Quick Task dialog
-    //    - If n_quickTask = 0: start intervention
-    
-    evaluateTriggerLogic(packageName, timestamp);
+    // System Brain handles all trigger logic evaluation.
+    // This file (osTriggerBrain.ts) is no longer used in SystemSurface context.
+    // SystemSurface only consumes wake reasons from System Brain.
     
     // Update tracking
     lastForegroundApp = packageName;
@@ -836,8 +615,7 @@ export function setQuickTaskTimer(packageName: string, durationMs: number, curre
   // Store timer WITHOUT callback - System Brain will handle expiration
   quickTaskTimers.set(packageName, { expiresAt, timeoutId: null });
   
-  // Record usage
-  recordQuickTaskUsage(packageName, currentTimestamp);
+  // Usage recording removed - System Brain records usage via TIMER_SET event
   
   // Store timer in native layer - native will emit mechanical event on expiration
   // Native emits: { type: "TIMER_EXPIRED", packageName, timestamp }
@@ -1016,9 +794,8 @@ export function checkForegroundIntentionExpiration(currentTimestamp: number): vo
         // Clear the expired timer
         intentionTimers.delete(packageName);
         
-        // Re-evaluate using nested logic (not direct intervention)
-        // This respects the priority chain: t_intention expired → check n_quickTask, etc.
-        evaluateTriggerLogic(packageName, currentTimestamp);
+        // Phase 2: evaluateTriggerLogic() removed
+        // System Brain handles all trigger logic evaluation.
       } else {
         console.log('[OS Trigger Brain] Intention timer expired for BACKGROUND app — deleting timer', {
           packageName,

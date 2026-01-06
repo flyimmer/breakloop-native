@@ -426,12 +426,18 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
      * CRITICAL: JavaScript MUST check this FIRST before running any logic.
      * 
      * Possible return values:
+     * Phase 1 (transitional):
      * - "MONITORED_APP_FOREGROUND" - Normal monitored app detected, run priority chain
      * - "INTENTION_EXPIRED" - Intention timer expired while app in foreground
+     * 
+     * Phase 2 (explicit wake reasons):
+     * - "SHOW_QUICK_TASK_DIALOG" - System Brain decided to show Quick Task dialog
+     * - "START_INTERVENTION_FLOW" - System Brain decided to start Intervention flow
+     * - "QUICK_TASK_EXPIRED_FOREGROUND" - Quick Task expired, show Intervention
+     * 
+     * Other:
      * - "DEV_DEBUG" - Developer-triggered wake for testing
      * - null - Not in SystemSurfaceActivity or no wake reason set
-     * 
-     * REMOVED: "QUICK_TASK_EXPIRED" - Quick Task expiration is now silent (no UI)
      * 
      * @param promise Resolves with wake reason string or null
      */

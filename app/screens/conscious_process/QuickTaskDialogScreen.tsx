@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
-import { getQuickTaskRemaining } from '@/src/os/osTriggerBrain';
-import { getQuickTaskDurationMs, getQuickTaskWindowMs } from '@/src/os/osConfig';
+import { getQuickTaskRemainingForDisplay } from '@/src/systemBrain/publicApi';
+import { getQuickTaskDurationMs } from '@/src/os/osConfig';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -40,14 +40,20 @@ export default function QuickTaskDialogScreen() {
 
   const { session, dispatchSystemEvent } = useSystemSession();
   const [isProcessing, setIsProcessing] = useState(false);
-
-  // Calculate remaining uses dynamically (GLOBAL across all apps)
-  const now = Date.now();
-  const quickTaskRemaining = getQuickTaskRemaining(now);
-  const quickTaskWindowMinutes = Math.round(getQuickTaskWindowMs() / (60 * 1000));
+  const [displayInfo, setDisplayInfo] = useState<{ remaining: number; windowMinutes: number } | null>(null);
   
   // Get app from session
   const targetApp = session?.kind === 'QUICK_TASK' ? session.app : null;
+
+  // Load remaining uses for display (informational only)
+  useEffect(() => {
+    async function loadRemaining() {
+      const info = await getQuickTaskRemainingForDisplay();
+      setDisplayInfo(info);
+      console.log('[QuickTaskDialog] Loaded display info:', info);
+    }
+    loadRemaining();
+  }, []);
 
   // Disable Android hardware back button during Quick Task decision
   useEffect(() => {
@@ -66,8 +72,7 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] Component mounted!');
     console.log('[QuickTaskDialog] session:', JSON.stringify(session));
     console.log('[QuickTaskDialog] targetApp:', targetApp);
-    console.log('[QuickTaskDialog] quickTaskRemaining (GLOBAL):', quickTaskRemaining);
-    console.log('[QuickTaskDialog] quickTaskWindowMinutes:', quickTaskWindowMinutes);
+    console.log('[QuickTaskDialog] displayInfo:', displayInfo);
     console.log('[QuickTaskDialog] ========================================');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -121,7 +126,6 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] isProcessing:', isProcessing);
     console.log('[QuickTaskDialog] session:', JSON.stringify(session));
     console.log('[QuickTaskDialog] targetApp:', targetApp);
-    console.log('[QuickTaskDialog] quickTaskRemaining (GLOBAL):', quickTaskRemaining);
     
     if (isProcessing || !session || session.kind !== 'QUICK_TASK') {
       console.log('[QuickTaskDialog] Already processing or invalid session, ignoring tap');
@@ -133,13 +137,9 @@ export default function QuickTaskDialogScreen() {
     
     try {
       const now = Date.now();
-      const remaining = getQuickTaskRemaining(now); // GLOBAL - no packageName
       
-      if (remaining <= 0) {
-        console.error('[QuickTaskDialog] No Quick Task uses remaining (GLOBAL quota exhausted)');
-        setIsProcessing(false);
-        return;
-      }
+      // Availability check removed - System Brain already decided to show this dialog
+      // No need to re-check quota here
       
       // Store timer in native (mechanical operation)
       // Native will emit TIMER_SET event to System Brain (single path)
@@ -234,7 +234,9 @@ export default function QuickTaskDialogScreen() {
         {/* Usage limit info */}
         <View style={styles.infoSection}>
           <Text style={styles.infoText}>
-            {quickTaskRemaining >= Number.MAX_SAFE_INTEGER ? 'Unlimited' : quickTaskRemaining} left in this {quickTaskWindowMinutes}-minute window.
+            {displayInfo 
+              ? `${displayInfo.remaining} left in this ${displayInfo.windowMinutes}-minute window.`
+              : 'Loading...'}
           </Text>
         </View>
 

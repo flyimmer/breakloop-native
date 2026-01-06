@@ -19,7 +19,6 @@
 import React, { useEffect, useState } from 'react';
 import { Platform, NativeModules } from 'react-native';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
-import { handleForegroundAppChange } from '@/src/os/osTriggerBrain';
 import InterventionFlow from '../flows/InterventionFlow';
 import QuickTaskFlow from '../flows/QuickTaskFlow';
 import AlternativeActivityFlow from '../flows/AlternativeActivityFlow';
@@ -93,14 +92,14 @@ export default function SystemSurfaceRoot() {
   /**
    * BOOTSTRAP INITIALIZATION (Cold Start)
    * 
-   * Per system_surface_bootstrap.md timeline (t9-t13):
-   * t9  - Read wakeReason + triggeringApp from Intent extras
-   * t10 - Run OS Trigger Brain in SystemSurface context
-   * t11 - OS Trigger Brain makes decision
-   * t12 - Dispatch SystemSession event
-   * t13 - Set bootstrapState = READY
+   * Phase 2 Bootstrap (System Brain pre-decided):
+   * 1. Read wakeReason + triggeringApp from Intent extras
+   * 2. Map wake reason → START_QUICK_TASK or START_INTERVENTION
+   * 3. Dispatch exactly one session
+   * 4. Set bootstrapState = READY
    * 
-   * This ensures session is created in the CORRECT React context.
+   * NO OS Trigger Brain evaluation in SystemSurface.
+   * System Brain already made the decision.
    */
   useEffect(() => {
     if (bootstrapInitialized) return;
@@ -137,22 +136,46 @@ export default function SystemSurfaceRoot() {
           });
         }
 
-        // t10-t11: Run OS Trigger Brain in THIS context (SystemSurface)
-        // This will evaluate the trigger logic and dispatch the appropriate session event
-        // CRITICAL: Use force flag to bypass duplicate event filtering
-        if (__DEV__) {
-          console.log('[SystemSurfaceRoot] 🧠 Running OS Trigger Brain in SystemSurface context...');
+        // Dispatch session based on wake reason
+        // System Brain already decided to launch us with this wake reason
+        // We consume that decision without recomputing
+        if (wakeReason === 'SHOW_QUICK_TASK_DIALOG') {
+          dispatchSystemEvent({
+            type: 'START_QUICK_TASK',
+            app: triggeringApp,
+          });
+        } else if (wakeReason === 'START_INTERVENTION_FLOW') {
+          dispatchSystemEvent({
+            type: 'START_INTERVENTION',
+            app: triggeringApp,
+          });
+        } else if (wakeReason === 'INTENTION_EXPIRED_FOREGROUND') {
+          dispatchSystemEvent({
+            type: 'START_INTERVENTION',
+            app: triggeringApp,
+          });
+        } else if (wakeReason === 'QUICK_TASK_EXPIRED_FOREGROUND') {
+          dispatchSystemEvent({
+            type: 'START_INTERVENTION',
+            app: triggeringApp,
+          });
+        } else if (wakeReason === 'MONITORED_APP_FOREGROUND') {
+          console.warn('[SystemSurfaceRoot] ⚠️ OLD WAKE REASON: MONITORED_APP_FOREGROUND');
+          console.warn('[SystemSurfaceRoot] This should be replaced by SHOW_QUICK_TASK_DIALOG or START_INTERVENTION_FLOW');
+          console.warn('[SystemSurfaceRoot] Defaulting to Quick Task for compatibility');
+          dispatchSystemEvent({
+            type: 'START_QUICK_TASK',
+            app: triggeringApp,
+          });
+        } else {
+          console.error('[SystemSurfaceRoot] ❌ Unknown wake reason:', wakeReason);
+          dispatchSystemEvent({
+            type: 'START_INTERVENTION',
+            app: triggeringApp,
+          });
         }
 
-        handleForegroundAppChange(
-          {
-            packageName: triggeringApp,
-            timestamp: Date.now(),
-          },
-          { force: true } // Bypass duplicate filter for bootstrap
-        );
-
-        // t12-t13: OS Trigger Brain will dispatch session event, which sets bootstrapState = READY
+        // Bootstrap complete, session dispatched
 
         setBootstrapInitialized(true);
 

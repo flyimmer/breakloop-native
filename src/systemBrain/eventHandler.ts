@@ -8,6 +8,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { loadTimerState, saveTimerState, TimerState } from './stateManager';
 import { launchSystemSurface } from './nativeBridge';
+import { isMonitoredApp } from '../os/osConfig';
 
 /**
  * Load Quick Task configuration from user settings.
@@ -18,15 +19,14 @@ import { launchSystemSurface } from './nativeBridge';
 async function loadQuickTaskConfig(): Promise<{ maxUses: number; windowMs: number }> {
   try {
     // Load from the same storage key used by Settings screen
-    // Adjust key based on actual implementation
-    const configJson = await AsyncStorage.getItem('user_settings_v1');
+    const configJson = await AsyncStorage.getItem('quick_task_settings_v1');
     if (configJson) {
       const config = JSON.parse(configJson);
-      const maxUses = config.n_quickTask ?? 1; // Default to 1 if not set
+      const maxUses = config.usesPerWindow ?? 1; // Default to 1 if not set
       
       console.log('[System Brain] Quick Task config loaded:', {
         maxUses,
-        source: 'user settings',
+        source: 'quick_task_settings_v1',
       });
       
       return {
@@ -237,10 +237,12 @@ async function handleTimerExpiration(
     console.log('[System Brain] 🚨 User still on expired app - launching intervention');
     console.log('[System Brain] This is SILENT expiration (no reminder screen)');
     
-    launchSystemSurface({
-      wakeReason: timerType === 'QUICK_TASK' ? 'QUICK_TASK_EXPIRED_FOREGROUND' : 'INTENTION_EXPIRED_FOREGROUND',
-      triggeringApp: packageName,
-    });
+    // Phase 2: Launch with explicit wake reason (System Brain pre-decided)
+    const wakeReason = timerType === 'QUICK_TASK' 
+      ? 'QUICK_TASK_EXPIRED_FOREGROUND' 
+      : 'INTENTION_EXPIRED_FOREGROUND';
+    
+    await launchSystemSurface(packageName, wakeReason as any);
   } else {
     // User switched to another app → silent cleanup only
     console.log('[System Brain] ✓ User switched apps - silent cleanup only (no intervention)');
@@ -299,7 +301,7 @@ async function handleForegroundChange(
 ): Promise<void> {
   console.log('[System Brain] Foreground changed to:', packageName);
   
-  // Update last meaningful app (this is the ONLY job of System Brain for FOREGROUND_CHANGED)
+  // Always update last meaningful app
   const previousApp = state.lastMeaningfulApp;
   state.lastMeaningfulApp = packageName;
   
@@ -308,5 +310,48 @@ async function handleForegroundChange(
     current: packageName,
   });
   
-  console.log('[System Brain] State tracking complete - ForegroundDetectionService handles intervention launching');
+  // 🔒 GUARD: only monitored apps are eligible for OS Trigger Brain evaluation
+  console.log('[System Brain] Checking if app is monitored:', {
+    packageName,
+    isMonitoredAppFunction: typeof isMonitoredApp,
+  });
+  
+  const monitored = isMonitoredApp(packageName);
+  console.log('[System Brain] Monitored app check result:', {
+    packageName,
+    isMonitored: monitored,
+  });
+  
+  if (!monitored) {
+    console.log('[System Brain] App is not monitored, skipping:', packageName);
+    return;
+  }
+  
+  // Phase 2: Evaluate OS Trigger Brain and pre-decide UI flow
+  console.log('[System Brain] Evaluating OS Trigger Brain for:', packageName);
+  
+  // Step 1: Check t_intention (per-app)
+  const intentionTimer = state.intentionTimers[packageName];
+  if (intentionTimer && timestamp < intentionTimer.expiresAt) {
+    console.log('[System Brain] ✓ t_intention VALID - suppressing intervention');
+    return;
+  }
+  
+  // Step 2: Check t_quickTask (per-app)
+  const quickTaskTimer = state.quickTaskTimers[packageName];
+  if (quickTaskTimer && timestamp < quickTaskTimer.expiresAt) {
+    console.log('[System Brain] ✓ t_quickTask ACTIVE - suppressing intervention');
+    return;
+  }
+  
+  // Step 3: Check n_quickTask (global) and decide
+  const quickTaskRemaining = await getQuickTaskRemaining(timestamp, state);
+  
+  if (quickTaskRemaining > 0) {
+    console.log('[System Brain] ✓ n_quickTask > 0 - launching with SHOW_QUICK_TASK_DIALOG');
+    await launchSystemSurface(packageName, 'SHOW_QUICK_TASK_DIALOG');
+  } else {
+    console.log('[System Brain] ✗ n_quickTask = 0 - launching with START_INTERVENTION_FLOW');
+    await launchSystemSurface(packageName, 'START_INTERVENTION_FLOW');
+  }
 }

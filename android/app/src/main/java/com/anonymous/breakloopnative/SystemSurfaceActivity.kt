@@ -110,8 +110,14 @@ class SystemSurfaceActivity : ReactActivity() {
         const val EXTRA_WAKE_REASON = "wakeReason"
         
         // Wake reason values
+        // Phase 1 (transitional - will be deprecated)
         const val WAKE_REASON_MONITORED_APP = "MONITORED_APP_FOREGROUND"
         const val WAKE_REASON_INTENTION_EXPIRED = "INTENTION_EXPIRED"
+        
+        // Phase 2 (explicit wake reasons - System Brain pre-decides UI)
+        const val WAKE_REASON_SHOW_QUICK_TASK = "SHOW_QUICK_TASK_DIALOG"
+        const val WAKE_REASON_START_INTERVENTION = "START_INTERVENTION_FLOW"
+        const val WAKE_REASON_QUICK_TASK_EXPIRED = "QUICK_TASK_EXPIRED_FOREGROUND"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
