@@ -653,6 +653,20 @@ useEffect(() => {
 
 ### Component Architecture
 
+**Alternatives Database:**
+- **Location:** `src/constants/alternativesDatabase.ts`
+- **Documentation:** `docs/alternatives-database.md`
+- **Total Activities:** 36 predefined alternatives across 6 root causes
+- **Root Causes:** Loneliness (7), Boredom (8), Fatigue (5), No Goal (5), Self-Doubt (5), Anxiety (6)
+- **Features:**
+  - `getAlternativesForCauses(selectedCauses)` - Get alternatives for selected root causes
+  - `filterAlternativesByContext(alternatives, context)` - Filter by time of day, weather
+  - Context-aware filtering (night time excludes social calls)
+  - Sorted by popularity (likes)
+  - Each activity includes: title, description, duration, type, tags, action steps
+- **Usage:** `AlternativesScreen` Discover tab shows filtered alternatives based on selected causes
+- **See:** `docs/ALTERNATIVES_DATABASE_IMPLEMENTATION.md` for complete implementation details
+
 **Modular Components:**
 - `ActivityCard` - Displays activity cards in horizontal scrollable lists
   - Receives `upcomingActivities` prop to determine user's join status

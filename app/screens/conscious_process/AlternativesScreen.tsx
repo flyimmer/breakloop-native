@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -6,6 +6,17 @@ import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { InterventionStackParamList } from '@/app/flows/InterventionFlow';
+import { 
+  getAlternativesForCauses, 
+  filterAlternativesByContext,
+  type AlternativeActivity 
+} from '@/src/constants/alternativesDatabase';
+import {
+  incrementPopularity,
+  decrementPopularity,
+  getAllPopularity,
+  type PopularityData,
+} from '@/src/services/popularityService';
 
 /**
  * AlternativesScreen
@@ -25,6 +36,10 @@ import type { InterventionStackParamList } from '@/app/flows/InterventionFlow';
  * - design/principles/interaction-gravity.md
  * - design/ui/tokens.md
  * - design/ui/tone-ambient-hearth.md
+ * 
+ * Data source:
+ * - docs/alternatives-database.md (36 predefined activities)
+ * - src/constants/alternativesDatabase.ts (implementation)
  */
 
 // Tab definitions (authoritative order)
@@ -36,35 +51,7 @@ const TABS = [
 
 type TabId = typeof TABS[number]['id'];
 
-// Static placeholder data for Discover tab
-const DISCOVER_ALTERNATIVES = [
-  {
-    id: 'power-nap',
-    title: 'Power Nap',
-    description: 'Set timer for 15-45 minutes.',
-    duration: '30m',
-    distance: '500km',
-    points: '9000',
-  },
-  {
-    id: 'pomodoro-break',
-    title: 'Pomodoro Break',
-    description: 'Take a regular break.',
-    duration: '5m',
-    distance: '500km',
-    points: '2100',
-  },
-  {
-    id: 'short-walk',
-    title: 'Short Walk',
-    description: 'Go around your house.',
-    duration: '10m',
-    distance: '500km',
-    points: '1100',
-  },
-];
-
-// Static placeholder data for AI For You tab
+// Static placeholder data for AI For You tab (will be replaced with real AI suggestions)
 const AI_SUGGESTIONS = [
   {
     id: 'morning-mood-board',
@@ -95,9 +82,9 @@ type SavedActivity = {
   title: string;
   description: string;
   duration: string;
-  distance?: string;
-  points?: string;
+  popularity?: number;
   source: 'discover' | 'ai';
+  actions?: string[];
 };
 
 // Storage key for saved alternatives
@@ -138,6 +125,41 @@ export default function AlternativesScreen() {
   const [activeTab, setActiveTab] = useState<TabId>('discover');
   const [savedActivities, setSavedActivities] = useState<SavedActivity[]>([]);
   const [isLoadingSavedActivities, setIsLoadingSavedActivities] = useState(true);
+  const [popularityData, setPopularityData] = useState<PopularityData>({});
+
+  // Load popularity data on mount
+  useEffect(() => {
+    const loadPopularity = async () => {
+      const data = await getAllPopularity();
+      setPopularityData(data);
+    };
+    loadPopularity();
+  }, []);
+
+  // Get alternatives filtered by selected causes with live popularity
+  const discoverAlternatives = useMemo(() => {
+    // Get alternatives for selected causes
+    const alternatives = getAlternativesForCauses(selectedCauses);
+    
+    // Apply context filtering (time of day, weather)
+    const currentHour = new Date().getHours();
+    const isNightTime = currentHour >= 22 || currentHour < 6;
+    
+    const filtered = filterAlternativesByContext(alternatives, {
+      isNightTime,
+      // TODO: Add weather context when available
+    });
+
+    // Merge with live popularity data
+    const withPopularity = filtered.map(alt => ({
+      ...alt,
+      popularity: popularityData[alt.id] || 0,
+    }));
+
+    // Filter out already saved alternatives
+    const savedIds = new Set(savedActivities.map(a => a.id));
+    return withPopularity.filter(alt => !savedIds.has(alt.id));
+  }, [selectedCauses, savedActivities, popularityData]);
 
   // Load saved activities from AsyncStorage on mount
   useEffect(() => {
@@ -183,22 +205,59 @@ export default function AlternativesScreen() {
     }
   }, [savedActivities, isLoadingSavedActivities]);
 
-  // Save an activity to My List (persisted to AsyncStorage)
-  const saveActivity = (activity: SavedActivity) => {
-    setSavedActivities((prev) => {
-      // Prevent duplicates
-      if (prev.some((item) => item.id === activity.id)) {
-        return prev;
+  // Save an activity to My List (persisted to AsyncStorage + increment popularity)
+  const saveActivity = async (activity: SavedActivity) => {
+    // Prevent duplicates
+    if (savedActivities.some((item) => item.id === activity.id)) {
+      return;
+    }
+
+    // Increment popularity (global)
+    try {
+      const newPopularity = await incrementPopularity(activity.id);
+      
+      // Update local popularity data
+      setPopularityData(prev => ({
+        ...prev,
+        [activity.id]: newPopularity,
+      }));
+
+      // Add to saved activities
+      setSavedActivities((prev) => [...prev, activity]);
+
+      if (__DEV__) {
+        console.log(`[AlternativesScreen] Saved activity ${activity.id}, popularity: ${newPopularity}`);
       }
-      return [...prev, activity];
-    });
+    } catch (error) {
+      console.error('[AlternativesScreen] Failed to save activity:', error);
+      // Still add to saved activities even if popularity update fails
+      setSavedActivities((prev) => [...prev, activity]);
+    }
   };
 
-  // Delete an activity from My List (persisted to AsyncStorage)
-  const deleteActivity = (activityId: string) => {
-    setSavedActivities((prev) => {
-      return prev.filter((item) => item.id !== activityId);
-    });
+  // Delete an activity from My List (persisted to AsyncStorage + decrement popularity)
+  const deleteActivity = async (activityId: string) => {
+    // Decrement popularity (global)
+    try {
+      const newPopularity = await decrementPopularity(activityId);
+      
+      // Update local popularity data
+      setPopularityData(prev => ({
+        ...prev,
+        [activityId]: newPopularity,
+      }));
+
+      // Remove from saved activities
+      setSavedActivities((prev) => prev.filter((item) => item.id !== activityId));
+
+      if (__DEV__) {
+        console.log(`[AlternativesScreen] Deleted activity ${activityId}, popularity: ${newPopularity}`);
+      }
+    } catch (error) {
+      console.error('[AlternativesScreen] Failed to delete activity:', error);
+      // Still remove from saved activities even if popularity update fails
+      setSavedActivities((prev) => prev.filter((item) => item.id !== activityId));
+    }
   };
 
   // Check if an activity is already saved (local state only)
@@ -293,13 +352,14 @@ export default function AlternativesScreen() {
         contentContainerStyle={styles.scrollContentContainer}
         showsVerticalScrollIndicator={false}
       >
-        {activeTab === 'discover' && (
-          <DiscoverTab 
-            saveActivity={saveActivity} 
-            isSaved={isSaved}
-            onCardTap={handleCardTap}
-          />
-        )}
+      {activeTab === 'discover' && (
+        <DiscoverTab 
+          alternatives={discoverAlternatives}
+          saveActivity={saveActivity} 
+          isSaved={isSaved}
+          onCardTap={handleCardTap}
+        />
+      )}
         {activeTab === 'ai-for-you' && (
           <AIForYouTab 
             saveActivity={saveActivity} 
@@ -342,19 +402,31 @@ export default function AlternativesScreen() {
  * - No ranking language, no social proof emphasis
  * - "Plan this activity" is secondary
  * - Save affordance is subtle and optional
+ * 
+ * Data: Filtered by selected causes, sorted by popularity
  */
 function DiscoverTab({ 
+  alternatives,
   saveActivity, 
   isSaved,
   onCardTap,
 }: { 
+  alternatives: AlternativeActivity[];
   saveActivity: (activity: SavedActivity) => void;
   isSaved: (activityId: string) => boolean;
   onCardTap: (alternative: any) => void;
 }) {
   return (
     <View style={styles.tabContent}>
-      {DISCOVER_ALTERNATIVES.map((alt) => {
+      {alternatives.length === 0 && (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyStateText}>
+            No alternatives available for the selected causes. Try selecting different causes or check back later.
+          </Text>
+        </View>
+      )}
+      
+      {alternatives.map((alt) => {
         const saved = isSaved(alt.id);
         return (
           <Pressable
@@ -365,15 +437,11 @@ function DiscoverTab({
               pressed && styles.cardPressed,
             ]}
           >
-            {/* Card metadata: distance and points (visually quiet) */}
+            {/* Card metadata: popularity (likes) */}
             <View style={styles.cardMeta}>
               <View style={styles.cardMetaItem}>
-                <Text style={styles.cardMetaIcon}>📍</Text>
-                <Text style={styles.cardMetaText}>{alt.distance}</Text>
-              </View>
-              <View style={styles.cardMetaItem}>
                 <Text style={styles.cardMetaIcon}>🔥</Text>
-                <Text style={styles.cardMetaText}>{alt.points}</Text>
+                <Text style={styles.cardMetaText}>{alt.popularity.toLocaleString()} likes</Text>
               </View>
               {/* Save to My List affordance: icon + text label, secondary */}
               <Pressable
@@ -385,9 +453,9 @@ function DiscoverTab({
                       title: alt.title,
                       description: alt.description,
                       duration: alt.duration,
-                      distance: alt.distance,
-                      points: alt.points,
+                      popularity: alt.popularity,
                       source: 'discover',
+                      actions: alt.actions,
                     });
                   }
                 }}
@@ -424,12 +492,6 @@ function DiscoverTab({
           </Pressable>
         );
       })}
-
-      {/* Pagination hint (static, no logic) */}
-      <View style={styles.pagination}>
-        <Text style={styles.paginationText}>Previous</Text>
-        <Text style={styles.paginationText}>Next Page</Text>
-      </View>
     </View>
   );
 }
@@ -604,18 +666,12 @@ function MyListTab({
             pressed && styles.cardPressed,
           ]}
         >
-          {/* Card metadata with management icons (only show distance/points for discover items) */}
+          {/* Card metadata with management icons (show popularity for discover items) */}
           <View style={styles.cardMeta}>
-            {alt.distance && (
-              <View style={styles.cardMetaItem}>
-                <Text style={styles.cardMetaIcon}>📍</Text>
-                <Text style={styles.cardMetaText}>{alt.distance}</Text>
-              </View>
-            )}
-            {alt.points && (
+            {alt.popularity && (
               <View style={styles.cardMetaItem}>
                 <Text style={styles.cardMetaIcon}>🔥</Text>
-                <Text style={styles.cardMetaText}>{alt.points}</Text>
+                <Text style={styles.cardMetaText}>{alt.popularity.toLocaleString()} likes</Text>
               </View>
             )}
             {/* Source badge for AI suggestions */}
