@@ -26,11 +26,27 @@ import AlternativeActivityFlow from '../flows/AlternativeActivityFlow';
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
 /**
- * Check if a package name is BreakLoop infrastructure
- * These apps should NOT trigger intervention session end
+ * Check if a package name represents a non-behavioral foreground transition
  * 
- * During bootstrap, foregroundApp may temporarily be BreakLoop's own app,
- * which is infrastructure and should not be treated as "user left the app".
+ * SEMANTIC INTENT:
+ * These packages do NOT represent user intent to leave the intervention.
+ * They are system overlays, infrastructure, or transient UI layers that
+ * temporarily gain foreground focus without the user "switching apps".
+ * 
+ * EXAMPLES OF NON-BEHAVIORAL TRANSITIONS:
+ * - Notification shade pulled down (com.android.systemui)
+ * - Quick settings opened (com.android.systemui)
+ * - Incoming/outgoing phone calls (com.google.android.dialer, com.android.incallui)
+ * - Permission dialogs (com.android.permissioncontroller)
+ * - System navigation gestures (android)
+ * - BreakLoop's own infrastructure (com.anonymous.breakloopnative)
+ * 
+ * This list is intentionally open-ended and semantic.
+ * Future additions may include OEM variants (Samsung, Xiaomi, etc.)
+ * or accessibility overlays that don't represent user intent.
+ * 
+ * @param packageName - The package name to check
+ * @returns true if this is a non-behavioral transition (should NOT end session)
  */
 function isBreakLoopInfrastructure(packageName: string | null): boolean {
   if (!packageName) return true; // null = not yet initialized
@@ -42,8 +58,25 @@ function isBreakLoopInfrastructure(packageName: string | null): boolean {
   // This appears briefly during React Navigation swipe gestures
   if (packageName === 'android') return true;
   
-  // Add other infrastructure packages if needed
-  // if (packageName === 'com.android.systemui') return true;
+  // Android system UI / non-behavioral foreground layers
+  // These do NOT represent user intent to leave the intervention
+  // - Notification shade pulled down
+  // - Quick settings opened
+  // - Status bar interactions
+  if (packageName === 'com.android.systemui') return true;
+  
+  // Phone call UI / non-behavioral interruptions
+  // These do NOT represent user intent to leave the intervention
+  // - Incoming phone calls
+  // - Outgoing phone calls
+  // - In-call UI
+  // User expects to return to intervention after call ends
+  if (packageName === 'com.google.android.dialer') return true;  // Google Dialer (Pixel, Android One)
+  if (packageName === 'com.android.incallui') return true;       // AOSP In-Call UI
+  if (packageName === 'com.android.dialer') return true;         // AOSP Dialer
+  if (packageName === 'com.android.phone') return true;          // Android Phone app
+  if (packageName === 'com.samsung.android.incallui') return true; // Samsung In-Call UI
+  if (packageName === 'com.samsung.android.dialer') return true;   // Samsung Dialer
   
   return false;
 }
