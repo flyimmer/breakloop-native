@@ -18,12 +18,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeModules } from 'react-native';
 import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/native-modules/AppMonitorModule';
-import { RootStackParamList } from '../../../navigation/RootNavigator';
+import { MainAppStackParamList } from '../../../roots/MainAppRoot';
 import { matchesAppSearch, getMatchScore } from '@/constants/appAliases';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
-type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+type NavigationProp = NativeStackNavigationProp<MainAppStackParamList>;
 
 type TabType = 'apps' | 'websites';
 

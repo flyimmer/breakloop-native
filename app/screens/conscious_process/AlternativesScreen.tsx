@@ -5,7 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '@/app/navigation/RootNavigator';
+import type { InterventionStackParamList } from '@/app/flows/InterventionFlow';
 
 /**
  * AlternativesScreen
@@ -106,7 +106,7 @@ const SAVED_ALTERNATIVES_STORAGE_KEY = 'saved_alternatives_v1';
 export default function AlternativesScreen() {
   const { interventionState, dispatchIntervention } = useIntervention();
   const { selectedCauses, selectedAlternative } = interventionState;
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const navigation = useNavigation<NativeStackNavigationProp<InterventionStackParamList>>();
 
   // Allow Android hardware back button to go back to Root Cause
   useEffect(() => {

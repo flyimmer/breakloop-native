@@ -22,11 +22,11 @@ import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/na
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { completeInterventionDEV } from '@/src/os/osTriggerBrain';
 import { setMonitoredApps as updateOsConfigMonitoredApps, setQuickTaskConfig, getQuickTaskDurationMs, getQuickTaskUsesPerWindow, getIsPremiumCustomer, setInterventionPreferences, getInterventionDurationSec } from '@/src/os/osConfig';
-import { RootStackParamList } from '../../../navigation/RootNavigator';
+import { MainAppStackParamList } from '../../../roots/MainAppRoot';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
-type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+type NavigationProp = NativeStackNavigationProp<MainAppStackParamList>;
 
 // Module-level callback for EditMonitoredApps to pass data back
 // This is a simple workaround since React Navigation doesn't support function callbacks in params

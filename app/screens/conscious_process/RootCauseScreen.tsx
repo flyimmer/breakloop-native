@@ -5,7 +5,7 @@ import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { canProceedToAlternatives } from '@/src/core/intervention';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '@/app/navigation/RootNavigator';
+import type { InterventionStackParamList } from '@/app/flows/InterventionFlow';
 
 /**
  * RootCauseScreen
@@ -38,7 +38,7 @@ const CAUSES = [
 export default function RootCauseScreen() {
   const { interventionState, dispatchIntervention } = useIntervention();
   const { selectedCauses } = interventionState;
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const navigation = useNavigation<NativeStackNavigationProp<InterventionStackParamList>>();
 
   // Disable Android hardware back button during intervention
   useEffect(() => {

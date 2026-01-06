@@ -7,7 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ArrowLeft } from 'lucide-react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { RootStackParamList } from '@/app/navigation/RootNavigator';
+import type { InterventionStackParamList } from '@/app/flows/InterventionFlow';
 
 /**
  * ActionConfirmationScreen
@@ -35,7 +35,7 @@ import type { RootStackParamList } from '@/app/navigation/RootNavigator';
 export default function ActionConfirmationScreen() {
   const { interventionState, dispatchIntervention } = useIntervention();
   const { state, selectedAlternative, selectedCauses } = interventionState;
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const navigation = useNavigation<NativeStackNavigationProp<InterventionStackParamList>>();
 
   // Allow Android hardware back button to go back to Alternatives
   useEffect(() => {

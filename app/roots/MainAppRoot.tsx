@@ -22,7 +22,7 @@ import MainNavigation from '../navigation/MainNavigation';
 import EditMonitoredAppsScreen from '../screens/mainAPP/Settings/EditMonitoredAppsScreen';
 
 export type MainAppStackParamList = {
-  MainTabs: undefined;
+  Main: undefined;
   EditMonitoredApps: {
     initialApps?: string[];
     initialWebsites?: string[];
@@ -58,7 +58,7 @@ export default function MainAppRoot() {
           headerShown: false,
         }}
       >
-        <Stack.Screen name="MainTabs" component={MainNavigation} />
+        <Stack.Screen name="Main" component={MainNavigation} />
         <Stack.Screen
           name="EditMonitoredApps"
           component={EditMonitoredAppsScreen}
