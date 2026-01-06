@@ -46,7 +46,7 @@ export type SystemSessionEvent =
   | { type: 'START_QUICK_TASK'; app: string }
   | { type: 'START_ALTERNATIVE_ACTIVITY'; app: string; shouldLaunchHome?: boolean }
   | { type: 'REPLACE_SESSION'; newKind: 'INTERVENTION' | 'ALTERNATIVE_ACTIVITY'; app: string }
-  | { type: 'END_SESSION'; shouldLaunchHome?: boolean };
+  | { type: 'END_SESSION'; shouldLaunchHome?: boolean; targetApp?: string };
 
 /**
  * System Session Context Value
@@ -57,6 +57,8 @@ interface SystemSessionContextValue {
   foregroundApp: string | null;  // Tracked for Alternative Activity visibility (Rule 1)
   shouldLaunchHome: boolean;  // Whether to launch home screen when session ends
   dispatchSystemEvent: (event: SystemSessionEvent) => void;
+  setTransientTargetApp: (app: string | null) => void;  // Set transient targetApp for finish-time navigation
+  getTransientTargetApp: () => string | null;  // Get transient targetApp for finish-time navigation
 }
 
 /**
@@ -231,9 +233,13 @@ const initialSystemSessionState: SystemSessionState = {
  */
 interface SystemSessionProviderProps {
   children: ReactNode;
+  transientTargetAppRef?: React.MutableRefObject<string | null>;
 }
 
-export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({ children }) => {
+export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({ 
+  children,
+  transientTargetAppRef 
+}) => {
   const [state, dispatch] = useReducer(systemSessionReducer, initialSystemSessionState);
 
   /**
@@ -271,12 +277,32 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({ ch
     dispatch(event);
   };
 
+  /**
+   * Set transient targetApp for finish-time navigation
+   * This is NOT part of session state - only used when finishing activity
+   */
+  const setTransientTargetApp = (app: string | null) => {
+    if (transientTargetAppRef) {
+      transientTargetAppRef.current = app;
+    }
+  };
+
+  /**
+   * Get transient targetApp for finish-time navigation
+   * This is NOT part of session state - only used when finishing activity
+   */
+  const getTransientTargetApp = () => {
+    return transientTargetAppRef?.current ?? null;
+  };
+
   const value: SystemSessionContextValue = {
     session: state.session,
     bootstrapState: state.bootstrapState,
     foregroundApp: state.foregroundApp,
     shouldLaunchHome: state.shouldLaunchHome,
     dispatchSystemEvent,
+    setTransientTargetApp,
+    getTransientTargetApp,
   };
 
   return (

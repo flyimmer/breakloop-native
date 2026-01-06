@@ -54,12 +54,14 @@ function isBreakLoopInfrastructure(packageName: string | null): boolean {
  * 
  * @param shouldLaunchHome - If true, launches home screen after finishing (cancellation/completion)
  *                           If false, just finishes activity (intention timer/alternative activity)
+ * @param targetApp - Optional target app to launch after finishing (Quick Task scenario)
  */
-function finishSystemSurfaceActivity(shouldLaunchHome: boolean = true) {
+function finishSystemSurfaceActivity(shouldLaunchHome: boolean = true, targetApp?: string | null) {
   if (Platform.OS === 'android' && AppMonitorModule) {
     if (__DEV__) {
       console.log('[SystemSurfaceRoot] Session is null - finishing SystemSurfaceActivity', {
         shouldLaunchHome,
+        targetApp,
       });
     }
     
@@ -67,8 +69,19 @@ function finishSystemSurfaceActivity(shouldLaunchHome: boolean = true) {
       // Finish activity AND launch home (cancellation/completion)
       AppMonitorModule.cancelInterventionActivity();
     } else {
-      // Finish activity only (intention timer/alternative activity)
+      // Finish activity only
       AppMonitorModule.finishSystemSurfaceActivity();
+      
+      // Launch target app if provided (Quick Task scenario)
+      if (targetApp) {
+        if (__DEV__) {
+          console.log('[SystemSurfaceRoot] Launching target app:', targetApp);
+        }
+        // Small delay to ensure activity finishes first
+        setTimeout(() => {
+          AppMonitorModule.launchApp(targetApp);
+        }, 100);
+      }
     }
   }
 }
@@ -90,7 +103,7 @@ function finishSystemSurfaceActivity(shouldLaunchHome: boolean = true) {
  * - session.kind === 'ALTERNATIVE_ACTIVITY' → Render AlternativeActivityFlow (with visibility check)
  */
 export default function SystemSurfaceRoot() {
-  const { session, bootstrapState, foregroundApp, shouldLaunchHome, dispatchSystemEvent } = useSystemSession();
+  const { session, bootstrapState, foregroundApp, shouldLaunchHome, dispatchSystemEvent, getTransientTargetApp, setTransientTargetApp } = useSystemSession();
   const [bootstrapInitialized, setBootstrapInitialized] = useState(false);
 
   /**
@@ -205,14 +218,23 @@ export default function SystemSurfaceRoot() {
    */
   useEffect(() => {
     if (bootstrapState === 'READY' && session === null) {
+      const targetApp = getTransientTargetApp();
+      
       if (__DEV__) {
         console.log('[SystemSurfaceRoot] Session is null (bootstrap complete) - triggering activity finish', {
           shouldLaunchHome,
+          targetApp,
         });
       }
-      finishSystemSurfaceActivity(shouldLaunchHome);
+      
+      finishSystemSurfaceActivity(shouldLaunchHome, targetApp);
+      
+      // Clear the transient targetApp after use (safety)
+      if (targetApp) {
+        setTransientTargetApp(null);
+      }
     }
-  }, [session, bootstrapState, shouldLaunchHome]);
+  }, [session, bootstrapState, shouldLaunchHome, getTransientTargetApp]);
 
   /**
    * CRITICAL: End Intervention Session if user leaves the app

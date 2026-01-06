@@ -38,7 +38,7 @@ export default function QuickTaskDialogScreen() {
   console.log('[QuickTaskDialog] COMPONENT FUNCTION CALLED!');
   console.log('[QuickTaskDialog] ========================================');
 
-  const { session, dispatchSystemEvent } = useSystemSession();
+  const { session, dispatchSystemEvent, setTransientTargetApp } = useSystemSession();
   const [isProcessing, setIsProcessing] = useState(false);
   const [displayInfo, setDisplayInfo] = useState<{ remaining: number; windowMinutes: number } | null>(null);
   
@@ -155,6 +155,10 @@ export default function QuickTaskDialogScreen() {
           note: 'System Brain will receive TIMER_SET event via HeadlessTask',
         });
       }
+      
+      // Set transient targetApp for finish-time navigation
+      setTransientTargetApp(session.app);
+      console.log('[QuickTaskDialog] Set transient targetApp:', session.app);
       
       // End session and return to app
       console.log('[QuickTaskDialog] Dispatching END_SESSION (shouldLaunchHome: false)...');

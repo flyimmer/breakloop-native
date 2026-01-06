@@ -12,7 +12,7 @@
  * This prevents UI leakage between MainActivity and SystemSurfaceActivity.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Platform, NativeModules, NativeEventEmitter } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -137,6 +137,12 @@ function AppContent() {
  */
 const App = () => {
   const [monitoredAppsLoaded, setMonitoredAppsLoaded] = useState(false);
+  
+  /**
+   * Transient targetApp ref for finish-time navigation
+   * This is NOT part of session state - only used when finishing SystemSurfaceActivity
+   */
+  const transientTargetAppRef = useRef<string | null>(null);
 
   /**
    * Load monitored apps from storage on app start
@@ -267,7 +273,7 @@ const App = () => {
   return (
     <SafeAreaProvider>
       <RuntimeContextProvider>
-        <SystemSessionProvider>
+        <SystemSessionProvider transientTargetAppRef={transientTargetAppRef}>
           <InterventionProvider>
             <AppContent />
             <StatusBar style="auto" />
