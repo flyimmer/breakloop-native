@@ -16,7 +16,7 @@
  * - When session === null, activity MUST finish immediately
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Platform, NativeModules } from 'react-native';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
 import InterventionFlow from '../flows/InterventionFlow';
@@ -139,6 +139,32 @@ export default function SystemSurfaceRoot() {
   const { session, bootstrapState, foregroundApp, shouldLaunchHome, dispatchSystemEvent, getTransientTargetApp, setTransientTargetApp } = useSystemSession();
 
   /**
+   * Track previous session kind to detect REPLACE_SESSION transitions
+   * 
+   * CRITICAL: This must be updated synchronously during render, NOT in useEffect.
+   * The "user left app" check needs to read the previous value before it's updated.
+   * 
+   * REPLACE_SESSION (QUICK_TASK → INTERVENTION) is an internal state transition,
+   * NOT user navigation. During this transition, foregroundApp may be stale
+   * (showing launcher or previous app), which would falsely trigger "user left app".
+   * 
+   * Pattern: Store current value, then update ref at end of this block.
+   * This ensures the "user left app" check sees the OLD value during this render.
+   */
+  const prevSessionKindRef = useRef<'INTERVENTION' | 'QUICK_TASK' | 'ALTERNATIVE_ACTIVITY' | null>(null);
+  const currentSessionKind = session?.kind ?? null;
+
+  // Detect if this is a REPLACE_SESSION transition (QUICK_TASK → INTERVENTION)
+  // This flag is computed with the PREVIOUS session kind (before ref update)
+  const isReplaceSessionTransition = 
+    prevSessionKindRef.current === 'QUICK_TASK' && 
+    currentSessionKind === 'INTERVENTION';
+
+  // Update ref for next render (happens synchronously during this render)
+  // This ensures the "user left app" check below sees the OLD value
+  prevSessionKindRef.current = currentSessionKind;
+
+  /**
    * BOOTSTRAP INITIALIZATION (Cold Start)
    * 
    * Phase 2 Bootstrap (System Brain pre-decided):
@@ -196,6 +222,28 @@ export default function SystemSurfaceRoot() {
             triggeringApp,
             wakeReason,
           });
+        }
+
+        // ✅ CRITICAL: Check for session mismatch
+        // Intent extras ALWAYS win over stale in-memory session state
+        // This handles the case where SystemSurface is relaunched while a session is still active
+        if (session && session.app !== triggeringApp) {
+          console.warn('[SystemSurfaceRoot] Session mismatch, replacing session', {
+            oldApp: session.app,
+            newApp: triggeringApp,
+            wakeReason,
+          });
+          
+          // Use REPLACE_SESSION for atomic replacement (avoids duplicate lifecycle edges)
+          dispatchSystemEvent({
+            type: 'REPLACE_SESSION',
+            newKind: wakeReason === 'SHOW_QUICK_TASK_DIALOG'
+              ? 'QUICK_TASK'
+              : 'INTERVENTION',
+            app: triggeringApp,
+          });
+          
+          return; // Do not proceed with stale session
         }
 
         // Dispatch session based on wake reason
@@ -283,9 +331,12 @@ export default function SystemSurfaceRoot() {
    * If user switches away from the monitored app during intervention,
    * the session MUST end immediately.
    * 
-   * IMPORTANT: Exclude BreakLoop infrastructure apps from this check.
-   * During bootstrap, foregroundApp may temporarily be BreakLoop's own app,
-   * which should NOT trigger session end.
+   * IMPORTANT: This check is DISABLED during REPLACE_SESSION transitions.
+   * REPLACE_SESSION (QUICK_TASK → INTERVENTION) is NOT user navigation.
+   * During this transition, foregroundApp may be stale and should be ignored.
+   * 
+   * Detection: isReplaceSessionTransition flag is computed during render
+   * with the PREVIOUS session kind, ensuring correct timing.
    * 
    * This does NOT apply to:
    * - ALTERNATIVE_ACTIVITY (already has visibility logic)
@@ -294,6 +345,15 @@ export default function SystemSurfaceRoot() {
   useEffect(() => {
     // Only check for INTERVENTION sessions
     if (session?.kind !== 'INTERVENTION') return;
+    
+    // ✅ DETERMINISTIC: Use pre-computed REPLACE_SESSION transition flag
+    // This was calculated during render with the correct previous value
+    if (isReplaceSessionTransition) {
+      if (__DEV__) {
+        console.log('[SystemSurfaceRoot] ⏭️ Skipping user left check - REPLACE_SESSION transition (QUICK_TASK → INTERVENTION)');
+      }
+      return;
+    }
     
     // Don't end session if foregroundApp is null or BreakLoop infrastructure
     if (isBreakLoopInfrastructure(foregroundApp)) return;
@@ -308,7 +368,7 @@ export default function SystemSurfaceRoot() {
       }
       dispatchSystemEvent({ type: 'END_SESSION' });
     }
-  }, [session, foregroundApp, dispatchSystemEvent]);
+  }, [session, foregroundApp, dispatchSystemEvent, isReplaceSessionTransition]);
 
   /**
    * BOOTSTRAP PHASE: Wait for JS to establish session

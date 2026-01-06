@@ -69,52 +69,29 @@ export default function InterventionFlow({ app }: InterventionFlowProps) {
   const previousTargetAppRef = useRef<any>(targetApp);
 
   /**
-   * Initialize intervention state when flow mounts
+   * Initialize intervention state when flow mounts or app changes
    * 
-   * CRITICAL: Do NOT dispatch BEGIN_INTERVENTION unconditionally.
-   * Session creation (START_INTERVENTION) IS the intervention start.
-   * This flow only renders and advances the intervention steps.
+   * CRITICAL: Dispatch BEGIN_INTERVENTION exactly once per app change.
+   * - No state inspection (no race conditions)
+   * - No refs or timers (deterministic)
+   * - Depends ONLY on [app] (session boundary)
    * 
-   * The OS Trigger Brain already dispatched START_INTERVENTION,
-   * which created the session. We just need to ensure the reducer
-   * is in the correct initial state.
+   * This aligns with Phase 2 architecture:
+   * - SystemBrain decides when an intervention starts
+   * - SystemSurface dispatches exactly one session (START_INTERVENTION)
+   * - InterventionFlow initializes exactly once per session (one BEGIN_INTERVENTION per app)
    */
   useEffect(() => {
     if (__DEV__) {
-      console.log('[InterventionFlow] Mounted for app:', app);
+      console.log('[InterventionFlow] BEGIN_INTERVENTION for app:', app);
     }
-    
-    // Idempotent initialization: dispatch BEGIN_INTERVENTION only if needed
-    // - Different app: need fresh intervention for new app
-    // - Not in breathing state: need to initialize/reset to breathing
-    if (
-      interventionState.targetApp !== app ||
-      interventionState.state !== 'breathing'
-    ) {
-      if (__DEV__) {
-        console.log('[InterventionFlow] Initializing intervention for app:', app);
-        console.log('[InterventionFlow] Current state:', interventionState.state);
-        console.log('[InterventionFlow] Current targetApp:', interventionState.targetApp);
-      }
-      
-      dispatchIntervention({
-        type: 'BEGIN_INTERVENTION',
-        app,
-        breathingDuration: getInterventionDurationSec(), // ✅ Use config (5 seconds)
-      });
-      
-      // Log state after dispatch (with delay to allow reducer to process)
-      if (__DEV__) {
-        setTimeout(() => {
-          console.log('[InterventionFlow] State after BEGIN_INTERVENTION:', {
-            state: interventionState.state,
-            targetApp: interventionState.targetApp,
-            breathingCount: interventionState.breathingCount,
-          });
-        }, 100);
-      }
-    }
-  }, [app]); // Only run on mount or app change
+
+    dispatchIntervention({
+      type: 'BEGIN_INTERVENTION',
+      app,
+      breathingDuration: getInterventionDurationSec(),
+    });
+  }, [app]);
 
   /**
    * Navigate based on intervention state changes
