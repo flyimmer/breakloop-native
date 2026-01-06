@@ -84,9 +84,8 @@ export default function RootNavigator() {
         name="ActionConfirmation" 
         component={ActionConfirmationScreen}
         options={{
-          presentation: 'fullScreenModal', // Full screen modal prevents swipe gesture
-          gestureEnabled: false, // Disable swipe back gesture
-          animation: 'none', // Disable animation to prevent gesture detection
+          gestureEnabled: true, // Enable swipe back to Alternatives
+          animation: 'slide_from_right', // Smooth transition animation
         }}
       />
       <Stack.Screen 

@@ -5,6 +5,9 @@ import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'reac
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ArrowLeft } from 'lucide-react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '@/app/navigation/RootNavigator';
 
 /**
  * ActionConfirmationScreen
@@ -32,17 +35,33 @@ import { ArrowLeft } from 'lucide-react-native';
 export default function ActionConfirmationScreen() {
   const { interventionState, dispatchIntervention } = useIntervention();
   const { state, selectedAlternative, selectedCauses } = interventionState;
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
-  // Disable Android hardware back button during intervention
+  // Allow Android hardware back button to go back to Alternatives
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
-      // Return true to prevent default back behavior
-      // User must use the back button or action buttons to navigate
-      return true;
+      // Update intervention state to alternatives
+      dispatchIntervention({ type: 'GO_BACK_FROM_ACTION' });
+      // Allow back navigation to Alternatives screen
+      navigation.goBack();
+      return true; // Prevent default to use our custom navigation
     });
 
     return () => backHandler.remove();
-  }, []);
+  }, [navigation, dispatchIntervention]);
+
+  // Handle swipe back gesture - update intervention state when navigating back
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      // Only handle back navigation (not forward navigation or other actions)
+      if (e.data.action.type === 'GO_BACK' || e.data.action.type === 'POP') {
+        // Update intervention state to alternatives
+        dispatchIntervention({ type: 'GO_BACK_FROM_ACTION' });
+      }
+    });
+
+    return unsubscribe;
+  }, [navigation, dispatchIntervention]);
 
   // Only render when in 'action' state
   if (state !== 'action' || !selectedAlternative) {
