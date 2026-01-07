@@ -255,13 +255,19 @@ async function handleTimerExpiration(
       console.log('[QuickTask] TIMER_EXPIRED for:', packageName);
       console.log('[QuickTask] Current foreground app:', currentForegroundApp);
       
-      // Mark as expired - permission revoked, awaiting user interaction
-      if (!state.expiredQuickTasks.includes(packageName)) {
-        state.expiredQuickTasks.push(packageName);
-      }
+      // Mark as expired with context about where user was
+      const expiredWhileForeground = currentForegroundApp === packageName;
+      state.expiredQuickTasks[packageName] = {
+        expiredAt: timestamp,
+        expiredWhileForeground,
+      };
       
-      console.log('[QuickTask] Permission revoked — waiting for user interaction');
-      console.log('[QuickTask] Will enforce at first USER_INTERACTION_FOREGROUND event');
+      console.log('[QuickTask] Permission revoked — waiting for user interaction', {
+        expiredWhileForeground,
+        note: expiredWhileForeground 
+          ? 'Will force intervention on next interaction'
+          : 'Will clear flag and allow Quick Task dialog on next app entry',
+      });
       
       // ❌ DO NOT call launchSystemSurface() here
       // ❌ Timer expiration is NOT a safe UI lifecycle boundary
@@ -306,18 +312,26 @@ async function handleUserInteraction(
   
   // 🔒 SYSTEM BRAIN DECIDES: Should we enforce?
   // Check semantic state to determine if this app has expired Quick Task
-  const expiredIndex = state.expiredQuickTasks.indexOf(packageName);
+  const expired = state.expiredQuickTasks[packageName];
   
-  if (expiredIndex === -1) {
+  if (!expired) {
     // No expired Quick Task - ignore this interaction event
     console.log('[System Brain] No expired Quick Task for this app - ignoring interaction');
     return;
   }
   
-  // Remove from expired list - enforce exactly once per expiration
-  state.expiredQuickTasks.splice(expiredIndex, 1);
+  // CRITICAL: Only enforce if Quick Task expired while user was IN the app
+  if (!expired.expiredWhileForeground) {
+    console.log('[QuickTask] Quick Task expired in background - clearing flag');
+    console.log('[QuickTask] User will see Quick Task dialog again if quota allows');
+    delete state.expiredQuickTasks[packageName];
+    return;  // Let OS Trigger Brain handle this normally
+  }
   
-  console.log('[QuickTask] Enforcing expired Quick Task at user interaction for:', packageName);
+  // Quick Task expired while user was IN the app → Force intervention
+  delete state.expiredQuickTasks[packageName];
+  
+  console.log('[QuickTask] Enforcing expired Quick Task (expired while user was in app)');
   console.log('[QuickTask] Launching intervention (permission was revoked at timer expiration)');
   
   // Launch intervention - THIS IS SAFE because we're in a user interaction event
@@ -464,6 +478,47 @@ async function handleForegroundChange(
     console.log('[System Brain] App is not monitored, skipping:', packageName);
     return;
   }
+  
+  // NEW: Skip if this is the app returning from SystemSurface after user decision
+  // This suppresses only the immediate return caused by user pressing Quick Task or completing intervention
+  if (packageName === state.lastIntervenedApp) {
+    console.log('[System Brain] 🔄 Skipping duplicate event — app returning from SystemSurface after user decision:', {
+      packageName,
+      note: 'This is an internal transition, not a new user-initiated foreground event',
+    });
+    state.lastIntervenedApp = null;  // Clear flag after consuming (one-shot)
+    return;
+  }
+  
+  // NEW: Clean up stale intention timer for this app BEFORE evaluation
+  // Prevents false-positive interventions from old timers
+  const existingIntentionTimer = state.intentionTimers[packageName];
+  if (existingIntentionTimer) {
+    const expiredMs = timestamp - existingIntentionTimer.expiresAt;
+    const STALE_THRESHOLD_MS = 60 * 1000; // 1 minute
+    
+    if (expiredMs > STALE_THRESHOLD_MS) {
+      console.log('[System Brain] ⚠️ Cleaning up stale intention timer:', {
+        packageName,
+        expiredMinutesAgo: Math.floor(expiredMs / (60 * 1000)),
+        note: 'Timer expired long ago, removing before evaluation',
+      });
+      delete state.intentionTimers[packageName];
+    }
+  }
+  
+  // NEW: Clear background-expired Quick Task flag BEFORE OS Trigger Brain
+  // CRITICAL: This function ONLY clears background-expired flags, never launches intervention
+  // Intervention enforcement happens ONLY in handleUserInteraction() to prevent duplicate launches
+  const expired = state.expiredQuickTasks[packageName];
+  if (expired && !expired.expiredWhileForeground) {
+    // Quick Task expired in background → Clear flag and continue to OS Trigger Brain normally
+    console.log('[System Brain] Quick Task expired in background - clearing flag, continuing to OS Trigger Brain');
+    delete state.expiredQuickTasks[packageName];
+  }
+  // NOTE: If expired.expiredWhileForeground === true, the flag remains.
+  // Intervention will be enforced on the next USER_INTERACTION_FOREGROUND event.
+  // This prevents duplicate launches from FOREGROUND_CHANGED + USER_INTERACTION_FOREGROUND.
   
   // Log comprehensive timer information for monitored app
   const quickTaskRemaining = await getQuickTaskRemaining(timestamp, state);

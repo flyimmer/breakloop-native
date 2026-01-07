@@ -9,9 +9,10 @@
  * - Allows System Brain internals to refactor without breaking UI
  * 
  * Rules:
- * - All functions are READ-ONLY (informational display only)
+ * - Most functions are READ-ONLY (informational display only)
  * - UI must NOT make semantic decisions based on these values
  * - System Brain has already made all decisions before UI sees data
+ * - Exception: setLastIntervenedApp() writes state for coordination (event-driven architecture)
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -85,5 +86,48 @@ export async function getQuickTaskRemainingForDisplay(): Promise<QuickTaskDispla
       remaining: 1,
       windowMinutes: 15,
     };
+  }
+}
+
+/**
+ * Set lastIntervenedApp flag in System Brain state.
+ * 
+ * CRITICAL: This function writes to AsyncStorage immediately and waits for completion.
+ * System Brain is event-driven and loads state on each event, so we must ensure
+ * the write completes BEFORE the next FOREGROUND_CHANGED event arrives.
+ * 
+ * Called by SystemSurface when user makes a decision that returns them to the app.
+ * This flag tells System Brain to skip the next foreground event for this app
+ * (it's an internal return, not a new user-initiated app open).
+ * 
+ * IMPORTANT: Only call this when user makes an explicit decision:
+ * - User presses Quick Task button
+ * - User completes intervention
+ * 
+ * Do NOT call this when merely showing a dialog.
+ * 
+ * @param packageName - App package name that user is returning to
+ */
+export async function setLastIntervenedApp(packageName: string): Promise<void> {
+  try {
+    console.log('[System Brain Public API] Setting lastIntervenedApp:', packageName);
+    console.log('[System Brain Public API] Writing to AsyncStorage immediately (event-driven coordination)');
+    
+    // Load System Brain state
+    const stateJson = await AsyncStorage.getItem('system_brain_state_v1');
+    const state = stateJson ? JSON.parse(stateJson) : {};
+    
+    // Set the flag
+    state.lastIntervenedApp = packageName;
+    
+    // Save updated state IMMEDIATELY (blocking write)
+    // System Brain will load this on next event
+    await AsyncStorage.setItem('system_brain_state_v1', JSON.stringify(state));
+    
+    console.log('[System Brain Public API] ✅ lastIntervenedApp persisted to AsyncStorage');
+    console.log('[System Brain Public API] Next System Brain event will load this value');
+  } catch (e) {
+    console.error('[System Brain Public API] ❌ Failed to set lastIntervenedApp:', e);
+    throw e; // Propagate error so caller knows coordination failed
   }
 }

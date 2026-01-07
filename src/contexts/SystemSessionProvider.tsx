@@ -57,6 +57,7 @@ interface SystemSessionContextValue {
   foregroundApp: string | null;  // Tracked for Alternative Activity visibility (Rule 1)
   shouldLaunchHome: boolean;  // Whether to launch home screen when session ends
   dispatchSystemEvent: (event: SystemSessionEvent) => void;
+  safeEndSession: (shouldLaunchHome: boolean) => void;  // Idempotent END_SESSION dispatcher
   setTransientTargetApp: (app: string | null) => void;  // Set transient targetApp for finish-time navigation
   getTransientTargetApp: () => string | null;  // Get transient targetApp for finish-time navigation
 }
@@ -243,6 +244,21 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
   const [state, dispatch] = useReducer(systemSessionReducer, initialSystemSessionState);
 
   /**
+   * Idempotency guard for END_SESSION
+   * Prevents double-dispatch that can cause partial Activity teardown and frozen UI
+   */
+  const hasEndedSessionRef = React.useRef(false);
+
+  /**
+   * Reset hasEndedSession flag when a new session starts
+   */
+  useEffect(() => {
+    if (state.session !== null && state.bootstrapState === 'READY') {
+      hasEndedSessionRef.current = false;
+    }
+  }, [state.session, state.bootstrapState]);
+
+  /**
    * Listen for foreground app changes from native layer
    * Required for Rule 1: Alternative Activity visibility
    */
@@ -278,6 +294,22 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
   };
 
   /**
+   * Safe END_SESSION dispatcher with idempotency guard
+   * Prevents double-dispatch that can cause partial Activity teardown and frozen UI
+   * 
+   * @param shouldLaunchHome - Whether to launch home screen when session ends
+   */
+  const safeEndSession = (shouldLaunchHome: boolean) => {
+    if (hasEndedSessionRef.current) {
+      console.warn('[SystemSession] END_SESSION ignored — already ended');
+      return;
+    }
+    hasEndedSessionRef.current = true;
+    console.log('[SystemSurfaceInvariant] safeEndSession() called:', { shouldLaunchHome });
+    dispatchSystemEvent({ type: 'END_SESSION', shouldLaunchHome });
+  };
+
+  /**
    * Set transient targetApp for finish-time navigation
    * This is NOT part of session state - only used when finishing activity
    */
@@ -301,6 +333,7 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
     foregroundApp: state.foregroundApp,
     shouldLaunchHome: state.shouldLaunchHome,
     dispatchSystemEvent,
+    safeEndSession,
     setTransientTargetApp,
     getTransientTargetApp,
   };

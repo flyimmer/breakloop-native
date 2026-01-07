@@ -20,6 +20,7 @@ import { DarkTheme, DefaultTheme, NavigationContainerRef } from '@react-navigati
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
 import { getInterventionDurationSec } from '@/src/os/osConfig';
+import { setLastIntervenedApp } from '@/src/systemBrain/publicApi';
 import BreathingScreen from '../screens/conscious_process/BreathingScreen';
 import RootCauseScreen from '../screens/conscious_process/RootCauseScreen';
 import AlternativesScreen from '../screens/conscious_process/AlternativesScreen';
@@ -63,7 +64,7 @@ export default function InterventionFlow({ app }: InterventionFlowProps) {
   const navigationRef = useRef<NavigationContainerRef<InterventionStackParamList>>(null);
   const colorScheme = useColorScheme();
   const { interventionState, dispatchIntervention } = useIntervention();
-  const { dispatchSystemEvent } = useSystemSession();
+  const { safeEndSession, dispatchSystemEvent } = useSystemSession();
   const { state, targetApp } = interventionState;
   const previousStateRef = useRef<string>(state);
   const previousTargetAppRef = useRef<any>(targetApp);
@@ -154,15 +155,23 @@ export default function InterventionFlow({ app }: InterventionFlowProps) {
         const shouldLaunchHome = !interventionState.intentionTimerSet;
         
         if (__DEV__) {
-          console.log('[InterventionFlow] Intervention completed - dispatching END_SESSION', {
+          console.log('[InterventionFlow] Intervention completed - calling safeEndSession', {
             intentionTimerSet: interventionState.intentionTimerSet,
             shouldLaunchHome,
           });
         }
-        dispatchSystemEvent({ 
-          type: 'END_SESSION',
-          shouldLaunchHome,
-        });
+        
+        // Set lastIntervenedApp flag if user is returning to the app (not going home)
+        // Fire-and-forget - no await, END_SESSION must happen immediately
+        if (!shouldLaunchHome && app) {
+          setLastIntervenedApp(app);
+          if (__DEV__) {
+            console.log('[InterventionFlow] lastIntervenedApp set (fire-and-forget)');
+          }
+        }
+        
+        // End session immediately (idempotent, no blocking)
+        safeEndSession(shouldLaunchHome);
         break;
     }
   }, [state, targetApp, app]);

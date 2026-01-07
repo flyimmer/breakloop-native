@@ -21,7 +21,11 @@ export interface TimerState {
   quickTaskUsageHistory: number[];  // PERSISTED - critical for kill-safety
   lastMeaningfulApp: string | null;
   isHeadlessTaskProcessing: boolean;  // Track if we're in headless task context
-  expiredQuickTasks: string[];  // Apps where Quick Task permission has ended, awaiting user interaction
+  expiredQuickTasks: Record<string, {
+    expiredAt: number;
+    expiredWhileForeground: boolean;  // Track WHERE user was at expiration time
+  }>;  // Apps where Quick Task permission has ended, awaiting user interaction
+  lastIntervenedApp: string | null;  // App that user returned to after making a decision (Quick Task/Intervention)
 }
 
 /**
@@ -40,13 +44,33 @@ export async function loadTimerState(): Promise<TimerState> {
         usageHistoryLength: (state.quickTaskUsageHistory || []).length,
         lastMeaningfulApp: state.lastMeaningfulApp,
       });
+      
+      // Migrate expiredQuickTasks from old array format to new Record format
+      const rawExpired = state.expiredQuickTasks || state.pendingQuickTaskIntervention || [];
+      let expiredQuickTasks: Record<string, { expiredAt: number; expiredWhileForeground: boolean }> = {};
+      
+      if (Array.isArray(rawExpired)) {
+        // Old format: assume all expired while foreground (conservative approach)
+        console.log('[System Brain] Migrating expiredQuickTasks from array to Record format');
+        rawExpired.forEach((pkg: string) => {
+          expiredQuickTasks[pkg] = {
+            expiredAt: Date.now(),
+            expiredWhileForeground: true,  // Conservative: force intervention for existing expired tasks
+          };
+        });
+      } else {
+        // New format: already a Record
+        expiredQuickTasks = rawExpired;
+      }
+      
       return {
         quickTaskTimers: state.quickTaskTimers || {},
         intentionTimers: state.intentionTimers || {},
         quickTaskUsageHistory: state.quickTaskUsageHistory || [],
         lastMeaningfulApp: state.lastMeaningfulApp || null,
         isHeadlessTaskProcessing: false,  // Always false when loading from storage
-        expiredQuickTasks: state.expiredQuickTasks || state.pendingQuickTaskIntervention || [],  // Migrate old key
+        expiredQuickTasks,  // Migrated format
+        lastIntervenedApp: state.lastIntervenedApp || null,  // Duplicate event filter flag
       };
     }
   } catch (e) {
@@ -61,7 +85,8 @@ export async function loadTimerState(): Promise<TimerState> {
     quickTaskUsageHistory: [],  // Empty array
     lastMeaningfulApp: null,
     isHeadlessTaskProcessing: false,  // Default to false
-    expiredQuickTasks: [],
+    expiredQuickTasks: {},  // Empty Record
+    lastIntervenedApp: null,  // No pending duplicate filter
   };
 }
 
@@ -80,6 +105,7 @@ export async function saveTimerState(state: TimerState): Promise<void> {
       usageHistoryLength: state.quickTaskUsageHistory.length,
       lastMeaningfulApp: state.lastMeaningfulApp,
       expiredQuickTasks: state.expiredQuickTasks,
+      lastIntervenedApp: state.lastIntervenedApp,
     });
   } catch (e) {
     console.warn('[System Brain] Failed to save state:', e);

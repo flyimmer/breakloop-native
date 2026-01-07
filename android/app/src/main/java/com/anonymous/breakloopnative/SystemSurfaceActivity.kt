@@ -231,6 +231,11 @@ class SystemSurfaceActivity : ReactActivity() {
         super.invokeDefaultOnBackPressed()
     }
 
+    override fun finish() {
+        Log.i("SystemSurfaceInvariant", "finish() called — overlay released")
+        super.finish()
+    }
+
     override fun onDestroy() {
         Log.i(TAG, "❌ SystemSurfaceActivity destroyed")
         

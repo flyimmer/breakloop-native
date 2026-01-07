@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
-import { getQuickTaskRemainingForDisplay } from '@/src/systemBrain/publicApi';
+import { getQuickTaskRemainingForDisplay, setLastIntervenedApp } from '@/src/systemBrain/publicApi';
 import { getQuickTaskDurationMs } from '@/src/os/osConfig';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
@@ -38,7 +38,7 @@ export default function QuickTaskDialogScreen() {
   console.log('[QuickTaskDialog] COMPONENT FUNCTION CALLED!');
   console.log('[QuickTaskDialog] ========================================');
 
-  const { session, dispatchSystemEvent, setTransientTargetApp } = useSystemSession();
+  const { session, safeEndSession, setTransientTargetApp } = useSystemSession();
   const [isProcessing, setIsProcessing] = useState(false);
   const [displayInfo, setDisplayInfo] = useState<{ remaining: number; windowMinutes: number } | null>(null);
   
@@ -120,7 +120,7 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] ========================================');
   };
 
-  const handleQuickTask = () => {
+  const handleQuickTask = async () => {
     console.log('[QuickTaskDialog] ========================================');
     console.log('[QuickTaskDialog] handleQuickTask called!');
     console.log('[QuickTaskDialog] isProcessing:', isProcessing);
@@ -156,14 +156,19 @@ export default function QuickTaskDialogScreen() {
         });
       }
       
+      // Set lastIntervenedApp flag in System Brain state (fire-and-forget)
+      // No await - END_SESSION must happen immediately to release overlay
+      setLastIntervenedApp(session.app);
+      console.log('[QuickTaskDialog] lastIntervenedApp set (fire-and-forget)');
+      
       // Set transient targetApp for finish-time navigation
       setTransientTargetApp(session.app);
       console.log('[QuickTaskDialog] Set transient targetApp:', session.app);
       
-      // End session and return to app
-      console.log('[QuickTaskDialog] Dispatching END_SESSION (shouldLaunchHome: false)...');
-      dispatchSystemEvent({ type: 'END_SESSION', shouldLaunchHome: false });
-      console.log('[QuickTaskDialog] END_SESSION dispatched - SystemSurface will finish, user returns to app');
+      // End session and return to app (idempotent, immediate)
+      console.log('[QuickTaskDialog] Calling safeEndSession (shouldLaunchHome: false)...');
+      safeEndSession(false);
+      console.log('[QuickTaskDialog] safeEndSession called - SystemSurface will finish, user returns to app');
       
       // Reset isProcessing after a delay
       setTimeout(() => {
@@ -191,10 +196,10 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] Set isProcessing to true');
     
     try {
-      // End session and launch home
-      console.log('[QuickTaskDialog] Dispatching END_SESSION (shouldLaunchHome: true)...');
-      dispatchSystemEvent({ type: 'END_SESSION', shouldLaunchHome: true });
-      console.log('[QuickTaskDialog] END_SESSION dispatched - SystemSurface will finish and launch home');
+      // End session and launch home (idempotent, immediate)
+      console.log('[QuickTaskDialog] Calling safeEndSession (shouldLaunchHome: true)...');
+      safeEndSession(true);
+      console.log('[QuickTaskDialog] safeEndSession called - SystemSurface will finish and launch home');
       console.log('[QuickTaskDialog] Quick Task uses unchanged (GLOBAL quota preserved)');
       
       // Reset isProcessing after a delay in case dismissal doesn't happen
