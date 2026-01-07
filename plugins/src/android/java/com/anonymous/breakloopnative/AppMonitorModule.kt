@@ -360,63 +360,15 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
      */
     @ReactMethod
     fun finishInterventionActivity() {
-        try {
-            android.util.Log.i("AppMonitorModule", "🎯 finishInterventionActivity called!")
-            val activity = reactApplicationContext.currentActivity
-            android.util.Log.i("AppMonitorModule", "📍 currentActivity: ${activity?.javaClass?.simpleName ?: "null"}")
-            android.util.Log.i("AppMonitorModule", "📍 Is SystemSurfaceActivity? ${activity is SystemSurfaceActivity}")
-            if (activity is SystemSurfaceActivity) {
-                android.util.Log.i("AppMonitorModule", "🔄 Finishing SystemSurfaceActivity")
-                
-                // Get the triggering app from the intent using the constant
-                val triggeringApp = activity.intent.getStringExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP)
-                android.util.Log.i("AppMonitorModule", "📱 Triggering app from Intent: $triggeringApp")
-                
-                // Debug: Log all intent extras
-                val extras = activity.intent.extras
-                if (extras != null) {
-                    android.util.Log.d("AppMonitorModule", "Intent extras keys: ${extras.keySet()}")
-                    for (key in extras.keySet()) {
-                        android.util.Log.d("AppMonitorModule", "  - $key: ${extras.get(key)}")
-                    }
-                } else {
-                    android.util.Log.w("AppMonitorModule", "⚠️ Intent has NO extras!")
-                }
-                
-                // Launch the monitored app FIRST, before finishing the activity
-                // This ensures the monitored app comes to foreground, not MainActivity
-                if (triggeringApp != null && triggeringApp.isNotEmpty()) {
-                    try {
-                        android.util.Log.i("AppMonitorModule", "🚀 Attempting to launch: $triggeringApp")
-                        val launchIntent = reactApplicationContext.packageManager.getLaunchIntentForPackage(triggeringApp)
-                        if (launchIntent != null) {
-                            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            launchIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                            launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                            reactApplicationContext.startActivity(launchIntent)
-                            android.util.Log.i("AppMonitorModule", "✅ Launched monitored app: $triggeringApp")
-                            
-                            // Small delay to ensure the app launches before we finish
-                            Thread.sleep(100)
-                        } else {
-                            android.util.Log.w("AppMonitorModule", "❌ Could not get launch intent for: $triggeringApp")
-                        }
-                    } catch (e: Exception) {
-                        android.util.Log.e("AppMonitorModule", "❌ Failed to launch monitored app: $triggeringApp", e)
-                    }
-                } else {
-                    android.util.Log.w("AppMonitorModule", "⚠️ No triggering app specified, not launching anything")
-                }
-                
-                // Move to background instead of finishing
-                // This prevents MainActivity from appearing
-                android.util.Log.i("AppMonitorModule", "📤 Moving SystemSurfaceActivity to background")
-                activity.moveTaskToBack(true)
-            } else {
-                android.util.Log.w("AppMonitorModule", "⚠️ finishInterventionActivity: currentActivity is ${activity?.javaClass?.simpleName ?: "null"}, not SystemSurfaceActivity - IGNORING")
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("AppMonitorModule", "❌ Failed to finish SystemSurfaceActivity", e)
+        // Phase-2 Architecture: Native performs ONE mechanical action only
+        // JavaScript decides semantics (what happens next)
+        // REMOVED: App launching, Thread.sleep(), task movement
+        val activity = reactApplicationContext.currentActivity
+        if (activity is SystemSurfaceActivity) {
+            android.util.Log.i("AppMonitorModule", "Finishing SystemSurfaceActivity")
+            activity.finish()
+        } else {
+            android.util.Log.w("AppMonitorModule", "finishInterventionActivity called but not in SystemSurfaceActivity")
         }
     }
 
@@ -472,12 +424,16 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     fun launchSystemSurface(wakeReason: String, triggeringApp: String) {
         android.util.Log.d("AppMonitorModule", "📱 System Brain requested SystemSurface launch: $wakeReason for $triggeringApp")
         
+        // Phase-2 Architecture: SystemSurfaceActivity must be DISPOSABLE and NEVER REUSED
+        // Each launch creates a fresh Activity instance with fresh Intent extras
+        // REMOVED FLAG_ACTIVITY_CLEAR_TOP to prevent Activity reuse
         val intent = Intent(reactApplicationContext, SystemSurfaceActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
             putExtra(SystemSurfaceActivity.EXTRA_WAKE_REASON, wakeReason)
             putExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP, triggeringApp)
         }
         
+        android.util.Log.i("AppMonitorModule", "🆕 Launching fresh SystemSurfaceActivity (disposable)")
         reactApplicationContext.startActivity(intent)
     }
 

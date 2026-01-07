@@ -426,6 +426,21 @@ class ForegroundDetectionService : AccessibilityService() {
         // Use dynamicMonitoredApps (synced from JavaScript) instead of hardcoded MONITORED_APPS
         if (dynamicMonitoredApps.contains(packageName)) {
             Log.i(TAG, "🎯 MONITORED APP DETECTED: $packageName")
+            
+            // Log timer information for this monitored app
+            val now = System.currentTimeMillis()
+            val quickTaskExpiresAt = quickTaskTimers[packageName]
+            val tQuickTaskRemaining = if (quickTaskExpiresAt != null && now < quickTaskExpiresAt) {
+                val remainingSec = (quickTaskExpiresAt - now) / 1000
+                "$remainingSec seconds"
+            } else {
+                "none (not active)"
+            }
+            
+            Log.i(TAG, "📊 Timer Status for $packageName:")
+            Log.i(TAG, "   └─ t_quickTask remaining: $tQuickTaskRemaining")
+            Log.i(TAG, "   └─ Note: n_quickTask and t_intention are managed by JavaScript (System Brain)")
+            
             launchInterventionActivity(packageName)
         } else {
             Log.d(TAG, "  └─ Not a monitored app, no intervention needed")

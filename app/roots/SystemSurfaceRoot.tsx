@@ -389,11 +389,36 @@ export default function SystemSurfaceRoot() {
     return null;
   }
 
-  // RULE 4: If no session (and bootstrap complete), render nothing (activity will finish via useEffect)
+  /**
+   * 🚨 DEFENSIVE GUARD: Prevent silent hangs
+   * 
+   * This guard enforces the Phase-2 invariant:
+   * SystemSurfaceActivity must always establish a session before rendering.
+   * If this is violated, the Activity must immediately finish to avoid blocking the user.
+   * 
+   * CRITICAL: Do NOT remove this guard. It prevents production bugs where:
+   * - Bootstrap completes but no session is created
+   * - SystemSurface renders blank overlay
+   * - Monitored app becomes unresponsive
+   * 
+   * If this guard triggers, it indicates a FATAL error in:
+   * - System Brain event handler
+   * - Intent extras delivery
+   * - Bootstrap initialization logic
+   */
   if (session === null) {
+    console.error('[SystemSurfaceRoot] 🚨 FATAL: Bootstrap complete but no session created');
+    console.error('[SystemSurfaceRoot] This should never happen - finishing activity to prevent hang');
+    console.error('[SystemSurfaceRoot] Check System Brain event handler and Intent extras');
+    
     if (__DEV__) {
       console.log('[SystemSurfaceRoot] Rendering null (no session, bootstrap complete)');
     }
+    
+    // Finish activity immediately (launch home to unblock user)
+    // This prevents the monitored app from being blocked by a blank overlay
+    finishSystemSurfaceActivity(true);
+    
     return null;
   }
 

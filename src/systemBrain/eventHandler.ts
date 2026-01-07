@@ -371,11 +371,30 @@ async function handleForegroundChange(
     return;
   }
   
+  // Log comprehensive timer information for monitored app
+  const quickTaskRemaining = await getQuickTaskRemaining(timestamp, state);
+  const quickTaskTimer = state.quickTaskTimers[packageName];
+  const intentionTimer = state.intentionTimers[packageName];
+  
+  const tQuickTaskRemaining = quickTaskTimer && timestamp < quickTaskTimer.expiresAt
+    ? `${Math.round((quickTaskTimer.expiresAt - timestamp) / 1000)} seconds`
+    : 'none (not active)';
+  
+  const tIntentionRemaining = intentionTimer && timestamp < intentionTimer.expiresAt
+    ? `${Math.round((intentionTimer.expiresAt - timestamp) / 1000)} seconds`
+    : 'none (not active)';
+  
+  console.log('[System Brain] 📊 MONITORED APP OPENED - Timer Status:', {
+    monitoredApp: packageName,
+    n_quickTask_remaining: quickTaskRemaining,
+    t_quickTask_remaining: tQuickTaskRemaining,
+    t_intention_remaining: tIntentionRemaining,
+  });
+  
   // Phase 2: Evaluate OS Trigger Brain and pre-decide UI flow
   console.log('[System Brain] Evaluating OS Trigger Brain for:', packageName);
   
   // Priority #3: Check t_intention (per-app suppressor)
-  const intentionTimer = state.intentionTimers[packageName];
   if (intentionTimer && timestamp < intentionTimer.expiresAt) {
     console.log('[System Brain] ✓ t_intention ACTIVE - suppressing intervention', {
       packageName,
@@ -386,14 +405,10 @@ async function handleForegroundChange(
   }
   
   // Priority #1: Check t_quickTask (per-app timer)
-  const quickTaskTimer = state.quickTaskTimers[packageName];
   if (quickTaskTimer && timestamp < quickTaskTimer.expiresAt) {
     console.log('[System Brain] ✓ t_quickTask ACTIVE - suppressing intervention');
     return;
   }
-  
-  // Step 3: Check n_quickTask (global) and decide
-  const quickTaskRemaining = await getQuickTaskRemaining(timestamp, state);
   
   if (quickTaskRemaining > 0) {
     console.log('[System Brain] ✓ n_quickTask > 0 - launching with SHOW_QUICK_TASK_DIALOG');
