@@ -38,7 +38,7 @@ export default function QuickTaskDialogScreen() {
   console.log('[QuickTaskDialog] COMPONENT FUNCTION CALLED!');
   console.log('[QuickTaskDialog] ========================================');
 
-  const { session, safeEndSession, setTransientTargetApp } = useSystemSession();
+  const { session, dispatchSystemEvent, safeEndSession, setTransientTargetApp } = useSystemSession();
   const [isProcessing, setIsProcessing] = useState(false);
   const [displayInfo, setDisplayInfo] = useState<{ remaining: number; windowMinutes: number } | null>(null);
   
