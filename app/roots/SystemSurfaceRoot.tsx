@@ -82,40 +82,39 @@ function isBreakLoopInfrastructure(packageName: string | null): boolean {
 }
 
 /**
- * Finish SystemSurfaceActivity
- * Called when session becomes null (Rule 4)
+ * Finish SystemSurfaceActivity only (Android resumes previous app naturally)
  * 
- * @param shouldLaunchHome - If true, launches home screen after finishing (cancellation/completion)
- *                           If false, just finishes activity (intention timer/alternative activity)
- * @param targetApp - Optional target app to launch after finishing (Quick Task scenario)
+ * Use this when:
+ * - User sets intention timer (wants to use the monitored app)
+ * - User starts alternative activity
+ * - Quick Task activated (user returns to monitored app)
+ * 
+ * The monitored app or previous activity will naturally come to foreground via Android task stack.
+ * NO explicit app launch needed.
  */
-function finishSystemSurfaceActivity(shouldLaunchHome: boolean = true, targetApp?: string | null) {
+function finishSurfaceOnly() {
   if (Platform.OS === 'android' && AppMonitorModule) {
     if (__DEV__) {
-      console.log('[SystemSurfaceRoot] Session is null - finishing SystemSurfaceActivity', {
-        shouldLaunchHome,
-        targetApp,
-      });
+      console.log('[SystemSurfaceRoot] Finishing SystemSurface only (Android resumes previous app)');
     }
-    
-    if (shouldLaunchHome) {
-      // Finish activity AND launch home (cancellation/completion)
-      AppMonitorModule.cancelInterventionActivity();
-    } else {
-      // Finish activity only
-      AppMonitorModule.finishSystemSurfaceActivity();
-      
-      // Launch target app if provided (Quick Task scenario)
-      if (targetApp) {
-        if (__DEV__) {
-          console.log('[SystemSurfaceRoot] Launching target app:', targetApp);
-        }
-        // Small delay to ensure activity finishes first
-        setTimeout(() => {
-          AppMonitorModule.launchApp(targetApp);
-        }, 100);
-      }
+    AppMonitorModule.finishSystemSurfaceActivity();
+  }
+}
+
+/**
+ * Finish SystemSurfaceActivity AND launch home screen
+ * 
+ * Use this when:
+ * - User cancels intervention (back button, switches away)
+ * - User completes full intervention with reflection
+ * - Intervention explicitly decided to exit to home
+ */
+function finishAndLaunchHome() {
+  if (Platform.OS === 'android' && AppMonitorModule) {
+    if (__DEV__) {
+      console.log('[SystemSurfaceRoot] Finishing SystemSurface and launching home screen');
     }
+    AppMonitorModule.cancelInterventionActivity();
   }
 }
 
@@ -265,10 +264,16 @@ export default function SystemSurfaceRoot() {
             app: triggeringApp,
           });
         } else if (wakeReason === 'QUICK_TASK_EXPIRED_FOREGROUND') {
-          dispatchSystemEvent({
-            type: 'START_INTERVENTION',
-            app: triggeringApp,
-          });
+          // ⚠️ DEAD CODE PATH (as of fix for app hang bug)
+          // System Brain should NOT launch SystemSurface for silent expiration
+          // This case is kept as a safety net to prevent zombie Activities
+          console.warn('[SystemSurfaceRoot] ⚠️ UNEXPECTED: Launched for QUICK_TASK_EXPIRED_FOREGROUND');
+          console.warn('[SystemSurfaceRoot] System Brain should handle silent expiration without launching UI');
+          console.warn('[SystemSurfaceRoot] Finishing immediately to prevent hang');
+          
+          // Finish immediately, no session event
+          finishSurfaceOnly();
+          return; // Hard stop - no further processing
         } else if (wakeReason === 'MONITORED_APP_FOREGROUND') {
           console.warn('[SystemSurfaceRoot] ⚠️ OLD WAKE REASON: MONITORED_APP_FOREGROUND');
           console.warn('[SystemSurfaceRoot] This should be replaced by SHOW_QUICK_TASK_DIALOG or START_INTERVENTION_FLOW');
@@ -306,23 +311,20 @@ export default function SystemSurfaceRoot() {
    */
   useEffect(() => {
     if (bootstrapState === 'READY' && session === null) {
-      const targetApp = getTransientTargetApp();
-      
       if (__DEV__) {
         console.log('[SystemSurfaceRoot] Session is null (bootstrap complete) - triggering activity finish', {
           shouldLaunchHome,
-          targetApp,
         });
       }
       
-      finishSystemSurfaceActivity(shouldLaunchHome, targetApp);
-      
-      // Clear the transient targetApp after use (safety)
-      if (targetApp) {
-        setTransientTargetApp(null);
+      // Use explicit finish functions based on shouldLaunchHome flag
+      if (shouldLaunchHome) {
+        finishAndLaunchHome();
+      } else {
+        finishSurfaceOnly();
       }
     }
-  }, [session, bootstrapState, shouldLaunchHome, getTransientTargetApp]);
+  }, [session, bootstrapState, shouldLaunchHome]);
 
   /**
    * CRITICAL: End Intervention Session if user leaves the app
@@ -346,6 +348,15 @@ export default function SystemSurfaceRoot() {
     // Only check for INTERVENTION sessions
     if (session?.kind !== 'INTERVENTION') return;
     
+    // ✅ CHECK SYSTEM UI FIRST (before any other logic)
+    // System UI overlays (notification shade, quick settings) are NOT user exits
+    if (isBreakLoopInfrastructure(foregroundApp)) {
+      if (__DEV__ && foregroundApp === 'com.android.systemui') {
+        console.log('[SystemSurfaceRoot] System UI overlay detected - ignoring (not user exit)');
+      }
+      return;  // Early return - don't end session
+    }
+    
     // ✅ DETERMINISTIC: Use pre-computed REPLACE_SESSION transition flag
     // This was calculated during render with the correct previous value
     if (isReplaceSessionTransition) {
@@ -354,9 +365,6 @@ export default function SystemSurfaceRoot() {
       }
       return;
     }
-    
-    // Don't end session if foregroundApp is null or BreakLoop infrastructure
-    if (isBreakLoopInfrastructure(foregroundApp)) return;
     
     // End session if user switched to a different app
     if (foregroundApp !== session.app) {
@@ -390,35 +398,22 @@ export default function SystemSurfaceRoot() {
   }
 
   /**
-   * 🚨 DEFENSIVE GUARD: Prevent silent hangs
+   * SESSION END: Render null when session is null
    * 
-   * This guard enforces the Phase-2 invariant:
-   * SystemSurfaceActivity must always establish a session before rendering.
-   * If this is violated, the Activity must immediately finish to avoid blocking the user.
+   * When session becomes null (after END_SESSION), render nothing.
+   * The useEffect above (lines 307-327) handles activity finish with proper shouldLaunchHome flag.
    * 
-   * CRITICAL: Do NOT remove this guard. It prevents production bugs where:
-   * - Bootstrap completes but no session is created
-   * - SystemSurface renders blank overlay
-   * - Monitored app becomes unresponsive
+   * REMOVED: Defensive guard that was racing with END_SESSION useEffect.
+   * Bootstrap failures are already caught by:
+   * - Bootstrap initialization error handling (lines 297-300)
+   * - Intent extras validation (lines 211-215)
    * 
-   * If this guard triggers, it indicates a FATAL error in:
-   * - System Brain event handler
-   * - Intent extras delivery
-   * - Bootstrap initialization logic
+   * Rendering null here is safe - the useEffect will finish the activity correctly.
    */
   if (session === null) {
-    console.error('[SystemSurfaceRoot] 🚨 FATAL: Bootstrap complete but no session created');
-    console.error('[SystemSurfaceRoot] This should never happen - finishing activity to prevent hang');
-    console.error('[SystemSurfaceRoot] Check System Brain event handler and Intent extras');
-    
     if (__DEV__) {
-      console.log('[SystemSurfaceRoot] Rendering null (no session, bootstrap complete)');
+      console.log('[SystemSurfaceRoot] Session is null - rendering nothing (useEffect will finish activity)');
     }
-    
-    // Finish activity immediately (launch home to unblock user)
-    // This prevents the monitored app from being blocked by a blank overlay
-    finishSystemSurfaceActivity(true);
-    
     return null;
   }
 

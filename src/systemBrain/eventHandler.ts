@@ -127,7 +127,7 @@ function recordQuickTaskUsage(packageName: string, timestamp: number, state: Tim
  * 4. Save updated state
  */
 export async function handleSystemEvent(event: {
-  type: 'TIMER_EXPIRED' | 'FOREGROUND_CHANGED' | 'TIMER_SET';
+  type: 'TIMER_EXPIRED' | 'FOREGROUND_CHANGED' | 'TIMER_SET' | 'USER_INTERACTION_FOREGROUND';
   packageName: string;
   timestamp: number;
   expiresAt?: number; // For TIMER_SET events
@@ -142,19 +142,30 @@ export async function handleSystemEvent(event: {
   // Load semantic state (event-driven, must restore state each time)
   const state = await loadTimerState();
   
-  if (type === 'TIMER_EXPIRED') {
-    await handleTimerExpiration(packageName, timestamp, state);
-  } else if (type === 'FOREGROUND_CHANGED') {
-    await handleForegroundChange(packageName, timestamp, state);
-  } else if (type === 'TIMER_SET') {
-    await handleTimerSet(packageName, event.expiresAt!, timestamp, event.timerType!, state);
+  // Mark that we're processing in headless task context
+  // This prevents BreakLoop package from corrupting lastMeaningfulApp
+  state.isHeadlessTaskProcessing = true;
+  
+  try {
+    if (type === 'TIMER_EXPIRED') {
+      await handleTimerExpiration(packageName, timestamp, state);
+    } else if (type === 'FOREGROUND_CHANGED') {
+      await handleForegroundChange(packageName, timestamp, state);
+    } else if (type === 'TIMER_SET') {
+      await handleTimerSet(packageName, event.expiresAt!, timestamp, event.timerType!, state);
+    } else if (type === 'USER_INTERACTION_FOREGROUND') {
+      await handleUserInteraction(packageName, timestamp, state);
+    }
+  } finally {
+    // Clear flag before saving (state should never persist with this flag true)
+    state.isHeadlessTaskProcessing = false;
+    
+    // Save updated semantic state
+    await saveTimerState(state);
+    
+    console.log('[System Brain] Event processing complete');
+    console.log('[System Brain] ========================================');
   }
-  
-  // Save updated semantic state
-  await saveTimerState(state);
-  
-  console.log('[System Brain] Event processing complete');
-  console.log('[System Brain] ========================================');
 }
 
 /**
@@ -237,22 +248,81 @@ async function handleTimerExpiration(
   });
   
   if (currentForegroundApp === packageName) {
-    // User is still on the app → launch SystemSurface for intervention
-    console.log('[System Brain] 🚨 User still on expired app - launching intervention');
-    console.log('[System Brain] This is SILENT expiration (no reminder screen)');
+    // User is still on the app when timer expired
     
-    // Phase 2: Launch with explicit wake reason (System Brain pre-decided)
-    const wakeReason = timerType === 'QUICK_TASK' 
-      ? 'QUICK_TASK_EXPIRED_FOREGROUND' 
-      : 'INTENTION_EXPIRED_FOREGROUND';
-    
-    await launchSystemSurface(packageName, wakeReason as any);
+    if (timerType === 'QUICK_TASK') {
+      // QUICK TASK EXPIRATION: Revoke permission, await user interaction
+      console.log('[QuickTask] TIMER_EXPIRED for:', packageName);
+      console.log('[QuickTask] Current foreground app:', currentForegroundApp);
+      
+      // Mark as expired - permission revoked, awaiting user interaction
+      if (!state.expiredQuickTasks.includes(packageName)) {
+        state.expiredQuickTasks.push(packageName);
+      }
+      
+      console.log('[QuickTask] Permission revoked — waiting for user interaction');
+      console.log('[QuickTask] Will enforce at first USER_INTERACTION_FOREGROUND event');
+      
+      // ❌ DO NOT call launchSystemSurface() here
+      // ❌ Timer expiration is NOT a safe UI lifecycle boundary
+      // ✅ Wait for USER_INTERACTION_FOREGROUND event
+    } else {
+      // INTENTION TIMER EXPIRATION: Launch intervention
+      // Intention timer expiration means user should be re-prompted
+      console.log('[System Brain] 🚨 Intention timer expired - launching intervention');
+      await launchSystemSurface(packageName, 'INTENTION_EXPIRED_FOREGROUND');
+    }
   } else {
     // User switched to another app → silent cleanup only
-    console.log('[System Brain] ✓ User switched apps - silent cleanup only (no intervention)');
-    console.log('[System Brain] Current foreground app:', currentForegroundApp);
+    if (timerType === 'QUICK_TASK') {
+      console.log('[QuickTask] User already left app - no enforcement needed');
+      console.log('[QuickTask] Current foreground app:', currentForegroundApp);
+    } else {
+      console.log('[System Brain] ✓ User switched apps - silent cleanup only (no intervention)');
+      console.log('[System Brain] Current foreground app:', currentForegroundApp);
+    }
   }
   console.log('[System Brain] ========================================');
+}
+
+/**
+ * Handle user interaction in foreground app (MECHANICAL event from native).
+ * 
+ * Native emits this event for every user interaction (scroll, tap, content change).
+ * System Brain decides whether enforcement is needed based on semantic state.
+ * 
+ * This event represents a UI-safe boundary for launching Activities.
+ * 
+ * @param packageName - App package name
+ * @param timestamp - Current timestamp
+ * @param state - Semantic state
+ */
+async function handleUserInteraction(
+  packageName: string,
+  timestamp: number,
+  state: TimerState
+): Promise<void> {
+  console.log('[System Brain] USER_INTERACTION_FOREGROUND:', packageName);
+  
+  // 🔒 SYSTEM BRAIN DECIDES: Should we enforce?
+  // Check semantic state to determine if this app has expired Quick Task
+  const expiredIndex = state.expiredQuickTasks.indexOf(packageName);
+  
+  if (expiredIndex === -1) {
+    // No expired Quick Task - ignore this interaction event
+    console.log('[System Brain] No expired Quick Task for this app - ignoring interaction');
+    return;
+  }
+  
+  // Remove from expired list - enforce exactly once per expiration
+  state.expiredQuickTasks.splice(expiredIndex, 1);
+  
+  console.log('[QuickTask] Enforcing expired Quick Task at user interaction for:', packageName);
+  console.log('[QuickTask] Launching intervention (permission was revoked at timer expiration)');
+  
+  // Launch intervention - THIS IS SAFE because we're in a user interaction event
+  // Natural debounce: Removing from expiredQuickTasks ensures single enforcement
+  await launchSystemSurface(packageName, 'START_INTERVENTION_FLOW');
 }
 
 /**
@@ -309,21 +379,44 @@ async function handleTimerSet(
 }
 
 /**
- * Check if an app is system infrastructure (should not update lastMeaningfulApp).
+ * Check if an app is infrastructure in the current context.
  * 
- * System infrastructure apps are transient overlays that don't represent
+ * Infrastructure apps are transient overlays that don't represent
  * meaningful user navigation away from the current app.
  * 
+ * IMPORTANT: BreakLoop is infrastructure ONLY during headless task processing.
+ * When user opens Main App/Settings, it's a real foreground app.
+ * 
  * Examples:
- * - com.android.systemui: Notification shade, quick settings, volume slider
- * - android: Generic Android system package
+ * - com.android.systemui: Notification shade, quick settings, volume slider (always)
+ * - android: Generic Android system package (always)
+ * - com.anonymous.breakloopnative: Only during headless task processing
  * 
  * @param packageName - Package name to check
- * @returns true if app is system infrastructure
+ * @param context - Processing context (optional)
+ * @returns true if app is infrastructure in this context
  */
-function isSystemInfrastructureApp(packageName: string | null): boolean {
+function isSystemInfrastructureApp(
+  packageName: string | null,
+  context?: { isHeadlessTaskProcessing?: boolean }
+): boolean {
   if (!packageName) return true;
-  return packageName === 'com.android.systemui' || packageName === 'android';
+  
+  // System UI overlays (always infrastructure)
+  if (packageName === 'com.android.systemui') return true;
+  if (packageName === 'android') return true;
+  
+  // BreakLoop is infrastructure ONLY during headless task processing
+  // This prevents RN headless task side-effects from corrupting lastMeaningfulApp
+  // When user opens Main App/Settings, this should return false
+  if (
+    packageName === 'com.anonymous.breakloopnative' &&
+    context?.isHeadlessTaskProcessing === true
+  ) {
+    return true;
+  }
+  
+  return false;
 }
 
 /**
@@ -341,7 +434,7 @@ async function handleForegroundChange(
   // Update last meaningful app (skip system infrastructure)
   const previousApp = state.lastMeaningfulApp;
   
-  if (!isSystemInfrastructureApp(packageName)) {
+  if (!isSystemInfrastructureApp(packageName, { isHeadlessTaskProcessing: state.isHeadlessTaskProcessing })) {
     state.lastMeaningfulApp = packageName;
     console.log('[System Brain] Foreground app updated:', {
       previous: previousApp,
@@ -351,6 +444,7 @@ async function handleForegroundChange(
     console.log('[System Brain] System infrastructure detected, lastMeaningfulApp unchanged:', {
       systemApp: packageName,
       lastMeaningfulApp: state.lastMeaningfulApp,
+      context: state.isHeadlessTaskProcessing ? 'headless task processing' : 'system UI',
     });
   }
   

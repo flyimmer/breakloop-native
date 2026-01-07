@@ -331,14 +331,19 @@ class ForegroundDetectionService : AccessibilityService() {
         Log.i(TAG, "✅ ForegroundDetectionService connected and ready")
         isServiceConnected = true
         
-        // Configure the service to receive window state change events
+        // Configure the service to receive window state changes AND user interaction events
         val info = AccessibilityServiceInfo().apply {
-            // We only want window state changes (app switches)
-            eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+            // Event types: Window state changes + user interactions
+            // CRITICAL: Must include interaction events for Quick Task enforcement
+            eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                        AccessibilityEvent.TYPE_VIEW_SCROLLED or
+                        AccessibilityEvent.TYPE_VIEW_CLICKED or
+                        AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
             
-            // We don't need to retrieve any window content
-            // This minimizes privacy concerns
-            flags = AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            // Flags: MUST include FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+            // Without this flag, Instagram/TikTok/YouTube scroll events will NOT be delivered
+            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                   AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
             
             // Receive events from all packages
             packageNames = null
@@ -352,7 +357,9 @@ class ForegroundDetectionService : AccessibilityService() {
         
         serviceInfo = info
         
-        Log.d(TAG, "Service configuration applied - listening for window state changes")
+        Log.i(TAG, "✅ Accessibility service configured to receive interaction events")
+        Log.d(TAG, "Event types: WINDOW_STATE_CHANGED, VIEW_SCROLLED, VIEW_CLICKED, WINDOW_CONTENT_CHANGED")
+        Log.d(TAG, "Flags: REPORT_VIEW_IDS, INCLUDE_NOT_IMPORTANT_VIEWS")
         
         // Start periodic timer expiration checks (primary initialization point)
         Log.i(TAG, "🔵 Attempting to start periodic timer checks...")
@@ -388,16 +395,40 @@ class ForegroundDetectionService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         
-        // We only care about window state changes (app switches)
-        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            return
+        val packageName = event.packageName?.toString()
+        if (packageName.isNullOrEmpty()) return
+        
+        // Diagnostic logging for ALL accessibility events (temporary)
+        val eventTypeName = when (event.eventType) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "WINDOW_STATE_CHANGED"
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> "VIEW_SCROLLED"
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> "VIEW_CLICKED"
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> "WINDOW_CONTENT_CHANGED"
+            else -> "OTHER(${event.eventType})"
+        }
+        Log.d(TAG, "📱 Accessibility event: type=$eventTypeName, package=$packageName")
+        
+        // Handle user interaction events (for expired Quick Task enforcement)
+        // Native emits these events UNCONDITIONALLY - System Brain decides what to do
+        val isInteractionEvent = when (event.eventType) {
+            AccessibilityEvent.TYPE_VIEW_SCROLLED,
+            AccessibilityEvent.TYPE_VIEW_CLICKED,
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> true
+            else -> false
         }
         
-        // Extract the package name of the foreground app
-        val packageName = event.packageName?.toString()
+        if (isInteractionEvent && packageName == lastPackageName) {
+            // Emit USER_INTERACTION_FOREGROUND for ALL interaction events
+            // ❌ DO NOT check expiredQuickTasks (semantic state)
+            // ❌ DO NOT decide whether enforcement is needed
+            // ✅ Emit mechanical event unconditionally - System Brain decides
+            Log.i(TAG, "🔔 Emitting USER_INTERACTION_FOREGROUND for: $packageName")
+            emitSystemEvent("USER_INTERACTION_FOREGROUND", packageName, System.currentTimeMillis())
+            return  // Don't process as foreground change
+        }
         
-        if (packageName.isNullOrEmpty()) {
-            Log.d(TAG, "⚠️ Window state changed but package name is null/empty")
+        // Handle window state changes (app switches)
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             return
         }
         

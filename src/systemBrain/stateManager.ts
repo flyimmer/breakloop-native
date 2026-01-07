@@ -20,6 +20,8 @@ export interface TimerState {
   intentionTimers: Record<string, { expiresAt: number }>;
   quickTaskUsageHistory: number[];  // PERSISTED - critical for kill-safety
   lastMeaningfulApp: string | null;
+  isHeadlessTaskProcessing: boolean;  // Track if we're in headless task context
+  expiredQuickTasks: string[];  // Apps where Quick Task permission has ended, awaiting user interaction
 }
 
 /**
@@ -43,6 +45,8 @@ export async function loadTimerState(): Promise<TimerState> {
         intentionTimers: state.intentionTimers || {},
         quickTaskUsageHistory: state.quickTaskUsageHistory || [],
         lastMeaningfulApp: state.lastMeaningfulApp || null,
+        isHeadlessTaskProcessing: false,  // Always false when loading from storage
+        expiredQuickTasks: state.expiredQuickTasks || state.pendingQuickTaskIntervention || [],  // Migrate old key
       };
     }
   } catch (e) {
@@ -56,6 +60,8 @@ export async function loadTimerState(): Promise<TimerState> {
     intentionTimers: {},
     quickTaskUsageHistory: [],  // Empty array
     lastMeaningfulApp: null,
+    isHeadlessTaskProcessing: false,  // Default to false
+    expiredQuickTasks: [],
   };
 }
 
@@ -73,6 +79,7 @@ export async function saveTimerState(state: TimerState): Promise<void> {
       intentionTimers: Object.keys(state.intentionTimers).length,
       usageHistoryLength: state.quickTaskUsageHistory.length,
       lastMeaningfulApp: state.lastMeaningfulApp,
+      expiredQuickTasks: state.expiredQuickTasks,
     });
   } catch (e) {
     console.warn('[System Brain] Failed to save state:', e);
