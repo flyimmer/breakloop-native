@@ -14,6 +14,7 @@
 
 import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
 import { Platform, NativeModules, NativeEventEmitter } from 'react-native';
+import { clearSystemSurfaceActive } from '../systemBrain/decisionEngine';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -305,9 +306,23 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
       return;
     }
     hasEndedSessionRef.current = true;
-    console.log('[SystemSurfaceInvariant] safeEndSession() called:', { shouldLaunchHome });
+    console.log('[SystemSurfaceInvariant] END_SESSION dispatched');
     dispatchSystemEvent({ type: 'END_SESSION', shouldLaunchHome });
   };
+  
+  /**
+   * Clear SystemSurface active flag when finish is confirmed
+   * 
+   * This runs when session becomes null AND bootstrap is READY,
+   * which means native finish() has completed and the overlay is released.
+   */
+  useEffect(() => {
+    if (state.session === null && state.bootstrapState === 'READY') {
+      clearSystemSurfaceActive();  // Clear in-memory flag only
+      hasEndedSessionRef.current = false;  // Reset for next session
+      console.log('[SystemSurfaceInvariant] FINISH confirmed — surface inactive');
+    }
+  }, [state.session, state.bootstrapState]);
 
   /**
    * Set transient targetApp for finish-time navigation

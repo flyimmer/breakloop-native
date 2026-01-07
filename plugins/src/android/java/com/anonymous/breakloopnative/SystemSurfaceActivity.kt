@@ -232,7 +232,7 @@ class SystemSurfaceActivity : ReactActivity() {
     }
 
     override fun finish() {
-        Log.i("SystemSurfaceInvariant", "finish() called — overlay released")
+        Log.i("SystemSurfaceInvariant", "FINISH native — overlay released")
         super.finish()
     }
 

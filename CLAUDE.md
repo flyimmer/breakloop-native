@@ -1558,6 +1558,7 @@ Recent commit themes:
 **For Developers (Architecture):**
 - `CLAUDE.md` (this file) - Architecture, implementation details, development workflow
 - `docs/SYSTEM_SURFACE_ARCHITECTURE.md` - **AUTHORITATIVE** System Surface architecture (three-runtime, bootstrap lifecycle, flows, Phase 2 complete)
+- `docs/SystemSurface Lifecycle Contract (Authoritative).md` - **CRITICAL** - Lifecycle invariants and state transition rules (non-negotiable contract, must read)
 - `docs/SYSTEM_BRAIN_ARCHITECTURE.md` - System Brain JS event-driven runtime architecture (Phase 2 explicit wake reasons)
 - `docs/PHASE2_ARCHITECTURE_UPDATE.md` - Phase 2 architecture summary (explicit wake reasons, pre-decision)
 - `docs/PHASE2_DOCUMENTATION_COMPLETE.md` - **NEW** Phase 2 documentation integration summary (all 7 critical components)
@@ -1586,9 +1587,10 @@ Recent commit themes:
 
 **Key Documentation Hierarchy:**
 1. **SYSTEM_SURFACE_ARCHITECTURE.md** - Start here for overall architecture
-2. **SYSTEM_BRAIN_ARCHITECTURE.md** - Understand System Brain JS event-driven runtime
-3. **PHASE2_ARCHITECTURE_UPDATE.md** - Phase 2 explicit wake reasons summary (NEW)
-4. **NATIVE_JAVASCRIPT_BOUNDARY.md** - Understand the boundary contract
-5. **OS_Trigger_Contract V1.md** - Learn trigger rules and timer logic
-6. **KOTLIN_FILE_SYNC.md** - Follow Kotlin editing workflow
-7. **CLAUDE.md** - Reference for implementation details
+2. **SystemSurface Lifecycle Contract (Authoritative).md** - **CRITICAL** - Read lifecycle invariants and state transition rules
+3. **SYSTEM_BRAIN_ARCHITECTURE.md** - Understand System Brain JS event-driven runtime
+4. **PHASE2_ARCHITECTURE_UPDATE.md** - Phase 2 explicit wake reasons summary (NEW)
+5. **NATIVE_JAVASCRIPT_BOUNDARY.md** - Understand the boundary contract
+6. **OS_Trigger_Contract V1.md** - Learn trigger rules and timer logic
+7. **KOTLIN_FILE_SYNC.md** - Follow Kotlin editing workflow
+8. **CLAUDE.md** - Reference for implementation details

@@ -28,6 +28,9 @@ The Android activity currently named `InterventionActivity` is **conceptually** 
 **Key Principle:**  
 The System Surface is a **neutral stage**. Different flows render on this stage, but the stage itself has no opinion about which flow is shown.
 
+**🔒 CRITICAL: Lifecycle Contract**  
+All SystemSurface implementations MUST follow the lifecycle invariants defined in `SystemSurface Lifecycle Contract (Authoritative).md`. This contract defines non-negotiable rules for single-instance behavior, exclusive input ownership, and deterministic lifecycle management. **Read this contract before implementing or modifying SystemSurface behavior.**
+
 ---
 
 ## Part 1A: Runtime Context & Bootstrap Lifecycle
@@ -88,27 +91,41 @@ t0  User opens Instagram
 t1  Android OS switches foreground app → Instagram
 t2  AccessibilityService still alive
 t3  AccessibilityService detects monitored app
-t4  Native decides: need to wake SystemSurface
-t5  Native launches SystemSurfaceActivity
-t6  Android creates NEW Activity + NEW RN Context
-t7  React Native initializes
-t8  SystemSurfaceRoot first render
-     - session = null
-     - bootstrapState = BOOTSTRAPPING
-     - ❌ MUST NOT finish
-t9  JS reads from native:
-     - wakeReason
-     - triggeringApp
-t10 JS runs OS Trigger Brain in【SystemSurface Context】
-t11 OS Trigger Brain makes decision:
-     - START_INTERVENTION / START_QUICK_TASK /
-       START_ALTERNATIVE_ACTIVITY / DO_NOTHING
-t12 JS dispatches SystemSession event
-t13 JS sets bootstrapState = READY
-t14 SystemSurfaceRoot renders again
-     - If session !== null → render corresponding Flow
-     - If session === null → finish SystemSurfaceActivity
+t4  Native emits MECHANICAL event: "FOREGROUND_CHANGED" to System Brain JS
+t5  System Brain JS (headless task) receives event
+t6  System Brain JS loads state from AsyncStorage
+t7  System Brain JS calls Decision Engine (decideSystemSurfaceAction)
+t8  Decision Engine evaluates priority chain:
+    - Expired Quick Task check
+    - OS Trigger Brain evaluation
+    - Returns Decision (LAUNCH with wakeReason OR NONE)
+t9  IF Decision.type === 'LAUNCH':
+    → System Brain JS calls launchSystemSurface(app, wakeReason)
+t10 Native launches SystemSurfaceActivity with wakeReason + triggeringApp
+t11 Android creates NEW Activity + NEW RN Context
+t12 React Native initializes
+t13 SystemSurfaceRoot first render
+    - session = null
+    - bootstrapState = BOOTSTRAPPING
+    - ❌ MUST NOT finish
+t14 JS reads from native:
+    - wakeReason (already determined by Decision Engine)
+    - triggeringApp
+t15 SystemSurface JS directly dispatches session based on wakeReason:
+    - SHOW_QUICK_TASK_DIALOG → START_QUICK_TASK
+    - START_INTERVENTION_FLOW → START_INTERVENTION
+    - (NO re-evaluation, wakeReason IS the decision)
+t16 JS sets bootstrapState = READY
+t17 SystemSurfaceRoot renders again
+    - If session !== null → render corresponding Flow
+    - If session === null → finish SystemSurfaceActivity
 ```
+
+**Key Changes (Decision Engine Refactor):**
+- Decision Engine runs in **System Brain JS** (headless task), NOT in SystemSurface context
+- Wake reason is pre-decided BEFORE SystemSurface is launched
+- SystemSurface just consumes wake reason, no re-evaluation
+- This ensures single authority and eliminates race conditions
 
 **Critical Architectural Assumption:**
 
@@ -153,12 +170,15 @@ function SystemSurfaceRoot() {
 ### Context Ownership Rules
 
 **JavaScript (SystemSurface Context) MUST:**
-- Run OS Trigger Brain
-- Decide whether to create SystemSession
+- Read wake reason from Intent extras (pre-decided by Decision Engine)
+- Dispatch session based on wake reason (no logic, no re-evaluation)
 - Dispatch START_* events
 - Control bootstrap lifecycle
 
 **JavaScript (SystemSurface Context) MUST NOT:**
+- Run OS Trigger Brain or Decision Engine (already done in System Brain)
+- Decide whether to create SystemSession (wake reason IS the decision)
+- Re-evaluate priority chain
 - Assume session exists on mount
 - Finish activity during BOOTSTRAPPING
 
@@ -223,27 +243,47 @@ This section defines the **final, stable architecture** after Phase 2 completion
 
 **Responsibilities:**
 - **Single semantic authority** for all intervention logic
+- Owns all decision logic via **Decision Engine** (`src/systemBrain/decisionEngine.ts`)
+- Decision Engine is the **ONLY** place where SystemSurface launch decisions are made
 - Owns all decision logic:
   - **Monitored vs unmonitored apps** (via `isMonitoredApp()` from `src/os/osConfig.ts`)
   - Quick Task availability (n_quickTask quota)
   - Intervention triggering (OS Trigger Brain evaluation)
   - Suppression rules (t_intention, t_quickTask)
+  - Quick Task expiration handling (foreground vs background)
 - Owns all persistent semantic state (AsyncStorage)
 - **Pre-decides UI flow** before launching SystemSurface
 - Launches SystemSurface with **explicit wake reason**
 - **Monitored App Guard**: MUST check `isMonitoredApp()` before any evaluation
+
+**Decision Engine (`decideSystemSurfaceAction()`):**
+- **Architectural Invariant**: This is the ONLY place where SystemSurface launch decisions are made
+- Unifies Quick Task expiration + OS Trigger Brain into single priority chain
+- Called ONLY from UI-safe boundaries (USER_INTERACTION, FOREGROUND_CHANGED)
+- NEVER called from TIMER_EXPIRED (background event, not UI-safe)
+- Returns `Decision` type: `NONE` or `LAUNCH` with app + wakeReason
+
+**Event Handlers (State Updates Only):**
+- `handleTimerExpiration()`: Updates state ONLY, marks expired timers, **NEVER** calls decision engine
+- `handleUserInteraction()`: Updates state + calls decision engine (UI-safe boundary)
+- `handleForegroundChange()`: Updates state + calls decision engine (UI-safe boundary)
 
 **Guarantees:**
 - **Kill-safe**: State persisted in AsyncStorage, logic reconstructable on each event
 - **Idempotent**: Same inputs → same decision
 - **Event-driven**: Invoked by native events, not continuously running
 - **No in-memory state**: Loads/saves state on each invocation
+- **Single decision per event**: Decision engine called at most once per event
+- **UI-safe boundaries only**: Timer expiration never triggers UI directly
 
 **Key Rule:**
-> **System Brain decides WHY and WHAT UI to show**
+> **System Brain decides WHY and WHAT UI to show. Decision Engine is the single authority.**
 
 **Critical Guard Rule:**
 > **OS Trigger Brain logic runs ONLY for monitored apps. System Brain MUST check `isMonitoredApp(packageName)` before Quick Task evaluation or Intervention evaluation. BreakLoop app itself is explicitly excluded.**
+
+**UI-Safe Boundaries Rule:**
+> **Timer expiration events are NOT UI-safe. They update state only. UI decisions are made only at UI-safe boundaries (user interaction or foreground change).**
 
 ---
 
@@ -359,8 +399,10 @@ System Brain JS is an **event-driven, headless JavaScript runtime** that runs as
 ### JavaScript — Required Responsibilities
 
 **System Brain JS MUST:**
-- Own the OS Trigger Brain
-- Evaluate the full priority chain
+- Own the Decision Engine (`decideSystemSurfaceAction()`)
+- Decision Engine is the ONLY place where launch decisions are made
+- Decision Engine unifies Quick Task expiration + OS Trigger Brain priority chain
+- Evaluate the full priority chain (via Decision Engine)
 - Classify timer type (Quick Task vs Intention)
 - Decide:
   - Quick Task Flow
@@ -370,6 +412,8 @@ System Brain JS is an **event-driven, headless JavaScript runtime** that runs as
 - Manage Quick Task semantics
 - Reset timers on Quick Task expiry
 - Load/save state on each event invocation
+- **Call Decision Engine ONLY from UI-safe boundaries** (USER_INTERACTION, FOREGROUND_CHANGED)
+- **NEVER call Decision Engine from TIMER_EXPIRED** (background event, not UI-safe)
 
 **SystemSurface JS MUST:**
 - Render intervention screens
@@ -460,6 +504,9 @@ If **ANY** of the following are true, **STOP and FIX**:
 - ❌ Main app UI appears in System Surface
 - ❌ Native logic duplicates JS logic
 - ❌ Semantic logic in SystemSurface or MainApp contexts
+- ❌ Decision Engine called from TIMER_EXPIRED (background event, not UI-safe)
+- ❌ `launchSystemSurface()` called directly without Decision Engine
+- ❌ Event handlers contain decision logic (they should only update state)
 
 ### Verification Checklist
 
@@ -474,13 +521,19 @@ When reviewing code changes, verify:
 
 **2. System Brain JS Review:**
 - [ ] Runs as React Native Headless JS task
+- [ ] Decision Engine (`decideSystemSurfaceAction()`) is the ONLY place making launch decisions
+- [ ] Event handlers update state first, then call Decision Engine (if UI-safe)
+- [ ] `handleTimerExpiration()`: State updates ONLY, NEVER calls Decision Engine
+- [ ] `handleForegroundChange()`: Updates state + calls Decision Engine (UI-safe)
+- [ ] `handleUserInteraction()`: Updates state + calls Decision Engine (UI-safe)
 - [ ] Loads state from persistent storage on each event
 - [ ] Classifies timer type (Quick Task vs Intention)
-- [ ] Runs full priority chain evaluation
-- [ ] Makes all flow decisions (Quick Task vs Intervention)
+- [ ] Decision Engine unifies Quick Task expiration + OS Trigger Brain priority chain
+- [ ] Makes all flow decisions via Decision Engine (Quick Task vs Intervention vs NONE)
 - [ ] Saves state to persistent storage after each event
 - [ ] Never assumes continuous execution
 - [ ] Never maintains state in memory between events
+- [ ] Decision Engine called ONLY from UI-safe boundaries (never from TIMER_EXPIRED)
 
 **3. SystemSurface JS Review:**
 - [ ] UI-only (no semantic logic)
@@ -557,16 +610,26 @@ This is the **single, authoritative event flow** for Phase 2. There are no alter
 │ 2. System Brain JS (Event-Driven Headless)                      │
 │    - Receives mechanical event from native                      │
 │    - Loads semantic state from AsyncStorage                     │
-│    - CHECK: isMonitoredApp(packageName)?                        │
-│      → If NO: Early exit (no action)                            │
-│      → If YES: Continue to priority chain                       │
-│    - Evaluates OS Trigger Brain priority chain:                 │
-│      1. Check t_intention (per-app) → Suppress?                 │
-│      2. Check t_quickTask (per-app) → Suppress?                 │
-│      3. Check n_quickTask (global) → Show Quick Task?           │
-│      4. Else → Start Intervention                               │
-│    - PRE-DECIDES UI flow (Quick Task OR Intervention)           │
-│    - Calls launchSystemSurface(packageName, wakeReason)         │
+│    - Event Handler updates state (marks expired timers, etc.)   │
+│    - IF UI-safe boundary (FOREGROUND_CHANGED, USER_INTERACTION):│
+│      → Calls Decision Engine (decideSystemSurfaceAction)        │
+│    - IF TIMER_EXPIRED (background event):                       │
+│      → NO Decision Engine call (not UI-safe)                    │
+│      → State updated only, UI decision deferred                 │
+│                                                                    │
+│    Decision Engine Priority Chain:                              │
+│    1. Expired Quick Task (foreground) → Force intervention      │
+│    2. Expired Quick Task (background) → Clear flag, continue    │
+│    3. CHECK: isMonitoredApp(packageName)?                       │
+│       → If NO: Return NONE (no action)                          │
+│       → If YES: Evaluate OS Trigger Brain priority chain:       │
+│          a. Check t_intention (per-app) → Suppress?             │
+│          b. Check t_quickTask (per-app) → Suppress?             │
+│          c. Check n_quickTask (global) → Show Quick Task?       │
+│          d. Else → Start Intervention                           │
+│    - PRE-DECIDES UI flow (Quick Task OR Intervention OR NONE)   │
+│    - IF decision.type === 'LAUNCH':                             │
+│      → Calls launchSystemSurface(packageName, wakeReason)       │
 │    - Saves updated state to AsyncStorage                        │
 └────────────────────────┬────────────────────────────────────────┘
                          │
@@ -606,10 +669,13 @@ This is the **single, authoritative event flow** for Phase 2. There are no alter
 **Key Principles:**
 
 1. **Linear Flow**: Native → System Brain → SystemSurface (no loops)
-2. **Single Evaluation**: OS Trigger Brain evaluated once in System Brain only
-3. **Explicit Wake Reasons**: Wake reason IS the decision (no ambiguity)
-4. **Monitored App Guard**: System Brain checks `isMonitoredApp()` before evaluation
-5. **No Re-Evaluation**: SystemSurface never re-runs priority chain
+2. **Single Authority**: Decision Engine is the ONLY place where launch decisions are made
+3. **UI-Safe Boundaries**: Decision Engine called only from user interaction events, never from timer expiration
+4. **Single Evaluation**: Decision Engine evaluated once per event, unifies Quick Task + OS Trigger Brain
+5. **State Updates First**: Event handlers update state, then call Decision Engine (if UI-safe)
+6. **Explicit Wake Reasons**: Wake reason IS the decision (no ambiguity)
+7. **Monitored App Guard**: System Brain checks `isMonitoredApp()` before evaluation
+8. **No Re-Evaluation**: SystemSurface never re-runs priority chain
 
 **What This Diagram Does NOT Show:**
 
@@ -1033,13 +1099,14 @@ When reviewing intervention initialization code:
 ```
 
 **Key Principles:**
-1. ✅ ONE shared OS-level activity
+1. ✅ ONE shared OS-level activity (see `SystemSurface Lifecycle Contract (Authoritative).md` - Invariant 1)
 2. ✅ THREE distinct states (BOOTSTRAPPING, ACTIVE SESSION, NO SESSION)
 3. ✅ Multiple separate, mutually exclusive flows (Quick Task, Intervention, Alternative Activity)
 4. ✅ Flows share infrastructure, not semantics
 5. ✅ Only ONE flow active at any time (when session exists)
 6. ✅ Bootstrap state protects against premature finish()
 7. ✅ Main app UI never appears in System Surface
+8. ✅ **Lifecycle contract compliance** - All state transitions must follow allowed paths (see `SystemSurface Lifecycle Contract (Authoritative).md`)
 
 ---
 
@@ -1219,13 +1286,18 @@ START INTERVENTION FLOW
 
 **System Brain JS (Event-Driven Headless Runtime):**
 - ✅ Receives mechanical events from native
+- ✅ Decision Engine (`decideSystemSurfaceAction()`) is the single authority for launch decisions
+- ✅ Event handlers update state, then call Decision Engine (if UI-safe boundary)
+- ✅ `handleTimerExpiration()`: Updates state only, NEVER calls Decision Engine
+- ✅ Decision Engine unifies Quick Task expiration + OS Trigger Brain priority chain
 - ✅ Classifies semantic meaning (Quick Task vs Intention)
-- ✅ Evaluates priority chain
+- ✅ Evaluates priority chain via Decision Engine
 - ✅ Checks all timers and states
-- ✅ Decides which flow to show
-- ✅ Requests SystemSurface launch from native
+- ✅ Decides which flow to show (via Decision Engine)
+- ✅ Requests SystemSurface launch from native (if Decision Engine returns LAUNCH)
 - ✅ Single source of semantic truth
 - ✅ Loads/saves state on each event invocation
+- ✅ Decision Engine called ONLY from UI-safe boundaries (USER_INTERACTION, FOREGROUND_CHANGED)
 
 **SystemSurface JS (Ephemeral UI):**
 - ✅ Renders intervention screens
@@ -1276,9 +1348,10 @@ These patterns have caused bugs in the past and must be explicitly avoided:
    - Native emits mechanical events only
 
 5. **❌ Multiple semantic authorities**
-   - System Brain is the ONLY semantic authority
+   - System Brain Decision Engine (`decideSystemSurfaceAction()`) is the ONLY place making launch decisions
    - No semantic logic in Native, SystemSurface, or MainApp
    - Single source of truth for all intervention decisions
+   - Event handlers must NOT contain decision logic, only state updates
 
 6. **❌ Nesting Quick Task inside Intervention Flow**
    - Quick Task and Intervention are separate, mutually exclusive flows
@@ -1322,14 +1395,17 @@ These patterns have caused bugs in the past and must be explicitly avoided:
 1. **System Surface** = Neutral OS-level container
 2. **Runtime Context** = THREE JS runtimes (System Brain, SystemSurface, MainApp)
 3. **System Brain JS** = Event-driven, headless, semantic logic (NEW)
-4. **Bootstrap Lifecycle** = BOOTSTRAPPING → READY (protects cold start)
-5. **Native–JavaScript Boundary** = Native emits MECHANICAL events, System Brain classifies SEMANTIC meaning
-6. **Wake Reason Contract** = System Brain receives mechanical events, classifies, then launches SystemSurface with wake reason
-7. **Quick Task Flow** = Emergency bypass (global quota, per-app timer)
-8. **Intervention Flow** = Conscious process (per-app)
-9. **Flows are separate** = Different purposes, different scopes
-10. **Priority chain is locked** = 5 conditions, strict order, evaluated by System Brain
-11. **System Brain decides** = Native emits events, System Brain classifies and decides, SystemSurface renders
+4. **Decision Engine** = Single authority for all SystemSurface launch decisions (`decideSystemSurfaceAction()`)
+5. **UI-Safe Boundaries** = Decision Engine called only from user interaction events, never from timer expiration
+6. **Event Handlers** = "Dumb" state updaters; call Decision Engine only at UI-safe boundaries
+7. **Bootstrap Lifecycle** = BOOTSTRAPPING → READY (protects cold start)
+8. **Native–JavaScript Boundary** = Native emits MECHANICAL events, System Brain classifies SEMANTIC meaning
+9. **Wake Reason Contract** = System Brain Decision Engine pre-decides, then launches SystemSurface with wake reason
+10. **Quick Task Flow** = Emergency bypass (global quota, per-app timer)
+11. **Intervention Flow** = Conscious process (per-app)
+12. **Flows are separate** = Different purposes, different scopes
+13. **Priority chain is locked** = Unified in Decision Engine (Quick Task expiration + OS Trigger Brain)
+14. **System Brain decides** = Native emits events, System Brain Decision Engine decides, SystemSurface renders
 
 **This is the canonical model. All implementation must follow this.**
 
@@ -1337,6 +1413,8 @@ These patterns have caused bugs in the past and must be explicitly avoided:
 
 ## Related Documentation
 
+- `SystemSurface Lifecycle Contract (Authoritative).md` - **CRITICAL** - Lifecycle invariants and state transition rules (must read)
+- `DECISION_ENGINE_REFACTOR_SUMMARY.md` - Decision Engine refactor (unified Quick Task + OS Trigger Brain into single authority)
 - `SYSTEM_BRAIN_ARCHITECTURE.md` - System Brain JS event-driven runtime (NEW)
 - `system_surface_bootstrap.md` - Authoritative cold-start bootstrap lifecycle
 - `OS_Trigger_Contract V1.md` - Intervention trigger rules and timer logic

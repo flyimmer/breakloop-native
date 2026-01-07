@@ -9,85 +9,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { loadTimerState, saveTimerState, TimerState } from './stateManager';
 import { launchSystemSurface } from './nativeBridge';
 import { isMonitoredApp } from '../os/osConfig';
-
-/**
- * Load Quick Task configuration from user settings.
- * 
- * Returns the configured number of Quick Task uses per 15-minute window.
- * This is the user's n_quickTask setting from Settings screen.
- */
-async function loadQuickTaskConfig(): Promise<{ maxUses: number; windowMs: number }> {
-  try {
-    // Load from the same storage key used by Settings screen
-    const configJson = await AsyncStorage.getItem('quick_task_settings_v1');
-    if (configJson) {
-      const config = JSON.parse(configJson);
-      const maxUses = config.usesPerWindow ?? 1; // Default to 1 if not set
-      
-      console.log('[System Brain] Quick Task config loaded:', {
-        maxUses,
-        source: 'quick_task_settings_v1',
-      });
-      
-      return {
-        maxUses,
-        windowMs: 15 * 60 * 1000, // 15 minutes
-      };
-    }
-  } catch (e) {
-    console.warn('[System Brain] Failed to load Quick Task config:', e);
-  }
-  
-  // Fallback defaults
-  console.log('[System Brain] Using default Quick Task config');
-  return {
-    maxUses: 1,
-    windowMs: 15 * 60 * 1000,
-  };
-}
-
-/**
- * Calculate remaining Quick Task uses GLOBALLY.
- * 
- * Filters usage history to 15-minute window and calculates remaining quota.
- * Reads maxUses from user's configured settings (n_quickTask).
- * 
- * CRITICAL: This function cleans up old entries from persisted state.
- * 
- * @param currentTimestamp - Current timestamp
- * @param state - Semantic state (will be mutated to clean old entries)
- * @returns Number of Quick Task uses remaining
- */
-async function getQuickTaskRemaining(currentTimestamp: number, state: TimerState): Promise<number> {
-  // Load user's configured max uses (n_quickTask from Settings)
-  const config = await loadQuickTaskConfig();
-  const { maxUses, windowMs } = config;
-  
-  // Filter out timestamps older than 15 minutes from PERSISTED history
-  const recentUsages = state.quickTaskUsageHistory.filter(ts => currentTimestamp - ts < windowMs);
-  
-  // Update persisted history (cleanup old entries)
-  if (recentUsages.length !== state.quickTaskUsageHistory.length) {
-    const removed = state.quickTaskUsageHistory.length - recentUsages.length;
-    state.quickTaskUsageHistory = recentUsages;
-    console.log('[System Brain] Cleaned up old usage history entries:', {
-      removed,
-      remaining: recentUsages.length,
-    });
-  }
-  
-  // Calculate remaining uses based on user's configured limit
-  const remaining = Math.max(0, maxUses - recentUsages.length);
-  
-  console.log('[System Brain] Quick Task availability check (GLOBAL):', {
-    maxUses: `${maxUses} (from user settings)`,
-    recentUsagesGlobal: recentUsages.length,
-    remaining,
-    windowMinutes: windowMs / (60 * 1000),
-  });
-  
-  return remaining;
-}
+import { decideSystemSurfaceAction } from './decisionEngine';
 
 /**
  * Record a Quick Task usage GLOBALLY.
@@ -136,6 +58,7 @@ export async function handleSystemEvent(event: {
   const { type, packageName, timestamp } = event;
   
   console.log('[System Brain] ========================================');
+  console.log('[System Brain] Event received:', type);  // ✅ Step 1: Log event type
   console.log('[System Brain] Processing event:', { type, packageName, timestamp });
   console.log('[System Brain] Event time:', new Date(timestamp).toISOString());
   
@@ -152,6 +75,7 @@ export async function handleSystemEvent(event: {
     } else if (type === 'FOREGROUND_CHANGED') {
       await handleForegroundChange(packageName, timestamp, state);
     } else if (type === 'TIMER_SET') {
+      console.log('[System Brain] 🔔 TIMER_SET routed to handleTimerSet');  // ✅ Step 1: Confirm routing
       await handleTimerSet(packageName, event.expiresAt!, timestamp, event.timerType!, state);
     } else if (type === 'USER_INTERACTION_FOREGROUND') {
       await handleUserInteraction(packageName, timestamp, state);
@@ -272,11 +196,16 @@ async function handleTimerExpiration(
       // ❌ DO NOT call launchSystemSurface() here
       // ❌ Timer expiration is NOT a safe UI lifecycle boundary
       // ✅ Wait for USER_INTERACTION_FOREGROUND event
+      // ✅ Decision engine will be called from UI-safe boundary
     } else {
-      // INTENTION TIMER EXPIRATION: Launch intervention
-      // Intention timer expiration means user should be re-prompted
-      console.log('[System Brain] 🚨 Intention timer expired - launching intervention');
-      await launchSystemSurface(packageName, 'INTENTION_EXPIRED_FOREGROUND');
+      // INTENTION TIMER EXPIRATION: Mark expired, decision made at UI-safe boundary
+      console.log('[System Brain] 🔔 Intention timer expired (foreground)');
+      console.log('[System Brain] State updated - decision will be made at next UI-safe boundary');
+      
+      // ❌ DO NOT call launchSystemSurface() here
+      // ❌ Timer expiration is NOT a safe UI lifecycle boundary
+      // ✅ Timer already deleted earlier in this function
+      // ✅ Decision will be made when user interaction occurs
     }
   } else {
     // User switched to another app → silent cleanup only
@@ -310,33 +239,31 @@ async function handleUserInteraction(
 ): Promise<void> {
   console.log('[System Brain] USER_INTERACTION_FOREGROUND:', packageName);
   
-  // 🔒 SYSTEM BRAIN DECIDES: Should we enforce?
-  // Check semantic state to determine if this app has expired Quick Task
-  const expired = state.expiredQuickTasks[packageName];
-  
-  if (!expired) {
-    // No expired Quick Task - ignore this interaction event
-    console.log('[System Brain] No expired Quick Task for this app - ignoring interaction');
+  // Check if this app is monitored
+  if (!isMonitoredApp(packageName)) {
+    console.log('[System Brain] App is not monitored, ignoring interaction:', packageName);
     return;
   }
   
-  // CRITICAL: Only enforce if Quick Task expired while user was IN the app
-  if (!expired.expiredWhileForeground) {
-    console.log('[QuickTask] Quick Task expired in background - clearing flag');
-    console.log('[QuickTask] User will see Quick Task dialog again if quota allows');
-    delete state.expiredQuickTasks[packageName];
-    return;  // Let OS Trigger Brain handle this normally
+  // ============================================================================
+  // Call Decision Engine (UI-safe boundary)
+  // ============================================================================
+  console.log('[System Brain] UI-safe boundary - calling decision engine');
+  
+  const decision = await decideSystemSurfaceAction(
+    { type: 'USER_INTERACTION_FOREGROUND', packageName, timestamp },
+    state
+  );
+  
+  if (decision.type === 'LAUNCH') {
+    console.log('[System Brain] Decision: LAUNCH SystemSurface', {
+      app: decision.app,
+      wakeReason: decision.wakeReason,
+    });
+    await launchSystemSurface(decision.app, decision.wakeReason);
+  } else {
+    console.log('[System Brain] Decision: NONE - no launch needed');
   }
-  
-  // Quick Task expired while user was IN the app → Force intervention
-  delete state.expiredQuickTasks[packageName];
-  
-  console.log('[QuickTask] Enforcing expired Quick Task (expired while user was in app)');
-  console.log('[QuickTask] Launching intervention (permission was revoked at timer expiration)');
-  
-  // Launch intervention - THIS IS SAFE because we're in a user interaction event
-  // Natural debounce: Removing from expiredQuickTasks ensures single enforcement
-  await launchSystemSurface(packageName, 'START_INTERVENTION_FLOW');
 }
 
 /**
@@ -344,6 +271,10 @@ async function handleUserInteraction(
  * 
  * Native reports: "A timer was stored for app X with expiration Y and type Z"
  * System Brain uses explicit timer type to store in correct semantic state.
+ * 
+ * Invariant:
+ * System Brain must be able to reconstruct all active timers
+ * solely from persisted state at any event boundary.
  * 
  * @param packageName - App package name
  * @param expiresAt - Timer expiration timestamp
@@ -381,7 +312,14 @@ async function handleTimerSet(
     // Record usage (this consumes quota)
     recordQuickTaskUsage(packageName, timestamp, state);
     
-    console.log('[System Brain] ✅ Quick Task timer recorded in persisted state');
+    // ✅ Step 2: Verify persistence with detailed logging
+    console.log('[System Brain] ✅ Quick Task timer persisted:', {
+      packageName,
+      expiresAt,
+      expiresAtTime: new Date(expiresAt).toISOString(),
+      durationSec,
+      note: 'Timer will be available in state on next event',
+    });
   } else if (timerType === 'INTENTION') {
     // Store per-app intention timer (NO usage tracking)
     state.intentionTimers[packageName] = { expiresAt };
@@ -479,16 +417,8 @@ async function handleForegroundChange(
     return;
   }
   
-  // NEW: Skip if this is the app returning from SystemSurface after user decision
-  // This suppresses only the immediate return caused by user pressing Quick Task or completing intervention
-  if (packageName === state.lastIntervenedApp) {
-    console.log('[System Brain] 🔄 Skipping duplicate event — app returning from SystemSurface after user decision:', {
-      packageName,
-      note: 'This is an internal transition, not a new user-initiated foreground event',
-    });
-    state.lastIntervenedApp = null;  // Clear flag after consuming (one-shot)
-    return;
-  }
+  // Duplicate launch guard REMOVED - isSystemSurfaceActive is the ONLY gate
+  // The decision engine's lifecycle guard prevents multiple launches
   
   // NEW: Clean up stale intention timer for this app BEFORE evaluation
   // Prevents false-positive interventions from old timers
@@ -520,8 +450,7 @@ async function handleForegroundChange(
   // Intervention will be enforced on the next USER_INTERACTION_FOREGROUND event.
   // This prevents duplicate launches from FOREGROUND_CHANGED + USER_INTERACTION_FOREGROUND.
   
-  // Log comprehensive timer information for monitored app
-  const quickTaskRemaining = await getQuickTaskRemaining(timestamp, state);
+  // Log comprehensive timer information for monitored app (informational only)
   const quickTaskTimer = state.quickTaskTimers[packageName];
   const intentionTimer = state.intentionTimers[packageName];
   
@@ -535,35 +464,27 @@ async function handleForegroundChange(
   
   console.log('[System Brain] 📊 MONITORED APP OPENED - Timer Status:', {
     monitoredApp: packageName,
-    n_quickTask_remaining: quickTaskRemaining,
     t_quickTask_remaining: tQuickTaskRemaining,
     t_intention_remaining: tIntentionRemaining,
   });
   
-  // Phase 2: Evaluate OS Trigger Brain and pre-decide UI flow
-  console.log('[System Brain] Evaluating OS Trigger Brain for:', packageName);
+  // ============================================================================
+  // Call Decision Engine (UI-safe boundary)
+  // ============================================================================
+  console.log('[System Brain] UI-safe boundary - calling decision engine');
   
-  // Priority #3: Check t_intention (per-app suppressor)
-  if (intentionTimer && timestamp < intentionTimer.expiresAt) {
-    console.log('[System Brain] ✓ t_intention ACTIVE - suppressing intervention', {
-      packageName,
-      expiresAt: intentionTimer.expiresAt,
-      expiresAtTime: new Date(intentionTimer.expiresAt).toISOString(),
+  const decision = await decideSystemSurfaceAction(
+    { type: 'FOREGROUND_CHANGED', packageName, timestamp },
+    state
+  );
+  
+  if (decision.type === 'LAUNCH') {
+    console.log('[System Brain] Decision: LAUNCH SystemSurface', {
+      app: decision.app,
+      wakeReason: decision.wakeReason,
     });
-    return;
-  }
-  
-  // Priority #1: Check t_quickTask (per-app timer)
-  if (quickTaskTimer && timestamp < quickTaskTimer.expiresAt) {
-    console.log('[System Brain] ✓ t_quickTask ACTIVE - suppressing intervention');
-    return;
-  }
-  
-  if (quickTaskRemaining > 0) {
-    console.log('[System Brain] ✓ n_quickTask > 0 - launching with SHOW_QUICK_TASK_DIALOG');
-    await launchSystemSurface(packageName, 'SHOW_QUICK_TASK_DIALOG');
+    await launchSystemSurface(decision.app, decision.wakeReason);
   } else {
-    console.log('[System Brain] ✗ n_quickTask = 0 - launching with START_INTERVENTION_FLOW');
-    await launchSystemSurface(packageName, 'START_INTERVENTION_FLOW');
+    console.log('[System Brain] Decision: NONE - no launch needed');
   }
 }

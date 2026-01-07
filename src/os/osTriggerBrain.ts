@@ -141,14 +141,15 @@ const intentionTimers: Map<string, { expiresAt: number }> = new Map();
  */
 
 /**
- * Active Quick Task timers per app.
- * Maps packageName -> { expiresAt: timestamp, timeoutId: NodeJS.Timeout | null }
- * When a Quick Task timer is active, the app can be used without intervention.
+ * Quick Task timer storage REMOVED.
  * 
- * The timeoutId is used to schedule expiration callbacks that trigger
- * intervention if the user is still on the app when the timer expires.
+ * Timers are now stored ONLY in:
+ * 1. Native layer (for mechanical expiration events)
+ * 2. System Brain persisted state (for semantic decisions)
+ * 
+ * This ephemeral Map was causing "unknown timer" errors because
+ * it was lost when UI context was destroyed.
  */
-const quickTaskTimers: Map<string, { expiresAt: number; timeoutId: NodeJS.Timeout | null }> = new Map();
 
 /**
  * Dispatch function for triggering interventions in React layer.
@@ -401,32 +402,9 @@ export function handleForegroundAppChange(
     }
 
     // ============================================================================
-    // PRIORITY 0: Clean up expired Quick Task timer (if any)
+    // PRIORITY 0: Quick Task timer cleanup REMOVED
     // ============================================================================
-    const quickTaskTimer = quickTaskTimers.get(packageName);
-    if (quickTaskTimer && timestamp >= quickTaskTimer.expiresAt) {
-      // Clear timeout if it hasn't fired yet
-      if (quickTaskTimer.timeoutId) {
-        clearTimeout(quickTaskTimer.timeoutId);
-      }
-      
-      quickTaskTimers.delete(packageName);
-      
-      // Also clear from native layer
-      try {
-        const { NativeModules, Platform } = require('react-native');
-        if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
-          NativeModules.AppMonitorModule.clearQuickTaskTimer(packageName);
-        }
-      } catch (e) {
-        // Ignore errors - native layer will handle its own expiration
-      }
-      
-      console.log('[OS Trigger Brain] Quick Task timer expired and removed', {
-        packageName,
-        expiresAt: quickTaskTimer.expiresAt,
-      });
-    }
+    // Ephemeral storage removed - System Brain handles timer expiration via TIMER_EXPIRED events
 
     // ============================================================================
     // PRIORITY 0: Check if intention timer expired (but don't delete yet)
@@ -588,135 +566,69 @@ function hasValidIntentionTimer(packageName: string, timestamp: number): boolean
  * @param currentTimestamp - Current timestamp
  */
 export function setQuickTaskTimer(packageName: string, durationMs: number, currentTimestamp: number): void {
-  // Check if timer already exists and is still valid
-  const existingTimer = quickTaskTimers.get(packageName);
-  if (existingTimer && currentTimestamp < existingTimer.expiresAt) {
-    const remainingSec = Math.round((existingTimer.expiresAt - currentTimestamp) / 1000);
-    console.log('[OS Trigger Brain] Quick Task timer already active, skipping', {
-      packageName,
-      existingExpiresAt: existingTimer.expiresAt,
-      remainingSec: `${remainingSec}s remaining`,
-    });
-    return; // Don't set a new timer or record usage
-  }
-  
-  // Clear existing timeout if any (cleanup from old implementation)
-  if (existingTimer?.timeoutId) {
-    clearTimeout(existingTimer.timeoutId);
-  }
-  
   const expiresAt = currentTimestamp + durationMs;
   const durationMin = Math.round(durationMs / (60 * 1000));
   
-  // ❌ REMOVED: setTimeout is in ephemeral UI context
-  // Native will emit MECHANICAL event when timer expires
-  // System Brain will classify and decide semantic response
+  // ✅ Step 3: Ephemeral storage REMOVED
+  // Timer now stored ONLY in:
+  // 1. Native layer (for mechanical expiration)
+  // 2. System Brain persisted state (via TIMER_SET event)
   
-  // Store timer WITHOUT callback - System Brain will handle expiration
-  quickTaskTimers.set(packageName, { expiresAt, timeoutId: null });
-  
-  // Usage recording removed - System Brain records usage via TIMER_SET event
-  
-  // Store timer in native layer - native will emit mechanical event on expiration
-  // Native emits: { type: "TIMER_EXPIRED", packageName, timestamp }
-  // System Brain classifies: Quick Task vs Intention vs Unknown
+  // Store timer in native layer - native will emit TIMER_SET and TIMER_EXPIRED events
+  // System Brain will persist timer and handle expiration
   try {
     const { NativeModules, Platform } = require('react-native');
     if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
       NativeModules.AppMonitorModule.storeQuickTaskTimer(packageName, expiresAt);
-      console.log('[OS Trigger Brain] Quick Task timer stored in native (mechanical expiration will be emitted)');
+      console.log('[OS Trigger Brain] Quick Task timer stored in native', {
+        packageName,
+        durationMs,
+        durationMin: `${durationMin}min`,
+        expiresAt,
+        expiresAtTime: new Date(expiresAt).toISOString(),
+        note: 'Native will emit TIMER_SET → System Brain persists → TIMER_EXPIRED → System Brain classifies',
+      });
     }
   } catch (e) {
     console.warn('[OS Trigger Brain] Failed to store Quick Task timer in native layer:', e);
   }
-  
-  console.log('[OS Trigger Brain] Quick Task timer set', {
-    packageName,
-    durationMs,
-    durationMin: `${durationMin}min`,
-    expiresAt,
-    expiresAtTime: new Date(expiresAt).toISOString(),
-    note: 'Native will emit mechanical event, System Brain will classify',
-  });
 }
 
 /**
  * Get Quick Task timer for an app (for debugging/testing).
+ * 
+ * ⚠️ DEPRECATED: Ephemeral storage removed.
+ * Timer state now lives ONLY in System Brain persisted state.
+ * This function returns undefined (timer info not available in UI context).
  */
 export function getQuickTaskTimer(packageName: string): { expiresAt: number } | undefined {
-  return quickTaskTimers.get(packageName);
+  console.warn('[OS Trigger Brain] getQuickTaskTimer() is deprecated - timer state in System Brain only');
+  return undefined;
 }
 
 /**
  * Check if a specific app has an active Quick Task timer (per-app check).
- * Used by priority chain to determine if intervention should be suppressed for this app.
  * 
- * NOTE: Quick Task timers are PER-APP, not global.
- * Each app has its own independent Quick Task timer.
- * Only n_quickTask (usage count) is global.
+ * ⚠️ DEPRECATED: Ephemeral storage removed.
+ * Timer state now lives ONLY in System Brain persisted state.
+ * This function always returns false (timer info not available in UI context).
  * 
- * @param packageName - App package name to check
- * @param timestamp - Current timestamp
- * @returns true if this specific app has an active Quick Task timer
+ * System Brain's decision engine now handles all timer checks.
  */
 function hasActiveQuickTaskTimer(packageName: string, timestamp: number): boolean {
-  const timer = quickTaskTimers.get(packageName);
-  if (!timer) {
-    return false;
-  }
-
-  // Check if timer is still valid
-  const isValid = timestamp < timer.expiresAt;
-  
-  if (!isValid && timer.timeoutId) {
-    // Timer expired but timeout hasn't fired yet - clear it
-    clearTimeout(timer.timeoutId);
-    quickTaskTimers.delete(packageName);
-  }
-  
-  return isValid;
+  // Ephemeral storage removed - System Brain owns timer state
+  return false;
 }
 
 /**
  * Clean up expired Quick Task timers (SILENT operation).
  * 
- * IMPORTANT: Expiration is SILENT - no UI shown, no session created.
- * Expired timers are simply removed from memory.
- * Normal intervention rules resume on next app trigger.
- * 
- * This function should be called during normal trigger evaluation
- * (e.g., when checking if an app should trigger intervention).
- * 
- * @param currentTimestamp - Current timestamp
+ * ⚠️ DEPRECATED: Ephemeral storage removed.
+ * Timer cleanup now handled by System Brain when processing TIMER_EXPIRED events.
+ * This function is a no-op.
  */
 export function cleanupExpiredQuickTaskTimers(currentTimestamp: number): void {
-  for (const [packageName, timer] of quickTaskTimers.entries()) {
-    if (currentTimestamp >= timer.expiresAt) {
-      console.log('[OS Trigger Brain] Quick Task timer expired (cleanup during trigger evaluation):', {
-        packageName,
-        expiresAt: timer.expiresAt,
-        note: 'Expired while in background - cleanup only',
-      });
-      
-      // Clear timeout if it hasn't fired yet
-      if (timer.timeoutId) {
-        clearTimeout(timer.timeoutId);
-      }
-      
-      // Remove the expired timer from JS memory
-      quickTaskTimers.delete(packageName);
-      
-      // Also clear from native layer
-      try {
-        const { NativeModules, Platform } = require('react-native');
-        if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
-          NativeModules.AppMonitorModule.clearQuickTaskTimer(packageName);
-        }
-      } catch (e) {
-        console.warn('[OS Trigger Brain] Failed to clear Quick Task timer from native layer:', e);
-      }
-    }
-  }
+  // No-op: System Brain handles timer cleanup via TIMER_EXPIRED events
 }
 
 /**
@@ -863,11 +775,11 @@ export function resetTrackingState(): void {
   lastMeaningfulApp = null;
   lastExitTimestamps.clear();
   intentionTimers.clear();
-  quickTaskTimers.clear();
+  // quickTaskTimers.clear(); // REMOVED: Ephemeral storage no longer exists
   // NOTE: Do NOT clear quickTaskUsageHistory!
   // Usage quota is time-based (15-minute rolling window) and should persist
   // until timestamps naturally expire. Clearing it would incorrectly reset
   // the usage count and allow users to bypass the quota limit.
-  console.log('[OS Trigger Brain] Tracking state reset (timers cleared, usage history preserved)');
+  console.log('[OS Trigger Brain] Tracking state reset (intention timers cleared, usage history preserved)');
 }
 
