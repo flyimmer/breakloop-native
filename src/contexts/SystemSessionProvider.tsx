@@ -14,7 +14,7 @@
 
 import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
 import { Platform, NativeModules, NativeEventEmitter } from 'react-native';
-import { clearSystemSurfaceActive } from '../systemBrain/decisionEngine';
+import { clearSystemSurfaceActive, clearQuickTaskSuppression } from '../systemBrain/decisionEngine';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -183,13 +183,25 @@ function systemSessionReducer(
 
     case 'END_SESSION':
       if (__DEV__) {
-        console.log('[SystemSession] Ending session', {
+        console.log('[SystemSession] ========================================');
+        console.log('[SystemSession] END_SESSION - Starting teardown', {
+          currentSession: state.session,
+          bootstrapState: state.bootstrapState,
           shouldLaunchHome: event.shouldLaunchHome ?? true,
         });
         if (state.bootstrapState === 'BOOTSTRAPPING') {
           console.log('[SystemSession] Bootstrap phase complete - explicit "do nothing" decision');
         }
       }
+      
+      // Clear Quick Task suppression when intervention completes
+      if (state.session?.kind === 'INTERVENTION') {
+        if (__DEV__) {
+          console.log('[SystemSession] Intervention ended - clearing Quick Task suppression');
+        }
+        clearQuickTaskSuppression();
+      }
+      
       return {
         ...state,
         session: null,
@@ -318,9 +330,16 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
    */
   useEffect(() => {
     if (state.session === null && state.bootstrapState === 'READY') {
+      console.log('[SystemSurfaceInvariant] ========================================');
+      console.log('[SystemSurfaceInvariant] Teardown sequence complete', {
+        sessionNull: state.session === null,
+        bootstrapReady: state.bootstrapState === 'READY',
+        shouldLaunchHome: state.shouldLaunchHome,
+      });
       clearSystemSurfaceActive();  // Clear in-memory flag only
       hasEndedSessionRef.current = false;  // Reset for next session
       console.log('[SystemSurfaceInvariant] FINISH confirmed — surface inactive');
+      console.log('[SystemSurfaceInvariant] ========================================');
     }
   }, [state.session, state.bootstrapState]);
 

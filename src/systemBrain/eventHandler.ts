@@ -6,6 +6,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DeviceEventEmitter } from 'react-native';
 import { loadTimerState, saveTimerState, TimerState } from './stateManager';
 import { launchSystemSurface } from './nativeBridge';
 import { isMonitoredApp } from '../os/osConfig';
@@ -305,6 +306,16 @@ async function handleTimerSet(
   
   // ✅ Explicit type classification (no duration inference)
   if (timerType === 'QUICK_TASK') {
+    // Clear any expired Quick Task flag for this app
+    // User explicitly requested Quick Task, so any previous expiration is irrelevant
+    if (state.expiredQuickTasks[packageName]) {
+      console.log('[System Brain] Clearing expired Quick Task flag — user explicitly requested Quick Task', {
+        packageName,
+        previousExpiredAt: state.expiredQuickTasks[packageName].expiredAt,
+      });
+      delete state.expiredQuickTasks[packageName];
+    }
+    
     // Store Quick Task timer and track usage
     state.quickTaskTimers[packageName] = { expiresAt };
     console.log('[System Brain] ✓ Quick Task timer stored');
@@ -321,6 +332,14 @@ async function handleTimerSet(
       note: 'Timer will be available in state on next event',
     });
   } else if (timerType === 'INTENTION') {
+    // Clear any expired Quick Task flag - user chose to set intention
+    if (state.expiredQuickTasks[packageName]) {
+      console.log('[System Brain] Clearing expired Quick Task flag — user set intention timer', {
+        packageName,
+      });
+      delete state.expiredQuickTasks[packageName];
+    }
+    
     // Store per-app intention timer (NO usage tracking)
     state.intentionTimers[packageName] = { expiresAt };
     console.log('[System Brain] ✓ Intention timer stored (per-app suppressor)');
@@ -392,6 +411,18 @@ async function handleForegroundChange(
       previous: previousApp,
       current: packageName,
     });
+    
+    // Emit UNDERLYING_APP_CHANGED event to SystemSurface if app changed
+    if (previousApp !== packageName) {
+      console.log('[System Brain] Underlying app changed, emitting event:', {
+        previous: previousApp,
+        current: packageName,
+      });
+      
+      DeviceEventEmitter.emit('UNDERLYING_APP_CHANGED', {
+        packageName: packageName,
+      });
+    }
   } else {
     console.log('[System Brain] System infrastructure detected, lastMeaningfulApp unchanged:', {
       systemApp: packageName,

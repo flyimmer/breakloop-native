@@ -50,6 +50,32 @@ export function clearSystemSurfaceActive(): void {
 }
 
 /**
+ * Quick Task suppression: Is Quick Task blocked for current app entry?
+ * 
+ * CRITICAL: This is IN-MEMORY ONLY and must NEVER be persisted.
+ * 
+ * Set when: Expired-foreground Quick Task triggers intervention
+ * Cleared when: User leaves app, intervention completes, or explicit Quick Task request
+ * 
+ * Purpose: Prevent OS Trigger Brain from re-offering Quick Task dialog
+ * during the same app entry after expired-foreground intervention.
+ */
+let suppressQuickTaskForApp: string | null = null;
+
+/**
+ * Clear Quick Task suppression flag (in-memory only).
+ * 
+ * Called when:
+ * - User leaves the app (new foreground app)
+ * - Intervention flow completes
+ * - User explicitly requests Quick Task via intervention UI button
+ */
+export function clearQuickTaskSuppression(): void {
+  suppressQuickTaskForApp = null;
+  console.log('[Decision Engine] Quick Task suppression cleared');
+}
+
+/**
  * Decision result type.
  * Either no action needed, or launch SystemSurface with specific wake reason.
  */
@@ -217,6 +243,15 @@ export async function decideSystemSurfaceAction(
     time: new Date(timestamp).toISOString(),
   });
   
+  // Clear Quick Task suppression if user left the suppressed app
+  if (suppressQuickTaskForApp && suppressQuickTaskForApp !== app) {
+    console.log('[Decision Engine] User left suppressed app - clearing suppression', {
+      suppressedApp: suppressQuickTaskForApp,
+      currentApp: app,
+    });
+    clearQuickTaskSuppression();
+  }
+  
   // ✅ Step 4: Validate state structure
   if (!state.quickTaskTimers) {
     console.error('[Decision Engine] ❌ quickTaskTimers missing from state - this should never happen!');
@@ -231,12 +266,17 @@ export async function decideSystemSurfaceAction(
   // Priority #0: Lifecycle Guard - Prevent Multiple Launches
   // ============================================================================
   if (isSystemSurfaceActive) {
-    console.warn('[SystemSurfaceInvariant] BLOCKED launch', {
-      app,
-      wakeReason: 'N/A (blocked before decision)',
-      reason: 'surface already active',
-      note: 'Only ONE SystemSurface may be active at a time',
-    });
+    console.warn(
+      '[SystemSurfaceInvariant] Duplicate launch suppressed (expected behavior)',
+      {
+        app: event.packageName,
+        eventType: event.type,
+        timestamp: event.timestamp,
+        time: new Date(event.timestamp).toISOString(),
+        note: 'Near-simultaneous FOREGROUND_CHANGED and USER_INTERACTION_FOREGROUND events',
+      }
+    );
+    
     return { type: 'NONE' };
   }
   
@@ -245,21 +285,45 @@ export async function decideSystemSurfaceAction(
   // ============================================================================
   const expired = state.expiredQuickTasks[app];
   if (expired && expired.expiredWhileForeground) {
-    console.log('[Decision Engine] 🚨 PRIORITY #1: Expired Quick Task (foreground) - forcing intervention');
-    console.log('[Decision Engine] Quick Task expired while user was IN the app');
+    // Freshness validation: Is this flag stale?
+    const now = timestamp;
+    const MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
+    const age = now - expired.expiredAt;
     
-    // Clear the flag (consumed)
-    delete state.expiredQuickTasks[app];
-    
-    // Set lifecycle guard
-    isSystemSurfaceActive = true;
-    console.log('[SystemSurfaceInvariant] LAUNCH', { app, wakeReason: 'START_INTERVENTION_FLOW' });
-    
-    return {
-      type: 'LAUNCH',
-      app,
-      wakeReason: 'START_INTERVENTION_FLOW',
-    };
+    if (age > MAX_AGE_MS) {
+      // Stale flag - clear it and continue to OS Trigger Brain
+      console.warn('[Decision Engine] Stale expiredQuickTask flag detected - clearing', {
+        app,
+        expiredAt: new Date(expired.expiredAt).toISOString(),
+        ageSeconds: Math.round(age / 1000),
+        maxAgeMinutes: 10,
+        reason: 'Flag older than 10 minutes - likely from previous app session',
+      });
+      delete state.expiredQuickTasks[app];
+      // Fall through to Priority #2 (background expiration) and then OS Trigger Brain
+    } else {
+      // Fresh flag - trigger intervention
+      console.log('[Decision Engine] 🚨 PRIORITY #1: Expired Quick Task (foreground) - forcing intervention');
+      console.log('[Decision Engine] Quick Task expired while user was IN the app');
+      console.log('[Decision Engine] Flag age:', { ageSeconds: Math.round(age / 1000) });
+      
+      // Clear the flag (consumed)
+      delete state.expiredQuickTasks[app];
+      
+      // Suppress Quick Task for this app entry
+      suppressQuickTaskForApp = app;
+      console.log('[Decision Engine] Quick Task suppressed for app entry:', app);
+      
+      // Set lifecycle guard
+      isSystemSurfaceActive = true;
+      console.log('[SystemSurfaceInvariant] LAUNCH', { app, wakeReason: 'START_INTERVENTION_FLOW' });
+      
+      return {
+        type: 'LAUNCH',
+        app,
+        wakeReason: 'START_INTERVENTION_FLOW',
+      };
+    }
   }
   
   // ============================================================================
@@ -287,6 +351,16 @@ export async function decideSystemSurfaceAction(
   }
   
   if (osDecision === 'QUICK_TASK') {
+    // Check if Quick Task is suppressed for this app entry
+    if (suppressQuickTaskForApp === app) {
+      console.log('[Decision Engine] ⚠️ Quick Task suppressed for this app entry');
+      console.log('[Decision Engine] Reason: Expired-foreground Quick Task already triggered intervention');
+      console.log('[Decision Engine] User must complete intervention or explicitly request Quick Task');
+      console.log('[Decision Engine] Decision: NONE');
+      console.log('[Decision Engine] ========================================');
+      return { type: 'NONE' };
+    }
+    
     console.log('[Decision Engine] ✓ OS Trigger Brain: QUICK_TASK - launching Quick Task dialog');
     
     // Set lifecycle guard

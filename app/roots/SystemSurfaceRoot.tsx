@@ -17,7 +17,7 @@
  */
 
 import React, { useEffect, useState, useRef } from 'react';
-import { Platform, NativeModules } from 'react-native';
+import { Platform, NativeModules, DeviceEventEmitter } from 'react-native';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
 import InterventionFlow from '../flows/InterventionFlow';
 import QuickTaskFlow from '../flows/QuickTaskFlow';
@@ -135,7 +135,10 @@ function finishAndLaunchHome() {
  * - session.kind === 'ALTERNATIVE_ACTIVITY' → Render AlternativeActivityFlow (with visibility check)
  */
 export default function SystemSurfaceRoot() {
-  const { session, bootstrapState, foregroundApp, shouldLaunchHome, dispatchSystemEvent, getTransientTargetApp, setTransientTargetApp } = useSystemSession();
+  const { session, bootstrapState, foregroundApp, shouldLaunchHome, dispatchSystemEvent, safeEndSession, getTransientTargetApp, setTransientTargetApp } = useSystemSession();
+  
+  // Track underlying app (the app user is conceptually interacting with)
+  const [underlyingApp, setUnderlyingApp] = useState<string | null>(null);
 
   /**
    * Track previous session kind to detect REPLACE_SESSION transitions
@@ -202,7 +205,7 @@ export default function SystemSurfaceRoot() {
         // Read Intent extras from native
         if (!AppMonitorModule) {
           console.error('[SystemSurfaceRoot] ❌ AppMonitorModule not available');
-          dispatchSystemEvent({ type: 'END_SESSION' });
+          safeEndSession(true);  // Bootstrap failure - go to home
           return;
         }
 
@@ -210,7 +213,7 @@ export default function SystemSurfaceRoot() {
 
         if (!extras || !extras.triggeringApp) {
           console.error('[SystemSurfaceRoot] ❌ No Intent extras - finishing activity');
-          dispatchSystemEvent({ type: 'END_SESSION' });
+          safeEndSession(true);  // Bootstrap failure - go to home
           return;
         }
 
@@ -295,12 +298,60 @@ export default function SystemSurfaceRoot() {
         }
       } catch (error) {
         console.error('[SystemSurfaceRoot] ❌ Bootstrap initialization failed:', error);
-        dispatchSystemEvent({ type: 'END_SESSION' });
+        safeEndSession(true);  // Bootstrap failure - go to home
       }
     };
 
     initializeBootstrap();
   }, []); // ✅ CRITICAL: Empty dependency array - run once on mount
+
+  /**
+   * Subscribe to underlying app changes from System Brain
+   * 
+   * System Brain tracks lastMeaningfulApp and emits events when it changes.
+   * This is the SOURCE OF TRUTH for detecting when the user switches apps
+   * during a SystemSurface overlay.
+   * 
+   * EVENT-DRIVEN: Pure event subscription, NO POLLING, NO TIMERS.
+   */
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener(
+      'UNDERLYING_APP_CHANGED',
+      (event: { packageName: string }) => {
+        if (__DEV__) {
+          console.log('[SystemSurfaceRoot] Underlying app changed:', event.packageName);
+        }
+        setUnderlyingApp(event.packageName);
+      }
+    );
+    
+    return () => subscription.remove();
+  }, []);
+
+  /**
+   * Initialize underlying app from session on bootstrap
+   * 
+   * CRITICAL: Event-driven state must be initialized before it can be reacted to.
+   * 
+   * On first launch, no UNDERLYING_APP_CHANGED event may be emitted because
+   * lastMeaningfulApp might not change (e.g., staying as launcher).
+   * We must initialize underlyingApp immediately from session.app.
+   * 
+   * This runs once per SystemSurface instance, before any teardown checks.
+   */
+  useEffect(() => {
+    if (!session) return;
+
+    // Initialize underlying app immediately on first render
+    if (!underlyingApp && session.app) {
+      setUnderlyingApp(session.app);
+      if (__DEV__) {
+        console.log('[SystemSurfaceRoot] underlyingApp initialized from session', {
+          underlyingApp: session.app,
+        });
+      }
+    }
+  }, [session, underlyingApp]);
 
   /**
    * RULE 4: Session is the ONLY authority for SystemSurface existence
@@ -327,56 +378,92 @@ export default function SystemSurfaceRoot() {
   }, [session, bootstrapState, shouldLaunchHome]);
 
   /**
-   * CRITICAL: End Intervention Session if user leaves the app
+   * CRITICAL: End QUICK_TASK Session when underlying app changes
    * 
-   * Intervention Session is ONE-SHOT and NON-RECOVERABLE.
-   * If user switches away from the monitored app during intervention,
-   * the session MUST end immediately.
+   * QUICK_TASK is a modal overlay. When the user switches to a different app,
+   * the session must end even though SystemSurface remains the foreground app.
+   * 
+   * This uses "underlying app" from System Brain's lastMeaningfulApp,
+   * NOT foreground app (which reports BreakLoop during overlay).
+   * 
+   * EVENT-DRIVEN: Triggered by UNDERLYING_APP_CHANGED events only.
+   * NO POLLING. NO TIMERS.
+   */
+  useEffect(() => {
+    // Only check for QUICK_TASK sessions
+    if (session?.kind !== 'QUICK_TASK') return;
+    
+    // Wait for underlying app to be initialized
+    if (!underlyingApp) return;
+    
+    // Skip if underlying app is BreakLoop infrastructure
+    if (isBreakLoopInfrastructure(underlyingApp)) {
+      if (__DEV__) {
+        console.log('[SystemSurfaceRoot] Underlying app is infrastructure, ignoring:', underlyingApp);
+      }
+      return;
+    }
+    
+    // End session if underlying app changed from session target
+    if (underlyingApp !== session.app) {
+      if (__DEV__) {
+        console.log('[SystemSurfaceRoot] 🚨 QUICK_TASK ended - underlying app changed', {
+          sessionApp: session.app,
+          underlyingApp,
+        });
+      }
+      safeEndSession(true);  // User left underlying app - go to home
+    }
+  }, [session, underlyingApp, safeEndSession]);
+
+  /**
+   * CRITICAL: End INTERVENTION Session when underlying app changes
+   * 
+   * INTERVENTION sessions are ONE-SHOT and NON-RECOVERABLE.
+   * When the user switches to a different app, the session must end.
+   * 
+   * Uses UNDERLYING APP from System Brain's lastMeaningfulApp,
+   * NOT foreground app (which reports BreakLoop during overlay).
+   * 
+   * EVENT-DRIVEN: Triggered by UNDERLYING_APP_CHANGED events only.
+   * NO POLLING. NO TIMERS.
    * 
    * IMPORTANT: This check is DISABLED during REPLACE_SESSION transitions.
-   * REPLACE_SESSION (QUICK_TASK → INTERVENTION) is NOT user navigation.
-   * During this transition, foregroundApp may be stale and should be ignored.
-   * 
-   * Detection: isReplaceSessionTransition flag is computed during render
-   * with the PREVIOUS session kind, ensuring correct timing.
-   * 
-   * This does NOT apply to:
-   * - ALTERNATIVE_ACTIVITY (already has visibility logic)
-   * - QUICK_TASK (persists across app switches)
    */
   useEffect(() => {
     // Only check for INTERVENTION sessions
     if (session?.kind !== 'INTERVENTION') return;
     
-    // ✅ CHECK SYSTEM UI FIRST (before any other logic)
-    // System UI overlays (notification shade, quick settings) are NOT user exits
-    if (isBreakLoopInfrastructure(foregroundApp)) {
-      if (__DEV__ && foregroundApp === 'com.android.systemui') {
-        console.log('[SystemSurfaceRoot] System UI overlay detected - ignoring (not user exit)');
-      }
-      return;  // Early return - don't end session
-    }
+    // Wait for underlying app to be initialized
+    if (!underlyingApp) return;
     
-    // ✅ DETERMINISTIC: Use pre-computed REPLACE_SESSION transition flag
-    // This was calculated during render with the correct previous value
-    if (isReplaceSessionTransition) {
-      if (__DEV__) {
-        console.log('[SystemSurfaceRoot] ⏭️ Skipping user left check - REPLACE_SESSION transition (QUICK_TASK → INTERVENTION)');
+    // Skip if underlying app is BreakLoop infrastructure
+    if (isBreakLoopInfrastructure(underlyingApp)) {
+      if (__DEV__ && underlyingApp === 'com.android.systemui') {
+        console.log('[SystemSurfaceRoot] System UI overlay detected - ignoring (not user exit)');
       }
       return;
     }
     
-    // End session if user switched to a different app
-    if (foregroundApp !== session.app) {
+    // Skip during REPLACE_SESSION transitions
+    if (isReplaceSessionTransition) {
       if (__DEV__) {
-        console.log('[SystemSurfaceRoot] 🚨 Intervention Session ended - user left app', {
+        console.log('[SystemSurfaceRoot] ⏭️ Skipping user left check - REPLACE_SESSION transition');
+      }
+      return;
+    }
+    
+    // End session if underlying app changed from session target
+    if (underlyingApp !== session.app) {
+      if (__DEV__) {
+        console.log('[SystemSurfaceRoot] 🚨 INTERVENTION ended - underlying app changed', {
           sessionApp: session.app,
-          foregroundApp,
+          underlyingApp,
         });
       }
-      dispatchSystemEvent({ type: 'END_SESSION' });
+      safeEndSession(true);  // User left app - go to home
     }
-  }, [session, foregroundApp, dispatchSystemEvent, isReplaceSessionTransition]);
+  }, [session, underlyingApp, safeEndSession, isReplaceSessionTransition]);
 
   /**
    * BOOTSTRAP PHASE: Wait for JS to establish session
