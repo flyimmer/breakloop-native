@@ -306,6 +306,11 @@ export async function decideSystemSurfaceAction(
       console.log('[Decision Engine] 🚨 PRIORITY #1: Expired Quick Task (foreground) - showing choice screen');
       console.log('[Decision Engine] Quick Task expired while user was IN the app');
       console.log('[Decision Engine] Flag age:', { ageSeconds: Math.round(age / 1000) });
+      console.log('[Decision Engine] Captured foreground at expiration:', {
+        app,
+        foregroundAppAtExpiration: expired.foregroundAppAtExpiration,
+        note: 'Time-of-truth captured at TIMER_EXPIRED',
+      });
       console.log('[Decision Engine] Flag will be cleared by user choice, not by system launch');
       
       // Suppress Quick Task for this app entry

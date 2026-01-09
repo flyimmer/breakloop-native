@@ -164,26 +164,33 @@ async function handleTimerExpiration(
     return;
   }
   
-  // SEMANTIC DECISION: Should we intervene?
-  // Check if user is still on the expired app
-  const currentForegroundApp = state.lastMeaningfulApp;
+  // TIME-OF-TRUTH CAPTURE: Read foreground app at TIMER_EXPIRED time
+  // This is the single source of truth - NEVER re-evaluate this later
+  const foregroundAtExpiration = state.currentForegroundApp || state.lastMeaningfulApp;
+  
+  console.log('[SystemBrain] TIMER_EXPIRED captured foreground', {
+    packageName,
+    foregroundAtExpiration,
+    note: 'This is the time-of-truth - will NOT be re-evaluated',
+  });
   
   console.log('[System Brain] Checking foreground app:', {
     expiredApp: packageName,
-    currentForegroundApp,
+    foregroundAtExpiration,
     timerType,
-    shouldTriggerIntervention: currentForegroundApp === packageName,
+    shouldTriggerIntervention: foregroundAtExpiration === packageName,
   });
   
-  if (currentForegroundApp === packageName) {
-    // User is still on the app when timer expired
+  if (foregroundAtExpiration === packageName) {
+    // User was on the app at expiration time
     
     if (timerType === 'QUICK_TASK') {
       // QUICK TASK EXPIRATION: Revoke permission, await user interaction
       console.log('[QuickTask] TIMER_EXPIRED for:', packageName);
-      console.log('[QuickTask] Current foreground app:', currentForegroundApp);
+      console.log('[QuickTask] Foreground app at expiration:', foregroundAtExpiration);
       
-      const expiredWhileForeground = currentForegroundApp === packageName;
+      // Capture immutable fact: user was in this app when timer expired
+      const expiredWhileForeground = foregroundAtExpiration === packageName;
       
       if (expiredWhileForeground) {
         // Set session override for UI to observe
@@ -192,25 +199,29 @@ async function handleTimerExpiration(
         
         console.log('[SystemBrain] Quick Task expired in foreground:', {
           app: packageName,
+          foregroundAtExpiration,
           nextSessionOverride: 'POST_QUICK_TASK_CHOICE',
           lastSemanticChangeTs: state.lastSemanticChangeTs,
           note: 'SystemSurface will observe and dispatch REPLACE_SESSION',
         });
         
-        // Keep legacy flag for migration safety (will be cleared by UI)
+        // Persist immutable fact with captured foreground app
         state.expiredQuickTasks[packageName] = {
           expiredAt: timestamp,
           expiredWhileForeground: true,
+          foregroundAppAtExpiration: foregroundAtExpiration,
         };
       } else {
         // Background expiration - no blocking
         state.expiredQuickTasks[packageName] = {
           expiredAt: timestamp,
           expiredWhileForeground: false,
+          foregroundAppAtExpiration: foregroundAtExpiration,
         };
         
         console.log('[QuickTask] Permission revoked — waiting for user interaction', {
           expiredWhileForeground: false,
+          foregroundAtExpiration,
           note: 'Will clear flag and allow Quick Task dialog on next app entry',
         });
       }
@@ -232,10 +243,10 @@ async function handleTimerExpiration(
     // User switched to another app → silent cleanup only
     if (timerType === 'QUICK_TASK') {
       console.log('[QuickTask] User already left app - no enforcement needed');
-      console.log('[QuickTask] Current foreground app:', currentForegroundApp);
+      console.log('[QuickTask] Foreground app at expiration:', foregroundAtExpiration);
     } else {
       console.log('[System Brain] ✓ User switched apps - silent cleanup only (no intervention)');
-      console.log('[System Brain] Current foreground app:', currentForegroundApp);
+      console.log('[System Brain] Foreground app at expiration:', foregroundAtExpiration);
     }
   }
   console.log('[System Brain] ========================================');
@@ -424,14 +435,19 @@ async function handleForegroundChange(
 ): Promise<void> {
   console.log('[System Brain] Foreground changed to:', packageName);
   
-  // Update last meaningful app (skip system infrastructure)
+  // CRITICAL: Update currentForegroundApp FIRST (for time-of-truth capture)
+  // This must happen BEFORE any other logic or decision evaluation
   const previousApp = state.lastMeaningfulApp;
   
   if (!isSystemInfrastructureApp(packageName, { isHeadlessTaskProcessing: state.isHeadlessTaskProcessing })) {
+    // Update BOTH currentForegroundApp and lastMeaningfulApp
+    state.currentForegroundApp = packageName;
     state.lastMeaningfulApp = packageName;
+    
     console.log('[System Brain] Foreground app updated:', {
       previous: previousApp,
       current: packageName,
+      note: 'currentForegroundApp captured for time-of-truth',
     });
     
     // Emit UNDERLYING_APP_CHANGED event to SystemSurface if app changed
@@ -446,9 +462,10 @@ async function handleForegroundChange(
       });
     }
   } else {
-    console.log('[System Brain] System infrastructure detected, lastMeaningfulApp unchanged:', {
+    console.log('[System Brain] System infrastructure detected, foreground tracking unchanged:', {
       systemApp: packageName,
       lastMeaningfulApp: state.lastMeaningfulApp,
+      currentForegroundApp: state.currentForegroundApp,
       context: state.isHeadlessTaskProcessing ? 'headless task processing' : 'system UI',
     });
   }

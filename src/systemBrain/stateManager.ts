@@ -20,10 +20,12 @@ export interface TimerState {
   intentionTimers: Record<string, { expiresAt: number }>;
   quickTaskUsageHistory: number[];  // PERSISTED - critical for kill-safety
   lastMeaningfulApp: string | null;
+  currentForegroundApp?: string | null;  // Current foreground app (for time-of-truth capture)
   isHeadlessTaskProcessing: boolean;  // Track if we're in headless task context
   expiredQuickTasks: Record<string, {
     expiredAt: number;
     expiredWhileForeground: boolean;  // Track WHERE user was at expiration time
+    foregroundAppAtExpiration?: string | null;  // Captured foreground app at TIMER_EXPIRED time
   }>;  // Apps where Quick Task permission has ended, awaiting user interaction
   lastSemanticChangeTs?: number;  // Monotonic timestamp for UI reactivity
 }
@@ -68,6 +70,7 @@ export async function loadTimerState(): Promise<TimerState> {
         intentionTimers: state.intentionTimers || {},
         quickTaskUsageHistory: state.quickTaskUsageHistory || [],
         lastMeaningfulApp: state.lastMeaningfulApp || null,
+        currentForegroundApp: state.currentForegroundApp || null,
         isHeadlessTaskProcessing: false,  // Always false when loading from storage
         expiredQuickTasks,  // Migrated format
       };
@@ -93,6 +96,7 @@ export async function loadTimerState(): Promise<TimerState> {
     intentionTimers: {},
     quickTaskUsageHistory: [],  // Empty array
     lastMeaningfulApp: null,
+    currentForegroundApp: null,
     isHeadlessTaskProcessing: false,  // Default to false
     expiredQuickTasks: {},  // Empty Record
   };
