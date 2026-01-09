@@ -467,6 +467,34 @@ export default function SystemSurfaceRoot() {
   }, [session, bootstrapState, shouldLaunchHome]);
 
   /**
+   * CRITICAL: Background app immediately when POST_QUICK_TASK_CHOICE starts
+   * 
+   * POST_QUICK_TASK_CHOICE is a blocking screen, not an overlay.
+   * The underlying app must be paused (audio/video stopped) before the user interacts.
+   * 
+   * This launches home screen to force the app to background,
+   * while keeping SystemSurface alive for the choice UI.
+   * 
+   * ARCHITECTURAL RULE: Blocking UI must not be an overlay on an active app.
+   * It must replace the app's foreground context.
+   */
+  useEffect(() => {
+    if (session?.kind === 'POST_QUICK_TASK_CHOICE') {
+      if (__DEV__) {
+        console.log('[SystemSurfaceRoot] Entering POST_QUICK_TASK_CHOICE — backgrounding app');
+      }
+      
+      if (Platform.OS === 'android' && AppMonitorModule?.launchHomeScreen) {
+        AppMonitorModule.launchHomeScreen();
+        
+        if (__DEV__) {
+          console.log('[SystemSurfaceRoot] Home screen launched - target app backgrounded');
+        }
+      }
+    }
+  }, [session?.kind]);
+
+  /**
    * CRITICAL: End QUICK_TASK / POST_QUICK_TASK_CHOICE Session when underlying app changes
    * 
    * QUICK_TASK and POST_QUICK_TASK_CHOICE are modal overlays. When the user switches to a different app,
