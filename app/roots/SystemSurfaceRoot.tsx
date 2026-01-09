@@ -19,9 +19,11 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Platform, NativeModules, DeviceEventEmitter } from 'react-native';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
+import { getNextSessionOverride, clearNextSessionOverride, getInMemoryStateCache } from '@/src/systemBrain/stateManager';
 import InterventionFlow from '../flows/InterventionFlow';
 import QuickTaskFlow from '../flows/QuickTaskFlow';
 import AlternativeActivityFlow from '../flows/AlternativeActivityFlow';
+import PostQuickTaskChoiceScreen from '../screens/conscious_process/PostQuickTaskChoiceScreen';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -135,10 +137,29 @@ function finishAndLaunchHome() {
  * - session.kind === 'ALTERNATIVE_ACTIVITY' → Render AlternativeActivityFlow (with visibility check)
  */
 export default function SystemSurfaceRoot() {
-  const { session, bootstrapState, foregroundApp, shouldLaunchHome, dispatchSystemEvent, safeEndSession, getTransientTargetApp, setTransientTargetApp } = useSystemSession();
+  const { session, bootstrapState, foregroundApp, shouldLaunchHome, lastSemanticChangeTs, dispatchSystemEvent, safeEndSession, getTransientTargetApp, setTransientTargetApp } = useSystemSession();
   
   // Track underlying app (the app user is conceptually interacting with)
   const [underlyingApp, setUnderlyingApp] = useState<string | null>(null);
+  
+  // Track wake reason for special routing cases (POST_QUICK_TASK_CHOICE)
+  const [wakeReason, setWakeReason] = useState<string | null>(null);
+  
+  // Read wake reason on mount (bootstrap phase) - MUST be before any early returns
+  useEffect(() => {
+    const readWakeReason = async () => {
+      if (AppMonitorModule) {
+        const extras = await AppMonitorModule.getSystemSurfaceIntentExtras();
+        if (extras?.wakeReason) {
+          setWakeReason(extras.wakeReason);
+          if (__DEV__) {
+            console.log('[SystemSurfaceRoot] Wake reason loaded:', extras.wakeReason);
+          }
+        }
+      }
+    };
+    readWakeReason();
+  }, []);
 
   /**
    * Track previous session kind to detect REPLACE_SESSION transitions
@@ -261,6 +282,12 @@ export default function SystemSurfaceRoot() {
             type: 'START_INTERVENTION',
             app: triggeringApp,
           });
+        } else if (wakeReason === 'POST_QUICK_TASK_CHOICE') {
+          // Quick Task expired in foreground - show choice screen
+          dispatchSystemEvent({
+            type: 'START_POST_QUICK_TASK_CHOICE',
+            app: triggeringApp,
+          });
         } else if (wakeReason === 'INTENTION_EXPIRED_FOREGROUND') {
           dispatchSystemEvent({
             type: 'START_INTERVENTION',
@@ -354,6 +381,68 @@ export default function SystemSurfaceRoot() {
   }, [session, underlyingApp]);
 
   /**
+   * Observe nextSessionOverride on natural re-renders (event-driven pull model)
+   * 
+   * System Brain updates in-memory state when Quick Task expires.
+   * SystemSurface observes this state on natural React re-renders and reacts.
+   * 
+   * Triggers:
+   * - session changes (user actions, session replacements)
+   * - bootstrapState changes (bootstrap completion)
+   * - foregroundApp changes (FOREGROUND_CHANGED events from System Brain)
+   * 
+   * Guards:
+   * 1. Only process when session is active and bootstrap is ready
+   * 2. Clear stale overrides that don't match current app
+   * 3. Skip if session is ending (session === null)
+   * 
+   * NO POLLING, NO TIMERS, NO EMITTERS - Pure React reactivity.
+   */
+  useEffect(() => {
+    // Guard: Only check if we have an active session
+    if (!session || bootstrapState !== 'READY') return;
+    
+    // Read in-memory state (no AsyncStorage, no polling, no emitters)
+    const override = getNextSessionOverride();
+    if (!override) return;
+    
+    // Only allow transition FROM QUICK_TASK → POST_QUICK_TASK_CHOICE
+    if (
+      override.app === session.app &&
+      session.kind === 'QUICK_TASK' &&
+      override.kind === 'POST_QUICK_TASK_CHOICE'
+    ) {
+      console.log('[SystemSurfaceRoot] Detected nextSessionOverride - transitioning QUICK_TASK → POST_QUICK_TASK_CHOICE');
+      
+      dispatchSystemEvent({
+        type: 'REPLACE_SESSION',
+        newKind: 'POST_QUICK_TASK_CHOICE',
+        app: override.app,
+      });
+      
+      clearNextSessionOverride();
+      return;
+    }
+    
+    // Defensive cleanup: override no longer matches active session
+    if (override.app !== session.app || session.kind !== 'QUICK_TASK') {
+      console.log('[SystemSurfaceRoot] Clearing stale nextSessionOverride', {
+        overrideApp: override.app,
+        sessionApp: session.app,
+        sessionKind: session.kind,
+        reason: override.app !== session.app ? 'app mismatch' : 'session not QUICK_TASK',
+      });
+      clearNextSessionOverride();
+    }
+  }, [
+    session,
+    bootstrapState,
+    foregroundApp,  // Triggers on FOREGROUND_CHANGED (existing state)
+    lastSemanticChangeTs,  // Triggers when System Brain updates semantic state
+    dispatchSystemEvent,  // Required for ESLint exhaustive-deps
+  ]);
+
+  /**
    * RULE 4: Session is the ONLY authority for SystemSurface existence
    * When session becomes null (and bootstrap is complete), finish activity
    * 
@@ -378,9 +467,9 @@ export default function SystemSurfaceRoot() {
   }, [session, bootstrapState, shouldLaunchHome]);
 
   /**
-   * CRITICAL: End QUICK_TASK Session when underlying app changes
+   * CRITICAL: End QUICK_TASK / POST_QUICK_TASK_CHOICE Session when underlying app changes
    * 
-   * QUICK_TASK is a modal overlay. When the user switches to a different app,
+   * QUICK_TASK and POST_QUICK_TASK_CHOICE are modal overlays. When the user switches to a different app,
    * the session must end even though SystemSurface remains the foreground app.
    * 
    * This uses "underlying app" from System Brain's lastMeaningfulApp,
@@ -390,8 +479,8 @@ export default function SystemSurfaceRoot() {
    * NO POLLING. NO TIMERS.
    */
   useEffect(() => {
-    // Only check for QUICK_TASK sessions
-    if (session?.kind !== 'QUICK_TASK') return;
+    // Only check for QUICK_TASK and POST_QUICK_TASK_CHOICE sessions
+    if (session?.kind !== 'QUICK_TASK' && session?.kind !== 'POST_QUICK_TASK_CHOICE') return;
     
     // Wait for underlying app to be initialized
     if (!underlyingApp) return;
@@ -407,7 +496,8 @@ export default function SystemSurfaceRoot() {
     // End session if underlying app changed from session target
     if (underlyingApp !== session.app) {
       if (__DEV__) {
-        console.log('[SystemSurfaceRoot] 🚨 QUICK_TASK ended - underlying app changed', {
+        console.log('[SystemSurfaceRoot] 🚨 Session ended - underlying app changed', {
+          sessionKind: session.kind,
           sessionApp: session.app,
           underlyingApp,
         });
@@ -417,9 +507,9 @@ export default function SystemSurfaceRoot() {
   }, [session, underlyingApp, safeEndSession]);
 
   /**
-   * CRITICAL: End INTERVENTION Session when underlying app changes
+   * CRITICAL: End INTERVENTION / POST_QUICK_TASK_CHOICE Session when underlying app changes
    * 
-   * INTERVENTION sessions are ONE-SHOT and NON-RECOVERABLE.
+   * INTERVENTION and POST_QUICK_TASK_CHOICE sessions are ONE-SHOT and NON-RECOVERABLE.
    * When the user switches to a different app, the session must end.
    * 
    * Uses UNDERLYING APP from System Brain's lastMeaningfulApp,
@@ -431,8 +521,8 @@ export default function SystemSurfaceRoot() {
    * IMPORTANT: This check is DISABLED during REPLACE_SESSION transitions.
    */
   useEffect(() => {
-    // Only check for INTERVENTION sessions
-    if (session?.kind !== 'INTERVENTION') return;
+    // Only check for INTERVENTION and POST_QUICK_TASK_CHOICE sessions
+    if (session?.kind !== 'INTERVENTION' && session?.kind !== 'POST_QUICK_TASK_CHOICE') return;
     
     // Wait for underlying app to be initialized
     if (!underlyingApp) return;
@@ -456,7 +546,8 @@ export default function SystemSurfaceRoot() {
     // End session if underlying app changed from session target
     if (underlyingApp !== session.app) {
       if (__DEV__) {
-        console.log('[SystemSurfaceRoot] 🚨 INTERVENTION ended - underlying app changed', {
+        console.log('[SystemSurfaceRoot] 🚨 Session ended - underlying app changed', {
+          sessionKind: session.kind,
           sessionApp: session.app,
           underlyingApp,
         });
@@ -506,6 +597,12 @@ export default function SystemSurfaceRoot() {
 
   // Render flow based on session.kind
   switch (session.kind) {
+    case 'POST_QUICK_TASK_CHOICE':
+      if (__DEV__) {
+        console.log('[SystemSurfaceRoot] Rendering PostQuickTaskChoiceScreen');
+      }
+      return <PostQuickTaskChoiceScreen />;
+
     case 'INTERVENTION':
       if (__DEV__) {
         console.log('[SystemSurfaceRoot] Rendering InterventionFlow for app:', session.app);

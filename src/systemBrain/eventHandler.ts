@@ -7,7 +7,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DeviceEventEmitter } from 'react-native';
-import { loadTimerState, saveTimerState, TimerState } from './stateManager';
+import { loadTimerState, saveTimerState, TimerState, setInMemoryStateCache, setNextSessionOverride } from './stateManager';
 import { launchSystemSurface } from './nativeBridge';
 import { isMonitoredApp } from '../os/osConfig';
 import { decideSystemSurfaceAction } from './decisionEngine';
@@ -65,6 +65,9 @@ export async function handleSystemEvent(event: {
   
   // Load semantic state (event-driven, must restore state each time)
   const state = await loadTimerState();
+  
+  // Update in-memory cache for UI coordination
+  setInMemoryStateCache(state);
   
   // Mark that we're processing in headless task context
   // This prevents BreakLoop package from corrupting lastMeaningfulApp
@@ -180,24 +183,41 @@ async function handleTimerExpiration(
       console.log('[QuickTask] TIMER_EXPIRED for:', packageName);
       console.log('[QuickTask] Current foreground app:', currentForegroundApp);
       
-      // Mark as expired with context about where user was
       const expiredWhileForeground = currentForegroundApp === packageName;
-      state.expiredQuickTasks[packageName] = {
-        expiredAt: timestamp,
-        expiredWhileForeground,
-      };
       
-      console.log('[QuickTask] Permission revoked — waiting for user interaction', {
-        expiredWhileForeground,
-        note: expiredWhileForeground 
-          ? 'Will force intervention on next interaction'
-          : 'Will clear flag and allow Quick Task dialog on next app entry',
-      });
+      if (expiredWhileForeground) {
+        // Set session override for UI to observe
+        setNextSessionOverride(packageName, 'POST_QUICK_TASK_CHOICE');
+        state.lastSemanticChangeTs = Date.now();
+        
+        console.log('[SystemBrain] Quick Task expired in foreground:', {
+          app: packageName,
+          nextSessionOverride: 'POST_QUICK_TASK_CHOICE',
+          lastSemanticChangeTs: state.lastSemanticChangeTs,
+          note: 'SystemSurface will observe and dispatch REPLACE_SESSION',
+        });
+        
+        // Keep legacy flag for migration safety (will be cleared by UI)
+        state.expiredQuickTasks[packageName] = {
+          expiredAt: timestamp,
+          expiredWhileForeground: true,
+        };
+      } else {
+        // Background expiration - no blocking
+        state.expiredQuickTasks[packageName] = {
+          expiredAt: timestamp,
+          expiredWhileForeground: false,
+        };
+        
+        console.log('[QuickTask] Permission revoked — waiting for user interaction', {
+          expiredWhileForeground: false,
+          note: 'Will clear flag and allow Quick Task dialog on next app entry',
+        });
+      }
       
       // ❌ DO NOT call launchSystemSurface() here
-      // ❌ Timer expiration is NOT a safe UI lifecycle boundary
+      // ❌ DO NOT emit events
       // ✅ Wait for USER_INTERACTION_FOREGROUND event
-      // ✅ Decision engine will be called from UI-safe boundary
     } else {
       // INTENTION TIMER EXPIRATION: Mark expired, decision made at UI-safe boundary
       console.log('[System Brain] 🔔 Intention timer expired (foreground)');
@@ -245,6 +265,8 @@ async function handleUserInteraction(
     console.log('[System Brain] App is not monitored, ignoring interaction:', packageName);
     return;
   }
+  
+  // No blocking state guard needed - session-based blocking is handled by SystemSurface
   
   // ============================================================================
   // Call Decision Engine (UI-safe boundary)
@@ -431,6 +453,22 @@ async function handleForegroundChange(
     });
   }
   
+  // SEMANTIC INVALIDATION: Clear expired Quick Task flags for apps user is not currently in
+  // An expiredQuickTask is only valid while the user remains in that same app.
+  // When foreground app changes, invalidate expired flags for ALL other apps.
+  for (const app in state.expiredQuickTasks) {
+    if (
+      state.expiredQuickTasks[app].expiredWhileForeground &&
+      app !== packageName  // User is NOT in this app anymore
+    ) {
+      console.log(
+        '[SystemBrain] Invalidating expiredQuickTask due to app leave',
+        { expiredApp: app, currentApp: packageName }
+      );
+      delete state.expiredQuickTasks[app];
+    }
+  }
+  
   // 🔒 GUARD: only monitored apps are eligible for OS Trigger Brain evaluation
   console.log('[System Brain] Checking if app is monitored:', {
     packageName,
@@ -498,6 +536,8 @@ async function handleForegroundChange(
     t_quickTask_remaining: tQuickTaskRemaining,
     t_intention_remaining: tIntentionRemaining,
   });
+  
+  // No blocking state guard needed - session-based blocking is handled by SystemSurface
   
   // ============================================================================
   // Call Decision Engine (UI-safe boundary)

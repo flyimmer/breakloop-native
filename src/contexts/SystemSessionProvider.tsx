@@ -12,9 +12,10 @@
  * - Rule 4: Session is the ONLY authority for SystemSurface lifecycle
  */
 
-import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, ReactNode, useState } from 'react';
 import { Platform, NativeModules, NativeEventEmitter } from 'react-native';
 import { clearSystemSurfaceActive, clearQuickTaskSuppression } from '../systemBrain/decisionEngine';
+import { getInMemoryStateCache } from '../systemBrain/stateManager';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -24,6 +25,7 @@ const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorMod
 export type SystemSession =
   | { kind: 'INTERVENTION'; app: string }
   | { kind: 'QUICK_TASK'; app: string }
+  | { kind: 'POST_QUICK_TASK_CHOICE'; app: string }
   | { kind: 'ALTERNATIVE_ACTIVITY'; app: string }
   | null;
 
@@ -45,8 +47,9 @@ export type SessionBootstrapState = 'BOOTSTRAPPING' | 'READY';
 export type SystemSessionEvent =
   | { type: 'START_INTERVENTION'; app: string }
   | { type: 'START_QUICK_TASK'; app: string }
+  | { type: 'START_POST_QUICK_TASK_CHOICE'; app: string }
   | { type: 'START_ALTERNATIVE_ACTIVITY'; app: string; shouldLaunchHome?: boolean }
-  | { type: 'REPLACE_SESSION'; newKind: 'INTERVENTION' | 'ALTERNATIVE_ACTIVITY'; app: string }
+  | { type: 'REPLACE_SESSION'; newKind: 'INTERVENTION' | 'QUICK_TASK' | 'POST_QUICK_TASK_CHOICE' | 'ALTERNATIVE_ACTIVITY'; app: string }
   | { type: 'END_SESSION'; shouldLaunchHome?: boolean; targetApp?: string };
 
 /**
@@ -57,6 +60,7 @@ interface SystemSessionContextValue {
   bootstrapState: SessionBootstrapState;
   foregroundApp: string | null;  // Tracked for Alternative Activity visibility (Rule 1)
   shouldLaunchHome: boolean;  // Whether to launch home screen when session ends
+  lastSemanticChangeTs: number;  // Monotonic timestamp for UI reactivity
   dispatchSystemEvent: (event: SystemSessionEvent) => void;
   safeEndSession: (shouldLaunchHome: boolean) => void;  // Idempotent END_SESSION dispatcher
   setTransientTargetApp: (app: string | null) => void;  // Set transient targetApp for finish-time navigation
@@ -71,6 +75,7 @@ interface SystemSessionState {
   bootstrapState: SessionBootstrapState;
   foregroundApp: string | null;
   shouldLaunchHome: boolean;  // Whether to launch home screen when session ends
+  lastSemanticChangeTs: number;  // Monotonic timestamp for UI reactivity
 }
 
 /**
@@ -148,6 +153,19 @@ function systemSessionReducer(
       return {
         ...state,
         session: { kind: 'QUICK_TASK', app: event.app },
+        bootstrapState: 'READY',
+      };
+
+    case 'START_POST_QUICK_TASK_CHOICE':
+      if (__DEV__) {
+        console.log('[SystemSession] Starting POST_QUICK_TASK_CHOICE session for app:', event.app);
+        if (state.bootstrapState === 'BOOTSTRAPPING') {
+          console.log('[SystemSession] Bootstrap phase complete - session established');
+        }
+      }
+      return {
+        ...state,
+        session: { kind: 'POST_QUICK_TASK_CHOICE', app: event.app },
         bootstrapState: 'READY',
       };
 
@@ -229,6 +247,7 @@ const initialSystemSessionState: SystemSessionState = {
   bootstrapState: 'BOOTSTRAPPING',
   foregroundApp: null,
   shouldLaunchHome: true,  // Default to launching home for safety
+  lastSemanticChangeTs: 0,  // Initial timestamp
 };
 
 /**
@@ -255,6 +274,13 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
   transientTargetAppRef 
 }) => {
   const [state, dispatch] = useReducer(systemSessionReducer, initialSystemSessionState);
+  
+  /**
+   * Track lastSemanticChangeTs from System Brain's in-memory state
+   * This allows SystemSurfaceRoot to react when semantic state changes
+   * (e.g., when Quick Task expires while user is still in the app)
+   */
+  const [lastSemanticChangeTs, setLastSemanticChangeTs] = useState(0);
 
   /**
    * Idempotency guard for END_SESSION
@@ -295,6 +321,29 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
       subscription.remove();
     };
   }, []);
+
+  /**
+   * Observe lastSemanticChangeTs from System Brain's in-memory state
+   * 
+   * This allows SystemSurfaceRoot to react when System Brain updates semantic state
+   * (e.g., when Quick Task expires while user is still in the app).
+   * 
+   * Uses polling with a short interval to detect changes.
+   * This is acceptable because:
+   * 1. It only runs in SYSTEM_SURFACE context (not in main app)
+   * 2. The interval is short (100ms) for immediate UI reaction
+   * 3. It's the only way to bridge System Brain (headless) and SystemSurface (UI)
+   */
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const inMemoryState = getInMemoryStateCache();
+      if (inMemoryState?.lastSemanticChangeTs && inMemoryState.lastSemanticChangeTs !== lastSemanticChangeTs) {
+        setLastSemanticChangeTs(inMemoryState.lastSemanticChangeTs);
+      }
+    }, 100);  // Poll every 100ms for immediate reaction
+
+    return () => clearInterval(interval);
+  }, [lastSemanticChangeTs]);
 
   /**
    * Event dispatcher - ONLY way to modify session (Rule 2)
@@ -366,6 +415,7 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
     bootstrapState: state.bootstrapState,
     foregroundApp: state.foregroundApp,
     shouldLaunchHome: state.shouldLaunchHome,
+    lastSemanticChangeTs,
     dispatchSystemEvent,
     safeEndSession,
     setTransientTargetApp,

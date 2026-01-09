@@ -241,6 +241,16 @@ interface IAppMonitorModule {
    * @param triggeringApp - Package name of the app that triggered the wake
    */
   launchSystemSurface(wakeReason: string, triggeringApp: string): void;
+
+  /**
+   * Get Intent extras from SystemSurfaceActivity.
+   * 
+   * Returns the wake reason and triggering app that were passed when launching SystemSurface.
+   * Used during bootstrap to determine which flow to show.
+   * 
+   * @returns Promise resolving to { wakeReason: string, triggeringApp: string } or null
+   */
+  getSystemSurfaceIntentExtras(): Promise<{ wakeReason: string; triggeringApp: string } | null>;
 }
 
 /**

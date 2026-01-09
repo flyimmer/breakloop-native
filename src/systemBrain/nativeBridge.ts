@@ -17,7 +17,8 @@ const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorMod
 export type WakeReason =
   | 'SHOW_QUICK_TASK_DIALOG'        // System Brain decided: Show Quick Task dialog
   | 'START_INTERVENTION_FLOW'       // System Brain decided: Start Intervention flow
-  | 'QUICK_TASK_EXPIRED_FOREGROUND' // Quick Task expired, show Intervention
+  | 'POST_QUICK_TASK_CHOICE'        // Quick Task expired in foreground, show choice screen
+  | 'QUICK_TASK_EXPIRED_FOREGROUND' // Quick Task expired, show Intervention (legacy)
   | 'INTENTION_EXPIRED_FOREGROUND';  // Intention expired, show Intervention
 
 /**
