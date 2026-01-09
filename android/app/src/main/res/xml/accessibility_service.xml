@@ -12,31 +12,26 @@
     - Users can disable the service at any time
     
     CAPABILITIES:
-    - accessibilityEventTypes: Window state changes + user interactions
-      * typeWindowStateChanged: Detect when apps are opened/switched
-      * typeViewScrolled: Detect scrolling (for Quick Task enforcement)
-      * typeViewClicked: Detect taps (for Quick Task enforcement)
-      * typeWindowContentChanged: Detect content updates (for Quick Task enforcement)
-      We do NOT monitor any content or text - only detect that interaction occurred
+    - accessibilityEventTypes: TYPE_WINDOW_STATE_CHANGED only
+      This means we only detect when apps are opened/switched
+      We do NOT monitor any content, text, or user interactions
     
-    - accessibilityFlags: 
-      * flagReportViewIds: Required for interaction events
-      * flagIncludeNotImportantViews: CRITICAL - without this, scroll events
-        from Instagram/TikTok/YouTube will NOT be delivered by Android
+    - accessibilityFlags: flagRetrieveInteractiveWindows
+      This allows us to detect window changes but NOT access their content
     
     - canRetrieveWindowContent: false
       Explicitly disabled - we cannot read any UI content from other apps
     
-    QUICK TASK ENFORCEMENT:
-    - Interaction events are used to enforce Quick Task expiration
-    - When Quick Task timer expires, the next user interaction triggers intervention
-    - This ensures enforcement works during continuous app usage (scrolling, video, etc.)
+    PHASE F1 STATUS:
+    - Currently used for detection and logging only
+    - Does not trigger any overlays or interventions yet
+    - Foundation for future intervention system
 -->
 <accessibility-service
     xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeViewScrolled|typeViewClicked|typeWindowContentChanged"
+    android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagReportViewIds|flagIncludeNotImportantViews"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="false"
     android:description="@string/accessibility_service_description"
     android:notificationTimeout="0"

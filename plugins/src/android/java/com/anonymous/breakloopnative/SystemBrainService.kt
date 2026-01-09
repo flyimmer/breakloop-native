@@ -13,9 +13,12 @@ package com.anonymous.breakloopnative
 
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.facebook.react.HeadlessJsTaskService
 import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.ReactContext
 import com.facebook.react.jstasks.HeadlessJsTaskConfig
 
 /**
@@ -77,6 +80,64 @@ class SystemBrainService : HeadlessJsTaskService() {
     override fun getTaskConfig(intent: Intent?): HeadlessJsTaskConfig? {
         if (intent == null) {
             Log.w(TAG, "⚠️ Received null intent, cannot create task config")
+            return null
+        }
+        
+        // CRITICAL: Check if React Native is initialized before starting headless task
+        // This prevents "Cannot start headless task, CatalystInstance not available" crash
+        try {
+            val reactContext = reactApplicationContext
+            if (reactContext == null) {
+                Log.w(TAG, "⚠️ React Native not initialized yet (reactContext is null), retrying headless task in 1 second")
+                
+                // Retry the event after a delay instead of dropping it
+                Handler(Looper.getMainLooper()).postDelayed({
+                    try {
+                        startService(intent)
+                        Log.d(TAG, "   Retried headless task after RN initialization delay")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "   Failed to retry headless task: ${e.message}")
+                    }
+                }, 1000)
+                
+                return null
+            }
+            // Check if React Native has an active instance
+            // hasActiveReactInstance() might not exist in all RN versions, so we use try-catch
+            val hasActiveInstance = try {
+                reactContext.hasActiveReactInstance()
+            } catch (e: NoSuchMethodError) {
+                // Fallback: if method doesn't exist, assume it's ready if context exists
+                true
+            }
+            if (!hasActiveInstance) {
+                Log.w(TAG, "⚠️ React Native not initialized yet (no active instance), retrying headless task in 1 second")
+                
+                // Retry the event after a delay instead of dropping it
+                Handler(Looper.getMainLooper()).postDelayed({
+                    try {
+                        startService(intent)
+                        Log.d(TAG, "   Retried headless task after RN initialization delay")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "   Failed to retry headless task: ${e.message}")
+                    }
+                }, 1000)
+                
+                return null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Error checking React Native initialization: ${e.message}, retrying headless task in 1 second")
+            
+            // Retry the event after a delay instead of dropping it
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    startService(intent)
+                    Log.d(TAG, "   Retried headless task after RN initialization delay")
+                } catch (e: Exception) {
+                    Log.e(TAG, "   Failed to retry headless task: ${e.message}")
+                }
+            }, 1000)
+            
             return null
         }
         
