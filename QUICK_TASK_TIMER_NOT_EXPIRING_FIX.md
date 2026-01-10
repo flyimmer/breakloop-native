@@ -39,10 +39,23 @@ The native code in `ForegroundDetectionService.kt` IS correctly implemented:
 
 ### Step 1: Clean Build
 
+**Windows (PowerShell):**
+```powershell
+cd android
+.\gradlew.bat clean
+cd ..
+```
+
+**Unix/Mac:**
 ```bash
 cd android
 ./gradlew clean
 cd ..
+```
+
+**Or use the helper script (Windows):**
+```powershell
+.\scripts\clean-android.ps1
 ```
 
 ### Step 2: Rebuild and Run

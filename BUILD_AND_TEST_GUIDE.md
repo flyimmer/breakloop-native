@@ -30,8 +30,19 @@
 
 ### Step 1: Clean Build
 
+**Windows (PowerShell):**
+```powershell
+cd android
+.\gradlew.bat clean
+cd ..
+
+# Clear Metro cache
+npm start -- --reset-cache
+# Press Ctrl+C to stop after cache is cleared
+```
+
+**Unix/Mac:**
 ```bash
-# Clean Android build
 cd android
 ./gradlew clean
 cd ..
@@ -40,6 +51,24 @@ cd ..
 npm start -- --reset-cache
 # Press Ctrl+C to stop after cache is cleared
 ```
+
+**Troubleshooting:**
+
+**CMake Codegen Errors (Common):**
+If you see errors about missing codegen directories during clean:
+```powershell
+# Remove CMake cache first, then clean
+cd android
+Remove-Item -Path "app\.cxx" -Recurse -Force -ErrorAction SilentlyContinue
+.\gradlew.bat clean
+cd ..
+```
+Or use the helper script: `.\scripts\clean-android.ps1`
+
+**Java Issues:**
+- If you see "JAVA_HOME is not set", ensure Java is installed and JAVA_HOME points to your Java installation
+- On Windows, prefer `.\gradlew.bat` or `gradlew.bat` over `./gradlew`
+- If `gradlew.bat` doesn't work, try: `gradlew clean` (without `.\`)
 
 ### Step 2: Build & Install
 

@@ -196,6 +196,13 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] Set isProcessing to true');
     
     try {
+      // Clear any running Quick Task timer for this app
+      // User chose Conscious Process, so any active timer is invalid
+      if (AppMonitorModule && session?.app) {
+        AppMonitorModule.clearQuickTaskTimer(session.app);
+        console.log('[QuickTaskDialog] Cleared Quick Task timer (user chose Conscious Process)');
+      }
+      
       // End session and launch home (idempotent, immediate)
       console.log('[QuickTaskDialog] Calling safeEndSession (shouldLaunchHome: true)...');
       safeEndSession(true);

@@ -432,12 +432,6 @@ class ForegroundDetectionService : AccessibilityService() {
             return
         }
         
-        // Suppress duplicate consecutive events (native-level normalization)
-        // This prevents spamming when the same app emits multiple window events
-        if (packageName == lastPackageName) {
-            return
-        }
-        
         // Update last detected package
         lastPackageName = packageName
         

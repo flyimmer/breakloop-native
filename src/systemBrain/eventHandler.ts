@@ -7,7 +7,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DeviceEventEmitter } from 'react-native';
-import { loadTimerState, saveTimerState, TimerState, setInMemoryStateCache, setNextSessionOverride } from './stateManager';
+import { loadTimerState, saveTimerState, TimerState, setInMemoryStateCache, setNextSessionOverride, getNextSessionOverride, isSystemInitiatedForegroundChange } from './stateManager';
 import { launchSystemSurface } from './nativeBridge';
 import { isMonitoredApp } from '../os/osConfig';
 import { decideSystemSurfaceAction } from './decisionEngine';
@@ -151,6 +151,43 @@ async function handleTimerExpiration(
       expiresAtTime: new Date(quickTaskTimer.expiresAt).toISOString(),
       expiredMs: timestamp - quickTaskTimer.expiresAt,
     });
+    
+    // ============================================================================
+    // DEFENSIVE GUARD: Prevent stale timers from triggering during decision dialog
+    // ============================================================================
+    // Phase distinction:
+    // - Phase A (Quick Task dialog) = intent → NO TIMER should be running
+    // - Phase B (active Quick Task) = usage → TIMER runs
+    //
+    // If a timer expires but there's no active Quick Task session, this is a
+    // stale timer from a previous session expiring during the decision dialog.
+    // We must ignore it to prevent incorrect POST_QUICK_TASK_CHOICE transitions.
+    
+    const hasExpiredFlag = !!state.expiredQuickTasks[packageName];
+    const hasOverride = getNextSessionOverride();
+    
+    if (!hasExpiredFlag && !hasOverride) {
+      console.warn(
+        '[QuickTask] Ignoring TIMER_EXPIRED during decision dialog (Phase A)',
+        {
+          packageName,
+          note: 'Timer from previous session expired while user is in decision dialog',
+          action: 'Clearing stale timer, NOT triggering POST_QUICK_TASK_CHOICE',
+        }
+      );
+      
+      // Clear the stale timer
+      delete state.quickTaskTimers[packageName];
+      
+      // Do NOT set expiredQuickTasks flag
+      // Do NOT set nextSessionOverride
+      // User is still in Phase A (decision dialog)
+      
+      console.log('[System Brain] ========================================');
+      return; // Exit early, ignore this expiration
+    }
+    
+    // If we reach here, this is a legitimate expiration during active usage (Phase B)
     delete state.quickTaskTimers[packageName];
   }
   
@@ -435,6 +472,16 @@ async function handleForegroundChange(
 ): Promise<void> {
   console.log('[System Brain] Foreground changed to:', packageName);
   
+  // Check if this foreground change is system-initiated (within time window)
+  // This allows multiple duplicate events to all see the marker
+  const isSystemInitiated = isSystemInitiatedForegroundChange();
+  
+  // Check if current foreground app is infrastructure
+  // Infrastructure apps (BreakLoop overlay, system UI) don't represent user navigation
+  const isInfrastructureApp = isSystemInfrastructureApp(packageName, {
+    isHeadlessTaskProcessing: state.isHeadlessTaskProcessing
+  });
+  
   // CRITICAL: Update currentForegroundApp FIRST (for time-of-truth capture)
   // This must happen BEFORE any other logic or decision evaluation
   const previousApp = state.lastMeaningfulApp;
@@ -471,18 +518,33 @@ async function handleForegroundChange(
   }
   
   // SEMANTIC INVALIDATION: Clear expired Quick Task flags for apps user is not currently in
-  // An expiredQuickTask is only valid while the user remains in that same app.
-  // When foreground app changes, invalidate expired flags for ALL other apps.
+  // IMPORTANT: Preserve flags when:
+  // 1. Foreground change is system-initiated (blocking screen backgrounding)
+  // 2. Current foreground app is infrastructure (BreakLoop overlay, system UI)
+  // An expiredQuickTask is only valid while the user remains in that same app,
+  // UNLESS the foreground change was caused by the system or is to infrastructure.
   for (const app in state.expiredQuickTasks) {
     if (
       state.expiredQuickTasks[app].expiredWhileForeground &&
-      app !== packageName  // User is NOT in this app anymore
+      app !== packageName &&  // User is NOT in this app anymore
+      !isSystemInitiated &&  // Don't invalidate if system backgrounded the app
+      !isInfrastructureApp  // Don't invalidate if foreground is infrastructure
     ) {
       console.log(
-        '[SystemBrain] Invalidating expiredQuickTask due to app leave',
+        '[SystemBrain] Invalidating expiredQuickTask (user left for real app)',
         { expiredApp: app, currentApp: packageName }
       );
       delete state.expiredQuickTasks[app];
+    } else if (isSystemInitiated) {
+      console.log(
+        '[SystemBrain] Preserving expiredQuickTask (system-initiated foreground change)',
+        { expiredApp: app, currentApp: packageName }
+      );
+    } else if (isInfrastructureApp) {
+      console.log(
+        '[SystemBrain] Preserving expiredQuickTask (BreakLoop infrastructure)',
+        { expiredApp: app, currentApp: packageName }
+      );
     }
   }
   

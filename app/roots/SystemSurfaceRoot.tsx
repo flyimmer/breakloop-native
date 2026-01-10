@@ -19,7 +19,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Platform, NativeModules, DeviceEventEmitter } from 'react-native';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
-import { getNextSessionOverride, clearNextSessionOverride, getInMemoryStateCache } from '@/src/systemBrain/stateManager';
+import { getNextSessionOverride, clearNextSessionOverride, getInMemoryStateCache, markSystemInitiatedForegroundChange } from '@/src/systemBrain/stateManager';
 import InterventionFlow from '../flows/InterventionFlow';
 import QuickTaskFlow from '../flows/QuickTaskFlow';
 import AlternativeActivityFlow from '../flows/AlternativeActivityFlow';
@@ -81,6 +81,23 @@ function isBreakLoopInfrastructure(packageName: string | null): boolean {
   if (packageName === 'com.samsung.android.dialer') return true;   // Samsung Dialer
   
   return false;
+}
+
+/**
+ * Check if package is a launcher/home screen app.
+ * 
+ * POST_QUICK_TASK_CHOICE intentionally backgrounds the app to the launcher.
+ * This is an expected state, not a user exit.
+ */
+function isLauncherApp(packageName: string | null): boolean {
+  if (!packageName) return false;
+  
+  return (
+    packageName.includes('launcher') ||
+    packageName === 'com.android.launcher' ||
+    packageName === 'com.hihonor.android.launcher' ||
+    packageName.includes('.launcher.')
+  );
 }
 
 /**
@@ -485,6 +502,9 @@ export default function SystemSurfaceRoot() {
       }
       
       if (Platform.OS === 'android' && AppMonitorModule?.launchHomeScreen) {
+        // Mark that we're about to background the app (system-initiated)
+        markSystemInitiatedForegroundChange();
+        
         AppMonitorModule.launchHomeScreen();
         
         if (__DEV__) {
@@ -517,6 +537,14 @@ export default function SystemSurfaceRoot() {
     if (isBreakLoopInfrastructure(underlyingApp)) {
       if (__DEV__) {
         console.log('[SystemSurfaceRoot] Underlying app is infrastructure, ignoring:', underlyingApp);
+      }
+      return;
+    }
+    
+    // Skip teardown when POST_QUICK_TASK_CHOICE intentionally backgrounds to launcher
+    if (session?.kind === 'POST_QUICK_TASK_CHOICE' && isLauncherApp(underlyingApp)) {
+      if (__DEV__) {
+        console.log('[SystemSurfaceRoot] POST_QUICK_TASK_CHOICE with launcher - expected, skipping teardown');
       }
       return;
     }
@@ -567,6 +595,14 @@ export default function SystemSurfaceRoot() {
     if (isReplaceSessionTransition) {
       if (__DEV__) {
         console.log('[SystemSurfaceRoot] ⏭️ Skipping user left check - REPLACE_SESSION transition');
+      }
+      return;
+    }
+    
+    // Skip teardown when POST_QUICK_TASK_CHOICE intentionally backgrounds to launcher
+    if (session?.kind === 'POST_QUICK_TASK_CHOICE' && isLauncherApp(underlyingApp)) {
+      if (__DEV__) {
+        console.log('[SystemSurfaceRoot] POST_QUICK_TASK_CHOICE with launcher - expected, skipping teardown');
       }
       return;
     }

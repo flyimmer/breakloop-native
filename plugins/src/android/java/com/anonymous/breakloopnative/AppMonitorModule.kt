@@ -427,8 +427,12 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
         // Phase-2 Architecture: SystemSurfaceActivity must be DISPOSABLE and NEVER REUSED
         // Each launch creates a fresh Activity instance with fresh Intent extras
         // REMOVED FLAG_ACTIVITY_CLEAR_TOP to prevent Activity reuse
+        // 
+        // Modal Task Launch: POST_QUICK_TASK_CHOICE is a blocking obligation, not an overlay
+        // FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS makes it a modal system task that survives
+        // launcher interactions (swipe up, search) without being destroyed by Android
         val intent = Intent(reactApplicationContext, SystemSurfaceActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
             putExtra(SystemSurfaceActivity.EXTRA_WAKE_REASON, wakeReason)
             putExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP, triggeringApp)
         }

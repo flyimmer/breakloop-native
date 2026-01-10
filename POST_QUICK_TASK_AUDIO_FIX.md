@@ -1,160 +1,131 @@
-# POST_QUICK_TASK_CHOICE Audio Leak Fix
+# Post Quick Task Choice Not Appearing - Root Cause Analysis
 
-**Status:** ✅ IMPLEMENTED  
-**Date:** January 9, 2026  
-**Issue:** Audio/video continued playing behind POST_QUICK_TASK_CHOICE screen
+## What the Logs Show
 
----
+### Timeline from Terminal Logs
 
-## Problem Summary
+**22:27:08 - Timer Expired (CORRECT)**
+```
+TIMER_EXPIRED captured foreground: "com.instagram.android"
+foregroundAtExpiration: "com.instagram.android"
+shouldTriggerIntervention: true
+Set nextSessionOverride: POST_QUICK_TASK_CHOICE
+Quick Task expired in foreground
+expiredQuickTasks: {"com.instagram.android": {
+  "expiredAt": 1767997628184,
+  "expiredWhileForeground": true,
+  "foregroundAppAtExpiration": "com.instagram.android"
+}}
+```
 
-When Quick Task expired while user was still in the monitored app (e.g., XHS):
-- POST_QUICK_TASK_CHOICE screen appeared as an **overlay**
-- Underlying app (XHS) remained active in background
-- Audio/video continued playing behind the choice screen ❌
-- This violated the architectural rule: **"Blocking UI must not be an overlay on an active app"**
+✅ **System correctly detected expiration while on Instagram**
+✅ **Set POST_QUICK_TASK_CHOICE override**
+✅ **Stored expired flag**
+
+**22:28:33 - User Left Instagram (PROBLEM)**
+```
+Foreground changed to: com.android.systemui
+[SystemBrain] Invalidating expiredQuickTask due to app leave
+[SystemBrain] Merge: Deleted stale expiredQuickTask flag: com.instagram.android
+expiredQuickTasks: {}  ← FLAG CLEARED
+```
+
+❌ **The expired flag was DELETED when user left Instagram**
 
 ## Root Cause
 
-POST_QUICK_TASK_CHOICE was rendered as an overlay instead of a replacement. The underlying app was never properly backgrounded, so it never received `onPause()` lifecycle callback to stop media playback.
+The system has logic that **invalidates the `expiredQuickTasks` flag** when the user leaves the app.
 
-## Solution
+**The problem:** This breaks the POST_QUICK_TASK_CHOICE flow because:
+1. Timer expires while user on Instagram → flag set ✓
+2. User leaves Instagram (goes to notification shade, home, etc.)
+3. Flag is cleared ❌
+4. User returns to Instagram
+5. No flag exists → no POST_QUICK_TASK_CHOICE ❌
 
-Added a `useEffect` in `app/roots/SystemSurfaceRoot.tsx` that:
-1. Detects when `session.kind === 'POST_QUICK_TASK_CHOICE'`
-2. Immediately calls `AppMonitorModule.launchHomeScreen()`
-3. This forces the underlying app to background (triggers `onPause()`)
-4. Keeps SystemSurface alive so the choice screen remains visible
+## Why This Logic Exists
 
-## Implementation
+The invalidation logic probably exists to prevent showing POST_QUICK_TASK_CHOICE when:
+- User left the app
+- Timer expired
+- User returns much later
 
-**File:** `app/roots/SystemSurfaceRoot.tsx` (lines 469-495)
+But it's too aggressive - it clears the flag immediately when user leaves, even if they return seconds later.
 
-```typescript
-/**
- * CRITICAL: Background app immediately when POST_QUICK_TASK_CHOICE starts
- * 
- * POST_QUICK_TASK_CHOICE is a blocking screen, not an overlay.
- * The underlying app must be paused (audio/video stopped) before the user interacts.
- * 
- * This launches home screen to force the app to background,
- * while keeping SystemSurface alive for the choice UI.
- * 
- * ARCHITECTURAL RULE: Blocking UI must not be an overlay on an active app.
- * It must replace the app's foreground context.
- */
-useEffect(() => {
-  if (session?.kind === 'POST_QUICK_TASK_CHOICE') {
-    if (__DEV__) {
-      console.log('[SystemSurfaceRoot] Entering POST_QUICK_TASK_CHOICE — backgrounding app');
-    }
-    
-    if (Platform.OS === 'android' && AppMonitorModule?.launchHomeScreen) {
-      AppMonitorModule.launchHomeScreen();
-      
-      if (__DEV__) {
-        console.log('[SystemSurfaceRoot] Home screen launched - target app backgrounded');
-      }
-    }
-  }
-}, [session?.kind]);
-```
+## The Correct Behavior
 
-## Key Design Decisions
+**POST_QUICK_TASK_CHOICE should appear when:**
+- Timer expired while user was on the app
+- User returns to the app (even if they left briefly)
+- Within a reasonable time window (e.g., 5 minutes)
 
-### Why `launchHomeScreen()` and not other methods?
+**The flag should NOT be cleared when:**
+- User briefly leaves to check notifications
+- User goes to home screen momentarily
+- User switches apps briefly
 
-- ✅ **`launchHomeScreen()`** - Correct choice
-  - Brings home screen to foreground
-  - Forces underlying app to background (triggers `onPause()`)
-  - Keeps SystemSurface alive for user interaction
-  - Stops audio/video immediately
+## Where to Find the Bug
 
-- ❌ **`cancelInterventionActivity()`** - Wrong
-  - Would finish SystemSurface
-  - Would kill the choice screen
-  - This is Quit behavior, not entry behavior
+Search for:
+- `Invalidating expiredQuickTask`
+- `Deleted stale expiredQuickTask flag`
+- Logic that clears `expiredQuickTasks` on app leave
 
-- ❌ **`finishSystemSurfaceActivity()`** - Wrong
-  - Would remove the blocking UI
-  - Would leave user in undefined state
-  - Breaks "you must decide now" rule
+**Likely location:** `src/systemBrain/eventHandler.ts` in `handleForegroundChange()`
 
-### Why at session entry, not on button press?
+## The Fix
 
-The fix must happen **when POST_QUICK_TASK_CHOICE starts**, not when it ends:
-- Audio was already playing before user clicks anything
-- User may sit on choice screen for seconds/minutes
-- Enforcement must be immediate, not deferred
-- Blocking semantics require the app to be paused before user interaction
+**Option 1: Time-based invalidation (recommended)**
+- Don't clear flag on app leave
+- Clear flag only after X minutes (e.g., 5 minutes)
+- This allows user to briefly leave and return
 
-## What Was NOT Changed
+**Option 2: User interaction invalidation**
+- Don't clear flag on app leave
+- Clear flag only when user makes a choice (Conscious Process or Quick Task again)
 
-- ❌ No changes to `PostQuickTaskChoiceScreen.tsx` Quit handler
-- ❌ No media-specific pause logic added
-- ❌ No emitters or timers added
-- ❌ No native media hacks
+**Option 3: Remove invalidation entirely**
+- Let the flag persist until user returns
+- Show POST_QUICK_TASK_CHOICE whenever they return
+- Clear flag only after user makes a choice
 
-The Quit button behavior (`safeEndSession(true)`) remains unchanged and correct.
+## Next Steps
 
-## Expected Behavior (After Fix)
-
-1. XHS playing audio/video
-2. Quick Task expires while XHS is in foreground
-3. POST_QUICK_TASK_CHOICE screen appears
-4. **Audio stops immediately** ✅ (before user clicks anything)
-5. User can still choose:
-   - "Continue using this app" → Quick Task dialog or Intervention
-   - "Quit this app" → Home screen
-6. No audio/video plays behind the choice screen at any time
-
-## Testing Instructions
-
-### Manual Test Scenario
-
-1. Open XHS (小红书)
-2. Start playing a video with audio
-3. Trigger Quick Task (should appear as overlay)
-4. Use Quick Task for its duration
-5. Wait for Quick Task to expire **while still in XHS**
-6. **Expected:** POST_QUICK_TASK_CHOICE screen appears AND audio stops immediately
-7. Verify choice screen is visible and interactive
-8. Test both buttons:
-   - "Continue using this app" → Should work normally
-   - "Quit this app" → Should go to home screen
-
-### Verification Points
-
-- ✅ Audio stops the moment POST_QUICK_TASK_CHOICE appears
-- ✅ No audio plays while user is on choice screen
-- ✅ Choice screen remains visible and interactive
-- ✅ Both buttons work correctly
-- ✅ No crashes or frozen UI
-
-## Architectural Rule (Locked)
-
-> **Blocking UI must not be an overlay on an active app.**
-> 
-> When a blocking screen appears, it must **replace** the app's foreground context, not overlay it. This ensures proper lifecycle enforcement and prevents media leakage.
-
-This rule applies to:
-- POST_QUICK_TASK_CHOICE
-- Any future blocking screens
-- All intervention flows that require user decision
-
-## Logs to Look For
-
-When POST_QUICK_TASK_CHOICE starts, you should see:
-
-```
-LOG  [SystemSurfaceRoot] Entering POST_QUICK_TASK_CHOICE — backgrounding app
-LOG  [SystemSurfaceRoot] Home screen launched - target app backgrounded
-```
-
-This confirms the app was properly backgrounded before the choice screen rendered.
+1. Find the invalidation logic in `eventHandler.ts`
+2. Either remove it or make it time-based
+3. Test: Timer expires → user leaves → user returns → POST_QUICK_TASK_CHOICE appears
 
 ---
 
-**Implementation Status:** ✅ Complete  
-**Linting Status:** ✅ No errors  
-**Ready for Testing:** ✅ Yes
+**Date:** January 9, 2026  
+**Issue:** POST_QUICK_TASK_CHOICE not appearing  
+**Root Cause:** expiredQuickTasks flag cleared when user leaves app  
+**Fix:** Add guard to preserve flag when POST_QUICK_TASK_CHOICE is pending  
+**Status:** ✅ FIXED - Implemented in eventHandler.ts
+
+## Implementation
+
+**File:** `src/systemBrain/eventHandler.ts`
+
+**Changes:**
+1. Added `getNextSessionOverride` to imports
+2. Retrieve `nextSessionOverride` at start of `handleForegroundChange()`
+3. Added `hasPendingChoice` guard to invalidation logic
+4. Preserve `expiredQuickTasks` when `POST_QUICK_TASK_CHOICE` is pending
+
+**Key Logic:**
+```typescript
+const hasPendingChoice =
+  nextSessionOverride?.app === app &&
+  nextSessionOverride?.kind === 'POST_QUICK_TASK_CHOICE';
+
+if (
+  state.expiredQuickTasks[app].expiredWhileForeground &&
+  app !== packageName &&
+  !hasPendingChoice  // ✅ Preserve flag if choice is pending
+) {
+  delete state.expiredQuickTasks[app];
+}
+```
+
+**Result:** Flag now survives app switches until user explicitly resolves the choice.  

@@ -99,6 +99,8 @@ For **editing existing Kotlin files**, just use `npm run android` - the sync sys
 - Run `npm run validate:kotlin` to check plugin configuration
 
 **Changes not appearing in build**
-- Clean build: `cd android && ./gradlew clean && cd ..`
+- **Windows:** `cd android && .\gradlew.bat clean && cd ..`
+- **Unix/Mac:** `cd android && ./gradlew clean && cd ..`
+- Or use helper script: `.\scripts\clean-android.ps1` (Windows)
 - Then: `npm run android`
 

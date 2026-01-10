@@ -86,8 +86,9 @@ class SystemBrainService : HeadlessJsTaskService() {
         // CRITICAL: Check if React Native is initialized before starting headless task
         // This prevents "Cannot start headless task, CatalystInstance not available" crash
         try {
-            val reactContext = reactApplicationContext
-            if (reactContext == null) {
+            // Use reactContext protected property from HeadlessJsTaskService base class
+            val context = reactContext
+            if (context == null) {
                 Log.w(TAG, "⚠️ React Native not initialized yet (reactContext is null), retrying headless task in 1 second")
                 
                 // Retry the event after a delay instead of dropping it
@@ -103,9 +104,9 @@ class SystemBrainService : HeadlessJsTaskService() {
                 return null
             }
             // Check if React Native has an active instance
-            // hasActiveReactInstance() might not exist in all RN versions, so we use try-catch
+            // hasActiveReactInstance() exists on ReactContext (abstract class)
             val hasActiveInstance = try {
-                reactContext.hasActiveReactInstance()
+                context.hasActiveReactInstance()
             } catch (e: NoSuchMethodError) {
                 // Fallback: if method doesn't exist, assume it's ready if context exists
                 true

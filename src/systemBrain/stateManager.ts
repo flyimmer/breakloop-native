@@ -230,6 +230,48 @@ export function getNextSessionOverride(): typeof nextSessionOverride {
 }
 
 /**
+ * Track system-initiated foreground changes with time window.
+ * This allows multiple duplicate events to all see the marker.
+ * 
+ * Android emits multiple FOREGROUND_CHANGED events for a single logical transition.
+ * Using a time window ensures all events in the burst are treated as system-initiated.
+ * 
+ * This is NOT persisted - it's ephemeral coordination state.
+ */
+let systemInitiatedForegroundUntil = 0;
+
+/**
+ * Mark that foreground changes in the next 500ms are system-initiated.
+ * Called by SystemSurface before backgrounding the app.
+ */
+export function markSystemInitiatedForegroundChange(): void {
+  systemInitiatedForegroundUntil = Date.now() + 500;  // 500ms window
+  console.log('[SystemBrain] Marked foreground changes as system-initiated for 500ms');
+}
+
+/**
+ * Check if current foreground change is system-initiated.
+ * Does NOT consume - allows multiple events to check within the time window.
+ * Returns true if we're within the system-initiated time window.
+ */
+export function isSystemInitiatedForegroundChange(): boolean {
+  const now = Date.now();
+  const isSystemInitiated = now < systemInitiatedForegroundUntil;
+  
+  if (isSystemInitiated) {
+    console.log('[SystemBrain] Foreground change is system-initiated (within window)');
+  }
+  
+  // Auto-clear if expired
+  if (now >= systemInitiatedForegroundUntil && systemInitiatedForegroundUntil > 0) {
+    systemInitiatedForegroundUntil = 0;
+    console.log('[SystemBrain] System-initiated window expired');
+  }
+  
+  return isSystemInitiated;
+}
+
+/**
  * Merge in-memory state mutations with persisted state.
  * 
  * In-memory cache is authoritative - if a flag is deleted in memory,
