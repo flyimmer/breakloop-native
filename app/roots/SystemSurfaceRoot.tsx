@@ -19,7 +19,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Platform, NativeModules, DeviceEventEmitter } from 'react-native';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
-import { getNextSessionOverride, clearNextSessionOverride, getInMemoryStateCache, markSystemInitiatedForegroundChange } from '@/src/systemBrain/stateManager';
+import { getNextSessionOverride, clearNextSessionOverride, getInMemoryStateCache, markSystemInitiatedForegroundChange, getSystemSurfaceDecision } from '@/src/systemBrain/stateManager';
 import InterventionFlow from '../flows/InterventionFlow';
 import QuickTaskFlow from '../flows/QuickTaskFlow';
 import AlternativeActivityFlow from '../flows/AlternativeActivityFlow';
@@ -162,6 +162,9 @@ export default function SystemSurfaceRoot() {
   // Track wake reason for special routing cases (POST_QUICK_TASK_CHOICE)
   const [wakeReason, setWakeReason] = useState<string | null>(null);
   
+  // Track SystemSurface decision (in-memory only, reactive)
+  const [systemSurfaceDecision, setSystemSurfaceDecisionState] = useState<'PENDING' | 'SHOW_SESSION' | 'FINISH'>('PENDING');
+  
   // Read wake reason on mount (bootstrap phase) - MUST be before any early returns
   useEffect(() => {
     const readWakeReason = async () => {
@@ -243,6 +246,7 @@ export default function SystemSurfaceRoot() {
         // Read Intent extras from native
         if (!AppMonitorModule) {
           console.error('[SystemSurfaceRoot] ❌ AppMonitorModule not available');
+          setSystemSurfaceDecision('FINISH');
           safeEndSession(true);  // Bootstrap failure - go to home
           return;
         }
@@ -251,6 +255,7 @@ export default function SystemSurfaceRoot() {
 
         if (!extras || !extras.triggeringApp) {
           console.error('[SystemSurfaceRoot] ❌ No Intent extras - finishing activity');
+          setSystemSurfaceDecision('FINISH');
           safeEndSession(true);  // Bootstrap failure - go to home
           return;
         }
@@ -342,12 +347,31 @@ export default function SystemSurfaceRoot() {
         }
       } catch (error) {
         console.error('[SystemSurfaceRoot] ❌ Bootstrap initialization failed:', error);
+        setSystemSurfaceDecision('FINISH');
         safeEndSession(true);  // Bootstrap failure - go to home
       }
     };
 
     initializeBootstrap();
   }, []); // ✅ CRITICAL: Empty dependency array - run once on mount
+
+  /**
+   * Update SystemSurface decision reactively when session or bootstrap state changes.
+   * 
+   * CRITICAL: Do NOT poll with setInterval.
+   * Decision only changes around session creation/termination, so React re-renders naturally.
+   * 
+   * REACTIVE: Updates when System Brain changes state (session/bootstrap transitions).
+   * NO POLLING. NO TIMERS.
+   */
+  useEffect(() => {
+    const decision = getSystemSurfaceDecision();
+    setSystemSurfaceDecisionState(decision);
+    
+    if (__DEV__) {
+      console.log('[SystemSurfaceRoot] Decision updated:', decision);
+    }
+  }, [session, bootstrapState]);
 
   /**
    * Subscribe to underlying app changes from System Brain
@@ -460,16 +484,26 @@ export default function SystemSurfaceRoot() {
   ]);
 
   /**
-   * RULE 4: Session is the ONLY authority for SystemSurface existence
-   * When session becomes null (and bootstrap is complete), finish activity
+   * EXPLICIT DECISION: Only finish when System Brain explicitly says FINISH
+   * 
+   * CRITICAL: Do NOT finish based on session === null.
+   * After Quick Task phase refactor, session === null can mean:
+   * 1. "No session needed" (correct time to finish)
+   * 2. "Still bootstrapping" (must NOT finish)
+   * 3. "Phase logic says wait" (must NOT finish)
+   * 
+   * System Brain explicitly sets decision to FINISH when no session is needed.
    * 
    * IMPORTANT: This useEffect must be called BEFORE any early returns
    * to comply with React's Rules of Hooks.
    */
   useEffect(() => {
-    if (bootstrapState === 'READY' && session === null) {
+    if (
+      bootstrapState === 'READY' &&
+      systemSurfaceDecision === 'FINISH'
+    ) {
       if (__DEV__) {
-        console.log('[SystemSurfaceRoot] Session is null (bootstrap complete) - triggering activity finish', {
+        console.log('[SystemSurfaceRoot] System Brain decision: FINISH - triggering activity finish', {
           shouldLaunchHome,
         });
       }
@@ -481,7 +515,7 @@ export default function SystemSurfaceRoot() {
         finishSurfaceOnly();
       }
     }
-  }, [session, bootstrapState, shouldLaunchHome]);
+  }, [systemSurfaceDecision, bootstrapState, shouldLaunchHome]);
 
   /**
    * CRITICAL: Background app immediately when POST_QUICK_TASK_CHOICE starts
@@ -558,6 +592,7 @@ export default function SystemSurfaceRoot() {
           underlyingApp,
         });
       }
+      setSystemSurfaceDecision('FINISH');
       safeEndSession(true);  // User left underlying app - go to home
     }
   }, [session, underlyingApp, safeEndSession]);
@@ -616,6 +651,7 @@ export default function SystemSurfaceRoot() {
           underlyingApp,
         });
       }
+      setSystemSurfaceDecision('FINISH');
       safeEndSession(true);  // User left app - go to home
     }
   }, [session, underlyingApp, safeEndSession, isReplaceSessionTransition]);
@@ -634,29 +670,38 @@ export default function SystemSurfaceRoot() {
     if (__DEV__) {
       console.log('[SystemSurfaceRoot] Bootstrap phase - waiting for session establishment', {
         bootstrapState,
+        decision: systemSurfaceDecision,
       });
     }
     return null;
   }
 
   /**
-   * SESSION END: Render null when session is null
+   * EXPLICIT DECISION RENDERING: Only finish when decision === FINISH
    * 
-   * When session becomes null (after END_SESSION), render nothing.
-   * The useEffect above (lines 307-327) handles activity finish with proper shouldLaunchHome flag.
+   * CRITICAL: Do NOT finish based on session === null.
    * 
-   * REMOVED: Defensive guard that was racing with END_SESSION useEffect.
-   * Bootstrap failures are already caught by:
-   * - Bootstrap initialization error handling (lines 297-300)
-   * - Intent extras validation (lines 211-215)
+   * Decision states:
+   * - PENDING: Waiting for System Brain decision (show black screen)
+   * - SHOW_SESSION: System Brain decided to show session (wait for session creation if null)
+   * - FINISH: System Brain decided no session needed (finish activity)
    * 
-   * Rendering null here is safe - the useEffect will finish the activity correctly.
+   * The useEffect above handles actual activity finish when decision === FINISH.
    */
-  if (session === null) {
+  if (systemSurfaceDecision === 'SHOW_SESSION' && session === null) {
     if (__DEV__) {
-      console.log('[SystemSurfaceRoot] Session is null - rendering nothing (useEffect will finish activity)');
+      console.log('[SystemSurfaceRoot] Decision: SHOW_SESSION, waiting for session creation');
     }
-    return null;
+    return null; // Black screen while waiting
+  }
+
+  if (session === null) {
+    // session is null but decision is not SHOW_SESSION
+    // This means either PENDING or FINISH
+    if (__DEV__) {
+      console.log('[SystemSurfaceRoot] Session is null, decision:', systemSurfaceDecision);
+    }
+    return null; // useEffect will handle finish if decision === FINISH
   }
 
   // Render flow based on session.kind

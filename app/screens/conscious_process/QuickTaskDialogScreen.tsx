@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
-import { getQuickTaskRemainingForDisplay, setLastIntervenedApp } from '@/src/systemBrain/publicApi';
+import { getQuickTaskRemainingForDisplay, setLastIntervenedApp, transitionQuickTaskToActive, clearQuickTaskPhase } from '@/src/systemBrain/publicApi';
+import { setSystemSurfaceDecision } from '@/src/systemBrain/stateManager';
 import { getQuickTaskDurationMs } from '@/src/os/osConfig';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
@@ -83,7 +84,7 @@ export default function QuickTaskDialogScreen() {
   }, [session]);
 
   // Navigation handlers
-  const handleConsciousProcess = () => {
+  const handleConsciousProcess = async () => {
     console.log('[QuickTaskDialog] ========================================');
     console.log('[QuickTaskDialog] handleConsciousProcess called!');
     console.log('[QuickTaskDialog] isProcessing:', isProcessing);
@@ -97,6 +98,11 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] Set isProcessing to true');
     
     try {
+      // Clear phase (user chose not to use Quick Task)
+      console.log('[QuickTaskDialog] Clearing Quick Task phase (user chose Conscious Process)...');
+      await clearQuickTaskPhase(session.app);
+      console.log('[QuickTaskDialog] Phase cleared - quota unchanged');
+      
       // Atomic session replacement - no transient null state
       // This prevents race condition where END_SESSION → session === null → activity finishes
       console.log('[QuickTaskDialog] Dispatching REPLACE_SESSION (QUICK_TASK → INTERVENTION)...');
@@ -138,24 +144,37 @@ export default function QuickTaskDialogScreen() {
     try {
       const now = Date.now();
       
-      // Availability check removed - System Brain already decided to show this dialog
-      // No need to re-check quota here
+      // ⚠️ CRITICAL ORDERING: Phase must be updated BEFORE side effects
+      // STEP 1: Transition phase and decrement quota (awaits completion)
+      // This must complete fully before proceeding to timer storage
+      console.log('[QuickTaskDialog] STEP 1: Transitioning phase DECISION → ACTIVE...');
+      await transitionQuickTaskToActive(session.app, now);
+      console.log('[QuickTaskDialog] Phase transition complete - quota decremented');
       
-      // Store timer in native (mechanical operation)
-      // Native will emit TIMER_SET event to System Brain (single path)
+      // STEP 2: Now that phase is ACTIVE and quota is decremented, store timer
+      // Timer storage is safe because phase state is already authoritative
       const durationMs = getQuickTaskDurationMs();
       const expiresAt = now + durationMs;
       
       if (AppMonitorModule) {
-        AppMonitorModule.storeQuickTaskTimer(session.app, expiresAt);
-        console.log('[QuickTaskDialog] Quick Task timer stored in native:', {
-          app: session.app,
-          durationMs,
-          expiresAt,
-          note: 'System Brain will receive TIMER_SET event via HeadlessTask',
-        });
+        try {
+          await AppMonitorModule.storeQuickTaskTimer(session.app, expiresAt);
+          console.log('[QuickTaskDialog] ✅ Timer stored successfully');
+          console.log('[QuickTaskDialog] STEP 2: Timer stored AFTER phase transition:', {
+            app: session.app,
+            durationMs,
+            expiresAt,
+            note: 'Native will emit TIMER_SET event to System Brain',
+          });
+        } catch (error) {
+          console.error('[QuickTaskDialog] ❌ Failed to store Quick Task timer:', error);
+          // Timer storage failed - this is critical, user should know
+          setIsProcessing(false);
+          return;
+        }
       }
       
+      // STEP 3: UI transitions and session ending (after phase and timer)
       // Set lastIntervenedApp flag in System Brain state (fire-and-forget)
       // No await - END_SESSION must happen immediately to release overlay
       setLastIntervenedApp(session.app);
@@ -165,8 +184,12 @@ export default function QuickTaskDialogScreen() {
       setTransientTargetApp(session.app);
       console.log('[QuickTaskDialog] Set transient targetApp:', session.app);
       
+      // Set decision to FINISH (IN-MEMORY ONLY)
+      setSystemSurfaceDecision('FINISH');
+      console.log('[QuickTaskDialog] Decision set to FINISH');
+      
       // End session and return to app (idempotent, immediate)
-      console.log('[QuickTaskDialog] Calling safeEndSession (shouldLaunchHome: false)...');
+      console.log('[QuickTaskDialog] STEP 3: Calling safeEndSession (shouldLaunchHome: false)...');
       safeEndSession(false);
       console.log('[QuickTaskDialog] safeEndSession called - SystemSurface will finish, user returns to app');
       
@@ -182,7 +205,7 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] ========================================');
   };
 
-  const handleClose = () => {
+  const handleClose = async () => {
     console.log('[QuickTaskDialog] ========================================');
     console.log('[QuickTaskDialog] handleClose called!');
     console.log('[QuickTaskDialog] isProcessing:', isProcessing);
@@ -199,9 +222,17 @@ export default function QuickTaskDialogScreen() {
       // Clear any running Quick Task timer for this app
       // User chose Conscious Process, so any active timer is invalid
       if (AppMonitorModule && session?.app) {
-        AppMonitorModule.clearQuickTaskTimer(session.app);
-        console.log('[QuickTaskDialog] Cleared Quick Task timer (user chose Conscious Process)');
+        try {
+          await AppMonitorModule.clearQuickTaskTimer(session.app);
+          console.log('[QuickTaskDialog] Cleared Quick Task timer (user chose Conscious Process)');
+        } catch (error) {
+          console.error('[QuickTaskDialog] Failed to clear Quick Task timer:', error);
+        }
       }
+      
+      // Set decision to FINISH (IN-MEMORY ONLY)
+      setSystemSurfaceDecision('FINISH');
+      console.log('[QuickTaskDialog] Decision set to FINISH');
       
       // End session and launch home (idempotent, immediate)
       console.log('[QuickTaskDialog] Calling safeEndSession (shouldLaunchHome: true)...');

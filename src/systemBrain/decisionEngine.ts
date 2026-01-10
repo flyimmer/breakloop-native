@@ -25,7 +25,7 @@
  * 4. Default → Do nothing
  */
 
-import { TimerState } from './stateManager';
+import { TimerState, setSystemSurfaceDecision } from './stateManager';
 import { WakeReason } from './nativeBridge';
 
 /**
@@ -190,12 +190,26 @@ async function evaluateOSTriggerBrain(
   // Priority #2: Check t_quickTask (per-app timer)
   const quickTaskTimer = state.quickTaskTimers[app];
   if (quickTaskTimer && timestamp < quickTaskTimer.expiresAt) {
-    console.log('[Decision Engine] ✓ t_quickTask ACTIVE - suppressing intervention', {
-      app,
-      expiresAt: quickTaskTimer.expiresAt,
-      expiresAtTime: new Date(quickTaskTimer.expiresAt).toISOString(),
-    });
-    return 'SUPPRESS';
+    // Also verify phase is ACTIVE (not stale dialog)
+    const phase = state.quickTaskPhaseByApp[app];
+    if (phase === 'ACTIVE') {
+      console.log('[Decision Engine] ✓ t_quickTask ACTIVE - suppressing intervention', {
+        app,
+        phase,
+        expiresAt: quickTaskTimer.expiresAt,
+        expiresAtTime: new Date(quickTaskTimer.expiresAt).toISOString(),
+      });
+      return 'SUPPRESS';
+    } else {
+      // Stale timer - clean it up
+      console.warn('[Decision Engine] Stale Quick Task timer detected:', {
+        app,
+        phase,
+        note: 'Timer exists but phase is not ACTIVE - cleaning up',
+      });
+      delete state.quickTaskTimers[app];
+      // Fall through to check quota (Priority #3)
+    }
   }
   
   // Priority #3: Check n_quickTask (global usage count)
@@ -317,6 +331,9 @@ export async function decideSystemSurfaceAction(
       suppressQuickTaskForApp = app;
       console.log('[Decision Engine] Quick Task suppressed for app entry:', app);
       
+      // Set explicit decision (IN-MEMORY ONLY)
+      setSystemSurfaceDecision('SHOW_SESSION');
+      
       // Set lifecycle guard
       isSystemSurfaceActive = true;
       console.log('[SystemSurfaceInvariant] LAUNCH', { app, wakeReason: 'POST_QUICK_TASK_CHOICE' });
@@ -348,6 +365,10 @@ export async function decideSystemSurfaceAction(
   
   if (osDecision === 'SUPPRESS') {
     console.log('[Decision Engine] ✓ OS Trigger Brain: SUPPRESS - no launch needed');
+    
+    // Set explicit decision (IN-MEMORY ONLY)
+    setSystemSurfaceDecision('FINISH');
+    
     console.log('[Decision Engine] Decision: NONE');
     console.log('[Decision Engine] ========================================');
     return { type: 'NONE' };
@@ -366,6 +387,14 @@ export async function decideSystemSurfaceAction(
     
     console.log('[Decision Engine] ✓ OS Trigger Brain: QUICK_TASK - launching Quick Task dialog');
     
+    // Set phase = DECISION when showing dialog
+    // Phase A: User sees dialog, no timer running yet
+    state.quickTaskPhaseByApp[app] = 'DECISION';
+    console.log('[QuickTask] Phase set to DECISION (showing dialog):', app);
+    
+    // Set explicit decision (IN-MEMORY ONLY)
+    setSystemSurfaceDecision('SHOW_SESSION');
+    
     // Set lifecycle guard
     isSystemSurfaceActive = true;
     console.log('[SystemSurfaceInvariant] LAUNCH', { app, wakeReason: 'SHOW_QUICK_TASK_DIALOG' });
@@ -380,6 +409,9 @@ export async function decideSystemSurfaceAction(
   
   if (osDecision === 'INTERVENTION') {
     console.log('[Decision Engine] ✓ OS Trigger Brain: INTERVENTION - launching intervention flow');
+    
+    // Set explicit decision (IN-MEMORY ONLY)
+    setSystemSurfaceDecision('SHOW_SESSION');
     
     // Set lifecycle guard
     isSystemSurfaceActive = true;

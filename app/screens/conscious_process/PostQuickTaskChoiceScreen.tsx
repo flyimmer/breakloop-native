@@ -17,8 +17,8 @@ import React, { useState, useEffect } from 'react';
 import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
-import { getQuickTaskRemainingForDisplay } from '@/src/systemBrain/publicApi';
-import { clearExpiredQuickTaskInMemory, clearBlockingState } from '@/src/systemBrain/stateManager';
+import { getQuickTaskRemainingForDisplay, setQuickTaskPhase, clearQuickTaskPhase } from '@/src/systemBrain/publicApi';
+import { clearExpiredQuickTaskInMemory, clearBlockingState, setSystemSurfaceDecision } from '@/src/systemBrain/stateManager';
 import { clearQuickTaskSuppression } from '@/src/systemBrain/decisionEngine';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
@@ -68,11 +68,15 @@ export default function PostQuickTaskChoiceScreen() {
    * End session and launch home screen.
    * No intervention, user explicitly chose to quit.
    */
-  const handleQuitApp = () => {
+  const handleQuitApp = async () => {
     if (isProcessing || !targetApp) return;
     
     setIsProcessing(true);
     console.log('[PostQuickTaskChoice] User chose: Quit this app');
+    
+    // Clear phase when user quits
+    await clearQuickTaskPhase(targetApp);
+    console.log('[PostQuickTaskChoice] Phase cleared');
     
     // Clear blocking state synchronously (in-memory)
     clearBlockingState(targetApp);
@@ -80,6 +84,10 @@ export default function PostQuickTaskChoiceScreen() {
     // Clear legacy UI coordination flags
     clearExpiredQuickTaskInMemory(targetApp);
     clearQuickTaskSuppression();
+    
+    // Set decision to FINISH (IN-MEMORY ONLY)
+    setSystemSurfaceDecision('FINISH');
+    console.log('[PostQuickTaskChoice] Decision set to FINISH');
     
     console.log('[PostQuickTaskChoice] 🔓 Blocking state cleared - exiting to home');
     
@@ -112,6 +120,10 @@ export default function PostQuickTaskChoiceScreen() {
       console.log('[PostQuickTaskChoice] n_quickTask > 0 → Launching Quick Task dialog');
       console.log('[PostQuickTaskChoice] 🔓 Blocking state cleared - showing Quick Task dialog');
       
+      // Set phase = DECISION before showing dialog
+      await setQuickTaskPhase(targetApp, 'DECISION');
+      console.log('[PostQuickTaskChoice] Phase set to DECISION');
+      
       // Replace current session with QUICK_TASK
       dispatchSystemEvent({
         type: 'REPLACE_SESSION',
@@ -122,6 +134,10 @@ export default function PostQuickTaskChoiceScreen() {
       // Case B: Quota exhausted → Start Intervention Flow
       console.log('[PostQuickTaskChoice] n_quickTask = 0 → Starting Intervention Flow');
       console.log('[PostQuickTaskChoice] 🔓 Blocking state cleared - starting Intervention');
+      
+      // Clear phase (transitioning to Intervention)
+      await clearQuickTaskPhase(targetApp);
+      console.log('[PostQuickTaskChoice] Phase cleared');
       
       // Clear legacy flag explicitly
       clearExpiredQuickTaskInMemory(targetApp);

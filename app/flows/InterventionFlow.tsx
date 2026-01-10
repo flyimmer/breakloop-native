@@ -21,6 +21,7 @@ import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
 import { getInterventionDurationSec } from '@/src/os/osConfig';
 import { setLastIntervenedApp } from '@/src/systemBrain/publicApi';
+import { setSystemSurfaceDecision } from '@/src/systemBrain/stateManager';
 import BreathingScreen from '../screens/conscious_process/BreathingScreen';
 import RootCauseScreen from '../screens/conscious_process/RootCauseScreen';
 import AlternativesScreen from '../screens/conscious_process/AlternativesScreen';
@@ -168,6 +169,12 @@ export default function InterventionFlow({ app }: InterventionFlowProps) {
           if (__DEV__) {
             console.log('[InterventionFlow] lastIntervenedApp set (fire-and-forget)');
           }
+        }
+        
+        // Set decision to FINISH (IN-MEMORY ONLY)
+        setSystemSurfaceDecision('FINISH');
+        if (__DEV__) {
+          console.log('[InterventionFlow] Decision set to FINISH');
         }
         
         // End session immediately (idempotent, no blocking)

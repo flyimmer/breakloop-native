@@ -152,43 +152,24 @@ async function handleTimerExpiration(
       expiredMs: timestamp - quickTaskTimer.expiresAt,
     });
     
-    // ============================================================================
-    // DEFENSIVE GUARD: Prevent stale timers from triggering during decision dialog
-    // ============================================================================
-    // Phase distinction:
-    // - Phase A (Quick Task dialog) = intent → NO TIMER should be running
-    // - Phase B (active Quick Task) = usage → TIMER runs
-    //
-    // If a timer expires but there's no active Quick Task session, this is a
-    // stale timer from a previous session expiring during the decision dialog.
-    // We must ignore it to prevent incorrect POST_QUICK_TASK_CHOICE transitions.
-    
-    const hasExpiredFlag = !!state.expiredQuickTasks[packageName];
-    const hasOverride = getNextSessionOverride();
-    
-    if (!hasExpiredFlag && !hasOverride) {
-      console.warn(
-        '[QuickTask] Ignoring TIMER_EXPIRED during decision dialog (Phase A)',
-        {
-          packageName,
-          note: 'Timer from previous session expired while user is in decision dialog',
-          action: 'Clearing stale timer, NOT triggering POST_QUICK_TASK_CHOICE',
-        }
-      );
-      
-      // Clear the stale timer
+    // ⚠️ CRITICAL: Valid expiration only if phase is ACTIVE
+    // Phase check prevents handling stale timers from dialog phase
+    const phase = state.quickTaskPhaseByApp[packageName];
+    if (phase !== 'ACTIVE') {
+      // Stale timer - ignore expiration
+      console.warn('[QuickTask] Ignoring timer expiration - phase is not ACTIVE:', {
+        app: packageName,
+        currentPhase: phase,
+        note: 'Timer expired but phase indicates dialog or no Quick Task active',
+      });
+      // Always delete timer (even if phase was wrong)
       delete state.quickTaskTimers[packageName];
-      
-      // Do NOT set expiredQuickTasks flag
-      // Do NOT set nextSessionOverride
-      // User is still in Phase A (decision dialog)
-      
-      console.log('[System Brain] ========================================');
-      return; // Exit early, ignore this expiration
+      timerType = 'UNKNOWN'; // Mark as unknown so we skip further processing
+    } else {
+      // Valid expiration of active Quick Task usage (Phase B)
+      // Timer exists AND phase is ACTIVE → legitimate expiration
+      delete state.quickTaskTimers[packageName];
     }
-    
-    // If we reach here, this is a legitimate expiration during active usage (Phase B)
-    delete state.quickTaskTimers[packageName];
   }
   
   if (timerType === 'UNKNOWN') {
@@ -226,30 +207,55 @@ async function handleTimerExpiration(
       console.log('[QuickTask] TIMER_EXPIRED for:', packageName);
       console.log('[QuickTask] Foreground app at expiration:', foregroundAtExpiration);
       
+      // CRITICAL: Capture phase BEFORE clearing (needed for POST_QUICK_TASK_CHOICE guard)
+      const phaseBeforeExpiration = state.quickTaskPhaseByApp[packageName];
+      
+      // Clear phase (transition ACTIVE → null)
+      delete state.quickTaskPhaseByApp[packageName];
+      console.log('[QuickTask] Phase cleared (ACTIVE → null)');
+      
       // Capture immutable fact: user was in this app when timer expired
       const expiredWhileForeground = foregroundAtExpiration === packageName;
       
       if (expiredWhileForeground) {
-        // Set session override for UI to observe
-        setNextSessionOverride(packageName, 'POST_QUICK_TASK_CHOICE');
-        state.lastSemanticChangeTs = Date.now();
-        
-        console.log('[SystemBrain] Quick Task expired in foreground:', {
-          app: packageName,
-          foregroundAtExpiration,
-          nextSessionOverride: 'POST_QUICK_TASK_CHOICE',
-          lastSemanticChangeTs: state.lastSemanticChangeTs,
-          note: 'SystemSurface will observe and dispatch REPLACE_SESSION',
-        });
-        
-        // Persist immutable fact with captured foreground app
-        state.expiredQuickTasks[packageName] = {
-          expiredAt: timestamp,
-          expiredWhileForeground: true,
-          foregroundAppAtExpiration: foregroundAtExpiration,
-        };
+        // CRITICAL: Only set POST_QUICK_TASK_CHOICE if Quick Task was ACTIVE
+        // This prevents premature transitions on app entry or during DECISION phase
+        if (phaseBeforeExpiration === 'ACTIVE') {
+          // Set session override for UI to observe
+          setNextSessionOverride(packageName, 'POST_QUICK_TASK_CHOICE');
+          state.lastSemanticChangeTs = Date.now();
+          
+          console.log('[SystemBrain] Quick Task expired in foreground:', {
+            app: packageName,
+            phase: 'ACTIVE',
+            foregroundAtExpiration,
+            nextSessionOverride: 'POST_QUICK_TASK_CHOICE',
+            lastSemanticChangeTs: state.lastSemanticChangeTs,
+            note: 'SystemSurface will observe and dispatch REPLACE_SESSION',
+          });
+          
+          // Persist immutable fact with captured foreground app
+          state.expiredQuickTasks[packageName] = {
+            expiredAt: timestamp,
+            expiredWhileForeground: true,
+            foregroundAppAtExpiration: foregroundAtExpiration,
+          };
+        } else {
+          console.warn('[QuickTask] Ignoring POST_QUICK_TASK_CHOICE — not in ACTIVE phase', {
+            phase: phaseBeforeExpiration,
+            app: packageName,
+            note: 'POST_QUICK_TASK_CHOICE requires phase = ACTIVE (user must have started Quick Task)',
+          });
+          
+          // Still record expiration, but without POST_QUICK_TASK_CHOICE
+          state.expiredQuickTasks[packageName] = {
+            expiredAt: timestamp,
+            expiredWhileForeground: true,
+            foregroundAppAtExpiration: foregroundAtExpiration,
+          };
+        }
       } else {
-        // Background expiration - no blocking
+        // Background expiration - just clear phase, no blocking
         state.expiredQuickTasks[packageName] = {
           expiredAt: timestamp,
           expiredWhileForeground: false,
@@ -386,12 +392,13 @@ async function handleTimerSet(
       delete state.expiredQuickTasks[packageName];
     }
     
-    // Store Quick Task timer and track usage
+    // Store Quick Task timer (mechanical operation)
     state.quickTaskTimers[packageName] = { expiresAt };
     console.log('[System Brain] ✓ Quick Task timer stored');
     
-    // Record usage (this consumes quota)
-    recordQuickTaskUsage(packageName, timestamp, state);
+    // ❌ REMOVED: recordQuickTaskUsage() - quota now decremented at DECISION→ACTIVE transition
+    // Quota is consumed when user clicks "Quick Task" button (in transitionQuickTaskToActive),
+    // not when timer is stored in native
     
     // ✅ Step 2: Verify persistence with detailed logging
     console.log('[System Brain] ✅ Quick Task timer persisted:', {
@@ -399,7 +406,7 @@ async function handleTimerSet(
       expiresAt,
       expiresAtTime: new Date(expiresAt).toISOString(),
       durationSec,
-      note: 'Timer will be available in state on next event',
+      note: 'Timer will be available in state on next event. Quota already decremented at DECISION→ACTIVE.',
     });
   } else if (timerType === 'INTENTION') {
     // Clear any expired Quick Task flag - user chose to set intention

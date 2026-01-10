@@ -539,10 +539,13 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
      * 
      * @param packageName Package name of the app (e.g., "com.instagram.android")
      * @param expiresAt Timestamp when timer expires (milliseconds since epoch)
+     * @param promise Promise to resolve when timer is stored successfully
      */
     @ReactMethod
-    fun storeQuickTaskTimer(packageName: String, expiresAt: Double) {
+    fun storeQuickTaskTimer(packageName: String, expiresAt: Double, promise: Promise) {
         try {
+            android.util.Log.i("QuickTaskTimer", "storeQuickTaskTimer called for $packageName expiresAt=$expiresAt")
+            
             val prefs = reactApplicationContext.getSharedPreferences("quick_task_timers", android.content.Context.MODE_PRIVATE)
             val key = "quick_task_timer_$packageName"
             val expiresAtLong = expiresAt.toLong()
@@ -557,8 +560,14 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             
             // Emit MECHANICAL event to System Brain JS with explicit timer type
             emitSystemEventToSystemBrain("TIMER_SET", packageName, System.currentTimeMillis(), expiresAtLong, "QUICK_TASK")
+            
+            android.util.Log.i("QuickTaskTimer", "TIMER_SET emitted")
+            
+            // Resolve promise to signal success to JavaScript
+            promise.resolve(true)
         } catch (e: Exception) {
-            android.util.Log.e("AppMonitorModule", "Failed to store Quick Task timer", e)
+            android.util.Log.e("AppMonitorModule", "❌ Failed to store Quick Task timer", e)
+            promise.reject("STORE_TIMER_FAILED", "Failed to store Quick Task timer: ${e.message}", e)
         }
     }
     
@@ -614,9 +623,10 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
      * Called when Quick Task expires or is cancelled.
      * 
      * @param packageName Package name of the app
+     * @param promise Promise to resolve when timer is cleared successfully
      */
     @ReactMethod
-    fun clearQuickTaskTimer(packageName: String) {
+    fun clearQuickTaskTimer(packageName: String, promise: Promise) {
         try {
             val prefs = reactApplicationContext.getSharedPreferences("quick_task_timers", android.content.Context.MODE_PRIVATE)
             val key = "quick_task_timer_$packageName"
@@ -627,8 +637,12 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             ForegroundDetectionService.clearQuickTaskTimer(packageName)
             
             android.util.Log.i("AppMonitorModule", "🧹 Cleared Quick Task timer for $packageName")
+            
+            // Resolve promise to signal success to JavaScript
+            promise.resolve(true)
         } catch (e: Exception) {
-            android.util.Log.e("AppMonitorModule", "Failed to clear Quick Task timer", e)
+            android.util.Log.e("AppMonitorModule", "❌ Failed to clear Quick Task timer", e)
+            promise.reject("CLEAR_TIMER_FAILED", "Failed to clear Quick Task timer: ${e.message}", e)
         }
     }
     

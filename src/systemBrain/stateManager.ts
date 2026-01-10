@@ -19,6 +19,7 @@ export interface TimerState {
   quickTaskTimers: Record<string, { expiresAt: number }>;
   intentionTimers: Record<string, { expiresAt: number }>;
   quickTaskUsageHistory: number[];  // PERSISTED - critical for kill-safety
+  quickTaskPhaseByApp: Record<string, 'DECISION' | 'ACTIVE'>;  // Explicit Quick Task phase per app
   lastMeaningfulApp: string | null;
   currentForegroundApp?: string | null;  // Current foreground app (for time-of-truth capture)
   isHeadlessTaskProcessing: boolean;  // Track if we're in headless task context
@@ -65,10 +66,60 @@ export async function loadTimerState(): Promise<TimerState> {
         expiredQuickTasks = rawExpired;
       }
       
+      // ⚠️ CONSERVATIVE MIGRATION: Only infer ACTIVE from active timers. Never infer DECISION.
+      let quickTaskPhaseByApp: Record<string, 'DECISION' | 'ACTIVE'> = {};
+      
+      if (!state.quickTaskPhaseByApp) {
+        // Migration: Initialize quickTaskPhaseByApp if missing
+        console.log('[System Brain] Migrating: initializing quickTaskPhaseByApp');
+        
+        // CONSERVATIVE MIGRATION: Only infer ACTIVE from active (non-expired) timers
+        // We can safely infer ACTIVE because:
+        // 1. Timer exists → user clicked "Quick Task" button (completed DECISION → ACTIVE)
+        // 2. Timer not expired → phase is still ACTIVE
+        // 
+        // We CANNOT infer DECISION because:
+        // - We don't know if dialog was actually showing
+        // - Dialog might have been dismissed
+        // - User might have switched apps
+        const currentTimestamp = Date.now();
+        
+        for (const app in state.quickTaskTimers) {
+          const timer = state.quickTaskTimers[app];
+          
+          // Only infer ACTIVE if timer exists AND is not expired
+          if (timer && currentTimestamp < timer.expiresAt) {
+            quickTaskPhaseByApp[app] = 'ACTIVE';
+            console.log('[Migration] Inferred ACTIVE phase from existing active timer:', {
+              app,
+              expiresAt: timer.expiresAt,
+              expiresAtTime: new Date(timer.expiresAt).toISOString(),
+              remainingSeconds: Math.round((timer.expiresAt - currentTimestamp) / 1000),
+            });
+          } else {
+            // Timer expired or missing → do NOT infer phase
+            // App will start fresh without a phase (correct behavior)
+            console.log('[Migration] Skipping phase inference - timer expired or missing:', {
+              app,
+              hasTimer: !!timer,
+              timerExpired: timer ? currentTimestamp >= timer.expiresAt : true,
+              note: 'No phase inferred - app will start fresh',
+            });
+          }
+        }
+        
+        // NOTE: If no timers exist, quickTaskPhaseByApp remains empty {}
+        // This is correct - no phase means no Quick Task active
+      } else {
+        // Phase state already exists - use it
+        quickTaskPhaseByApp = state.quickTaskPhaseByApp;
+      }
+      
       const baseState: TimerState = {
         quickTaskTimers: state.quickTaskTimers || {},
         intentionTimers: state.intentionTimers || {},
         quickTaskUsageHistory: state.quickTaskUsageHistory || [],
+        quickTaskPhaseByApp,  // Migrated or existing phase state
         lastMeaningfulApp: state.lastMeaningfulApp || null,
         currentForegroundApp: state.currentForegroundApp || null,
         isHeadlessTaskProcessing: false,  // Always false when loading from storage
@@ -95,6 +146,7 @@ export async function loadTimerState(): Promise<TimerState> {
     quickTaskTimers: {},
     intentionTimers: {},
     quickTaskUsageHistory: [],  // Empty array
+    quickTaskPhaseByApp: {},  // Empty object - no phase means no Quick Task active
     lastMeaningfulApp: null,
     currentForegroundApp: null,
     isHeadlessTaskProcessing: false,  // Default to false
@@ -190,6 +242,42 @@ export function clearBlockingState(app: string): void {
   } else {
     console.log('[SystemBrain] No expiredQuickTask flag to clear for:', app);
   }
+}
+
+/**
+ * In-memory SystemSurface decision state.
+ * 
+ * CRITICAL: This is ephemeral lifecycle state and MUST NOT be persisted.
+ * Persisting it will resurrect stale FINISH decisions and cause random closes.
+ * 
+ * This is pure runtime coordination, like bootstrapState.
+ * 
+ * Decision states:
+ * - PENDING: No decision made yet (initial state)
+ * - SHOW_SESSION: System Brain decided to show a session (dialog/intervention/etc)
+ * - FINISH: System Brain decided no session is needed, SystemSurface should finish
+ */
+let systemSurfaceDecision: 'PENDING' | 'SHOW_SESSION' | 'FINISH' = 'PENDING';
+
+/**
+ * Get current SystemSurface decision.
+ * 
+ * @returns Current decision state
+ */
+export function getSystemSurfaceDecision(): 'PENDING' | 'SHOW_SESSION' | 'FINISH' {
+  return systemSurfaceDecision;
+}
+
+/**
+ * Set SystemSurface decision.
+ * 
+ * IMPORTANT: This is in-memory only and MUST NOT be persisted.
+ * 
+ * @param decision - New decision state
+ */
+export function setSystemSurfaceDecision(decision: 'PENDING' | 'SHOW_SESSION' | 'FINISH'): void {
+  systemSurfaceDecision = decision;
+  console.log('[SystemBrain] SystemSurface decision set:', decision);
 }
 
 /**

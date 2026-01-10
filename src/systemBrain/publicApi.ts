@@ -16,6 +16,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { loadTimerState, saveTimerState, setInMemoryStateCache } from './stateManager';
 
 /**
  * DTO for Quick Task display information.
@@ -130,4 +131,112 @@ export async function setLastIntervenedApp(packageName: string): Promise<void> {
     console.error('[System Brain Public API] ❌ Failed to set lastIntervenedApp:', e);
     throw e; // Propagate error so caller knows coordination failed
   }
+}
+
+/**
+ * Transition Quick Task from DECISION to ACTIVE phase.
+ * This is the ONLY place where n_quickTask is decremented.
+ * 
+ * ⚠️ CRITICAL: Phase must be updated BEFORE any side effects.
+ * This function must complete fully before calling code performs:
+ * - Timer storage in native
+ * - UI transitions
+ * - Session ending
+ * 
+ * @param app - App package name
+ * @param timestamp - Current timestamp
+ */
+export async function transitionQuickTaskToActive(
+  app: string,
+  timestamp: number
+): Promise<void> {
+  // STEP 1: Load state (authoritative source)
+  const state = await loadTimerState();
+  
+  // STEP 2: Verify we're in DECISION phase (validation)
+  if (state.quickTaskPhaseByApp[app] !== 'DECISION') {
+    console.warn('[QuickTask] Transition to ACTIVE from non-DECISION phase:', {
+      app,
+      currentPhase: state.quickTaskPhaseByApp[app],
+      note: 'This may indicate a race condition or stale state',
+    });
+  }
+  
+  // STEP 3: Set phase = ACTIVE (state mutation - FIRST)
+  state.quickTaskPhaseByApp[app] = 'ACTIVE';
+  
+  // STEP 4: Decrement global quota (record usage - SECOND, after phase set)
+  // Add to persisted usage history
+  state.quickTaskUsageHistory.push(timestamp);
+  console.log('[QuickTask] Quick Task usage recorded (GLOBAL, PERSISTED)', {
+    app,
+    timestamp,
+    totalUsagesGlobal: state.quickTaskUsageHistory.length,
+    note: 'Usage is GLOBAL across all apps and PERSISTED for kill-safety',
+  });
+  
+  // STEP 5: Save state persistently (THIRD, before in-memory cache)
+  await saveTimerState(state);
+  
+  // STEP 6: Update in-memory cache (FOURTH, after persistence)
+  setInMemoryStateCache(state);
+  
+  // STEP 7: Log completion (informational only)
+  console.log('[QuickTask] Phase transition: DECISION → ACTIVE', {
+    app,
+    timestamp,
+    remainingUses: state.quickTaskUsageHistory.length,
+    note: 'Phase and quota updated - safe to proceed with timer storage',
+  });
+  
+  // Function returns - calling code may now safely perform side effects
+}
+
+/**
+ * Clear Quick Task phase for an app.
+ * Called when user chooses "Conscious Process" or when Quick Task is cancelled.
+ * 
+ * @param app - App package name
+ */
+export async function clearQuickTaskPhase(app: string): Promise<void> {
+  const state = await loadTimerState();
+  
+  if (state.quickTaskPhaseByApp[app]) {
+    delete state.quickTaskPhaseByApp[app];
+    await saveTimerState(state);
+    setInMemoryStateCache(state);
+    
+    console.log('[QuickTask] Phase cleared:', app);
+  } else {
+    console.log('[QuickTask] No phase to clear for:', app);
+  }
+}
+
+/**
+ * Get Quick Task phase for an app.
+ * 
+ * @param app - App package name
+ * @returns Phase ('DECISION' | 'ACTIVE') or null
+ */
+export async function getQuickTaskPhase(app: string): Promise<'DECISION' | 'ACTIVE' | null> {
+  const state = await loadTimerState();
+  return state.quickTaskPhaseByApp[app] || null;
+}
+
+/**
+ * Set Quick Task phase for an app (used by System Brain internally).
+ * 
+ * @param app - App package name
+ * @param phase - Phase to set
+ */
+export async function setQuickTaskPhase(
+  app: string,
+  phase: 'DECISION' | 'ACTIVE'
+): Promise<void> {
+  const state = await loadTimerState();
+  state.quickTaskPhaseByApp[app] = phase;
+  await saveTimerState(state);
+  setInMemoryStateCache(state);
+  
+  console.log('[QuickTask] Phase set:', { app, phase });
 }
