@@ -296,6 +296,17 @@ export async function decideSystemSurfaceAction(
 ): Promise<Decision> {
   const { packageName: app, timestamp } = event;
   
+  // ============================================================================
+  // PHASE 4.1 GUARD: Reject foreground events (entry decisions made by Native)
+  // ============================================================================
+  if (event.type === 'FOREGROUND_CHANGED' || event.type === 'USER_INTERACTION_FOREGROUND') {
+    console.error('[Decision Engine] ❌ CRITICAL: Should not be called for foreground events in Phase 4.1');
+    console.error('[Decision Engine] Event type:', event.type);
+    console.error('[Decision Engine] Native makes entry decisions via QUICK_TASK_DECISION events');
+    console.error('[Decision Engine] This indicates a bug in Phase 4.1 migration');
+    return { type: 'NONE' };
+  }
+  
   console.log('[Decision Engine] ========================================');
   console.log('[Decision Engine] Making decision for event:', {
     type: event.type,

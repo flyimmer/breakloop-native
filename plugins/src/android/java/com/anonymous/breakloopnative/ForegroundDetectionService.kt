@@ -534,36 +534,9 @@ class ForegroundDetectionService : AccessibilityService() {
             Log.i(TAG, "🎯 MONITORED APP DETECTED: $packageName")
             
             // PHASE 4.1: Native decides Quick Task entry (EDGE-TRIGGERED)
+            // NO GUARDS - Every monitored app entry MUST emit exactly one decision
             
-            // Auto-Recovery: Clear stuck flag if it's been active too long
-            // SystemSurface should only be active for seconds, not minutes
-            // If flag has been true for > 10 seconds, it's stuck
-            if (isSystemSurfaceActive) {
-                val flagAge = System.currentTimeMillis() - systemSurfaceActiveTimestamp
-                val maxFlagAge = 10000L  // 10 seconds
-                
-                if (flagAge > maxFlagAge) {
-                    Log.w(TAG, "⚠️ SystemSurface flag was stuck (active for ${flagAge}ms), auto-clearing")
-                    isSystemSurfaceActive = false
-                    systemSurfaceActiveTimestamp = 0
-                    lastDecisionApp = null
-                    Log.i(TAG, "✅ Stuck flag cleared, proceeding with entry decision")
-                }
-            }
-            
-            // Guard 1: Do NOT emit if SystemSurface is already active
-            if (isSystemSurfaceActive) {
-                Log.d(TAG, "⏭️ SystemSurface already active, skipping entry decision for $packageName")
-                return
-            }
-            
-            // Guard 2: Do NOT emit duplicate decision for same app
-            if (lastDecisionApp == packageName) {
-                Log.d(TAG, "⏭️ Already made entry decision for $packageName, skipping")
-                return
-            }
-            
-            // Make entry decision (GUARANTEED EMISSION)
+            // Make entry decision (GUARANTEED EMISSION for every monitored app entry)
             val hasActiveTimer = hasValidQuickTaskTimer(packageName)
             val quotaAvailable = cachedQuickTaskQuota > 0
             

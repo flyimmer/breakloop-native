@@ -298,10 +298,14 @@ async function handleTimerExpiration(
 /**
  * Handle user interaction in foreground app (MECHANICAL event from native).
  * 
- * Native emits this event for every user interaction (scroll, tap, content change).
- * System Brain decides whether enforcement is needed based on semantic state.
+ * PHASE 4.1: State tracking only - NO entry decisions
  * 
- * This event represents a UI-safe boundary for launching Activities.
+ * Native emits this event for every user interaction (scroll, tap, content change).
+ * Entry decisions are made by Native via QUICK_TASK_DECISION events.
+ * 
+ * This handler is kept for:
+ * - State tracking
+ * - Future non-entry-decision logic
  * 
  * @param packageName - App package name
  * @param timestamp - Current timestamp
@@ -320,27 +324,18 @@ async function handleUserInteraction(
     return;
   }
   
-  // No blocking state guard needed - session-based blocking is handled by SystemSurface
-  
   // ============================================================================
-  // Call Decision Engine (UI-safe boundary)
+  // PHASE 4.1: State tracking only - Native makes entry decisions
   // ============================================================================
-  console.log('[System Brain] UI-safe boundary - calling decision engine');
+  console.log('[System Brain] USER_INTERACTION_FOREGROUND (state tracking only - Phase 4.1)');
+  console.log('[System Brain] Entry decisions handled by Native via QUICK_TASK_DECISION events');
   
-  const decision = await decideSystemSurfaceAction(
-    { type: 'USER_INTERACTION_FOREGROUND', packageName, timestamp },
-    state
-  );
+  // ❌ DO NOT call decideSystemSurfaceAction() - deprecated in Phase 4.1
+  // ❌ DO NOT evaluate Quick Task availability
+  // ❌ DO NOT launch SystemSurface from this handler
+  // ✅ Native emits QUICK_TASK_DECISION events separately
   
-  if (decision.type === 'LAUNCH') {
-    console.log('[System Brain] Decision: LAUNCH SystemSurface', {
-      app: decision.app,
-      wakeReason: decision.wakeReason,
-    });
-    await launchSystemSurface(decision.app, decision.wakeReason);
-  } else {
-    console.log('[System Brain] Decision: NONE - no launch needed');
-  }
+  // Future: Add non-entry-decision logic here if needed
 }
 
 /**
