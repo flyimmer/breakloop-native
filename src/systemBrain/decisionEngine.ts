@@ -25,7 +25,7 @@
  * 4. Default → Do nothing
  */
 
-import { TimerState, setSystemSurfaceDecision } from './stateManager';
+import { TimerState, setSystemSurfaceActive } from './stateManager';
 import { WakeReason } from './nativeBridge';
 
 /**
@@ -50,29 +50,30 @@ export function clearSystemSurfaceActive(): void {
 }
 
 /**
+ * DEPRECATED (Phase 4.1): Quick Task entry now decided by Native
+ * 
  * Quick Task suppression: Is Quick Task blocked for current app entry?
  * 
- * CRITICAL: This is IN-MEMORY ONLY and must NEVER be persisted.
+ * PHASE 4.1 MIGRATION:
+ * - Native now decides Quick Task entry (SHOW_QUICK_TASK_DIALOG or NO_QUICK_TASK_AVAILABLE)
+ * - JS no longer runs OS Trigger Brain for Quick Task entry
+ * - This suppression logic is no longer needed
  * 
- * Set when: Expired-foreground Quick Task triggers intervention
- * Cleared when: User leaves app, intervention completes, or explicit Quick Task request
- * 
- * Purpose: Prevent OS Trigger Brain from re-offering Quick Task dialog
- * during the same app entry after expired-foreground intervention.
+ * Keeping for POST_QUICK_TASK_CHOICE flow only (will be migrated in Phase 4.2)
  */
 let suppressQuickTaskForApp: string | null = null;
 
 /**
+ * DEPRECATED (Phase 4.1): Quick Task entry now decided by Native
+ * 
  * Clear Quick Task suppression flag (in-memory only).
  * 
- * Called when:
- * - User leaves the app (new foreground app)
- * - Intervention flow completes
- * - User explicitly requests Quick Task via intervention UI button
+ * This function is kept for POST_QUICK_TASK_CHOICE flow compatibility.
+ * Will be removed in Phase 4.2 when full Quick Task state machine moves to Native.
  */
 export function clearQuickTaskSuppression(): void {
   suppressQuickTaskForApp = null;
-  console.log('[Decision Engine] Quick Task suppression cleared');
+  console.log('[Decision Engine] Quick Task suppression cleared (DEPRECATED - Phase 4.1)');
 }
 
 /**
@@ -156,6 +157,49 @@ async function getQuickTaskRemaining(currentTimestamp: number, state: TimerState
 }
 
 /**
+ * Sync Quick Task quota to Native layer
+ * 
+ * PHASE 4.1: Entry decision authority
+ * 
+ * Called whenever quota might have changed:
+ * - On app startup (System Brain initialization)
+ * - After Quick Task usage (quota decremented)
+ * - When settings change (if user adjusts maxUses)
+ * 
+ * IMPORTANT: Native cache is runtime-only, NOT a second source of truth
+ * JS remains the authoritative source for quota values
+ * 
+ * @param state - Semantic state (for reading usage history)
+ */
+export async function syncQuotaToNative(state: TimerState): Promise<void> {
+  try {
+    const config = await loadQuickTaskConfig();
+    const { maxUses, windowMs } = config;
+    const currentTimestamp = Date.now();
+    
+    // Calculate current quota
+    const recentUsages = state.quickTaskUsageHistory.filter(
+      ts => currentTimestamp - ts < windowMs
+    );
+    const remaining = Math.max(0, maxUses - recentUsages.length);
+    
+    // Push to Native
+    const { NativeModules, Platform } = require('react-native');
+    if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
+      await NativeModules.AppMonitorModule.updateQuickTaskQuota(remaining);
+      console.log('[Decision Engine] ✅ Synced quota to Native:', {
+        remaining,
+        maxUses,
+        recentUsages: recentUsages.length,
+        note: 'Native cache updated for entry decisions',
+      });
+    }
+  } catch (e) {
+    console.warn('[Decision Engine] ⚠️ Failed to sync quota to Native:', e);
+  }
+}
+
+/**
  * Evaluate OS Trigger Brain priority chain.
  * 
  * This function implements the LOCKED priority order:
@@ -213,9 +257,12 @@ async function evaluateOSTriggerBrain(
   }
   
   // Priority #3: Check n_quickTask (global usage count)
+  // DEPRECATED (Phase 4.1): Quick Task entry now decided by Native
+  // Native emits SHOW_QUICK_TASK_DIALOG or NO_QUICK_TASK_AVAILABLE
+  // This code path is NO LONGER USED for Quick Task entry decisions
   const quickTaskRemaining = await getQuickTaskRemaining(timestamp, state);
   if (quickTaskRemaining > 0) {
-    console.log('[Decision Engine] ✓ n_quickTask > 0 - decision: QUICK_TASK', {
+    console.log('[Decision Engine] ✓ n_quickTask > 0 - decision: QUICK_TASK (DEPRECATED - should not reach here in Phase 4.1)', {
       remaining: quickTaskRemaining,
     });
     return 'QUICK_TASK';
@@ -257,9 +304,37 @@ export async function decideSystemSurfaceAction(
     time: new Date(timestamp).toISOString(),
   });
   
+  // DEBUG: Log lifecycle guard state at entry
+  console.log('[Decision Engine] Entry state:', {
+    app,
+    eventType: event.type,
+    isSystemSurfaceActive,
+    timestamp: event.timestamp,
+  });
+  
+  // ============================================================================
+  // Auto-Recovery: Clear stuck lifecycle flag
+  // ============================================================================
+  // CRITICAL: The flag should only be true DURING an active launch (milliseconds).
+  // If we're at the start of a NEW decision and the flag is still true, it's stuck.
+  // This handles cases where:
+  // - Previous session didn't finish cleanly
+  // - Module loaded after flag was already set
+  // - Fast refresh kept the flag in memory
+  if (isSystemSurfaceActive) {
+    console.warn('[SystemSurfaceInvariant] ⚠️ Flag was stuck, auto-clearing', {
+      app,
+      eventType: event.type,
+      timestamp: event.timestamp,
+    });
+    isSystemSurfaceActive = false;
+    console.log('[SystemSurfaceInvariant] ✅ Stuck flag cleared, proceeding with decision');
+  }
+  
+  // DEPRECATED (Phase 4.1): Quick Task entry now decided by Native
   // Clear Quick Task suppression if user left the suppressed app
   if (suppressQuickTaskForApp && suppressQuickTaskForApp !== app) {
-    console.log('[Decision Engine] User left suppressed app - clearing suppression', {
+    console.log('[Decision Engine] User left suppressed app - clearing suppression (DEPRECATED - Phase 4.1)', {
       suppressedApp: suppressQuickTaskForApp,
       currentApp: app,
     });
@@ -327,12 +402,13 @@ export async function decideSystemSurfaceAction(
       });
       console.log('[Decision Engine] Flag will be cleared by user choice, not by system launch');
       
+      // DEPRECATED (Phase 4.1): Quick Task entry now decided by Native
       // Suppress Quick Task for this app entry
       suppressQuickTaskForApp = app;
-      console.log('[Decision Engine] Quick Task suppressed for app entry:', app);
+      console.log('[Decision Engine] Quick Task suppressed for app entry (DEPRECATED - Phase 4.1):', app);
       
-      // Set explicit decision (IN-MEMORY ONLY)
-      setSystemSurfaceDecision('SHOW_SESSION');
+      // Notify native that SystemSurface is launching
+      setSystemSurfaceActive(true);
       
       // Set lifecycle guard
       isSystemSurfaceActive = true;
@@ -366,8 +442,7 @@ export async function decideSystemSurfaceAction(
   if (osDecision === 'SUPPRESS') {
     console.log('[Decision Engine] ✓ OS Trigger Brain: SUPPRESS - no launch needed');
     
-    // Set explicit decision (IN-MEMORY ONLY)
-    setSystemSurfaceDecision('FINISH');
+    // No need to notify native - SystemSurface is not launching
     
     console.log('[Decision Engine] Decision: NONE');
     console.log('[Decision Engine] ========================================');
@@ -375,9 +450,16 @@ export async function decideSystemSurfaceAction(
   }
   
   if (osDecision === 'QUICK_TASK') {
+    // DEPRECATED (Phase 4.1): Quick Task entry now decided by Native
+    // This code path should NOT be reached in Phase 4.1
+    // Native emits SHOW_QUICK_TASK_DIALOG directly, bypassing OS Trigger Brain
+    console.warn('[Decision Engine] ⚠️ UNEXPECTED: OS Trigger Brain returned QUICK_TASK in Phase 4.1');
+    console.warn('[Decision Engine] Native should have made entry decision already');
+    console.warn('[Decision Engine] This indicates a bug in Phase 4.1 migration');
+    
     // Check if Quick Task is suppressed for this app entry
     if (suppressQuickTaskForApp === app) {
-      console.log('[Decision Engine] ⚠️ Quick Task suppressed for this app entry');
+      console.log('[Decision Engine] ⚠️ Quick Task suppressed for this app entry (DEPRECATED)');
       console.log('[Decision Engine] Reason: Expired-foreground Quick Task already triggered intervention');
       console.log('[Decision Engine] User must complete intervention or explicitly request Quick Task');
       console.log('[Decision Engine] Decision: NONE');
@@ -385,15 +467,15 @@ export async function decideSystemSurfaceAction(
       return { type: 'NONE' };
     }
     
-    console.log('[Decision Engine] ✓ OS Trigger Brain: QUICK_TASK - launching Quick Task dialog');
+    console.log('[Decision Engine] ✓ OS Trigger Brain: QUICK_TASK - launching Quick Task dialog (DEPRECATED path)');
     
     // Set phase = DECISION when showing dialog
     // Phase A: User sees dialog, no timer running yet
     state.quickTaskPhaseByApp[app] = 'DECISION';
     console.log('[QuickTask] Phase set to DECISION (showing dialog):', app);
     
-    // Set explicit decision (IN-MEMORY ONLY)
-    setSystemSurfaceDecision('SHOW_SESSION');
+    // Notify native that SystemSurface is launching
+    setSystemSurfaceActive(true);
     
     // Set lifecycle guard
     isSystemSurfaceActive = true;
@@ -410,8 +492,8 @@ export async function decideSystemSurfaceAction(
   if (osDecision === 'INTERVENTION') {
     console.log('[Decision Engine] ✓ OS Trigger Brain: INTERVENTION - launching intervention flow');
     
-    // Set explicit decision (IN-MEMORY ONLY)
-    setSystemSurfaceDecision('SHOW_SESSION');
+    // Notify native that SystemSurface is launching
+    setSystemSurfaceActive(true);
     
     // Set lifecycle guard
     isSystemSurfaceActive = true;

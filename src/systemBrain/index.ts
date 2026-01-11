@@ -23,8 +23,42 @@
  * - Assuming continuous execution
  */
 
-import { AppRegistry } from 'react-native';
-import { handleSystemEvent } from './eventHandler';
+import { AppRegistry, DeviceEventEmitter } from 'react-native';
+import { handleSystemEvent, handleQuickTaskDecision } from './eventHandler';
+import { loadTimerState } from './stateManager';
+import { syncQuotaToNative, clearSystemSurfaceActive } from './decisionEngine';
+
+/**
+ * Initialize System Brain on app startup
+ * 
+ * PHASE 4.1: Sync quota to Native on startup
+ * 
+ * This ensures Native has the correct quota cache when the app starts.
+ * Must run early to prevent Native from using stale quota (default: 1).
+ */
+async function initializeSystemBrain() {
+  try {
+    console.log('[System Brain] Initializing...');
+    
+    // CRITICAL: Clear any stuck lifecycle flags from previous sessions
+    // This ensures isSystemSurfaceActive resets to false on app startup
+    clearSystemSurfaceActive();
+    console.log('[System Brain] Lifecycle flags cleared');
+    
+    // Load current state
+    const state = await loadTimerState();
+    
+    // Sync quota to Native
+    await syncQuotaToNative(state);
+    
+    console.log('[System Brain] ✅ Initialization complete');
+  } catch (error) {
+    console.error('[System Brain] ❌ Initialization failed:', error);
+  }
+}
+
+// Run initialization immediately
+initializeSystemBrain();
 
 /**
  * Register System Brain headless task.
@@ -60,4 +94,25 @@ AppRegistry.registerHeadlessTask('SystemEvent', () => async (taskData) => {
   console.log('[System Brain] ========================================');
 });
 
+/**
+ * Register Quick Task decision event listener
+ * 
+ * PHASE 4.1: Entry decision authority
+ * 
+ * Native emits QUICK_TASK_DECISION events via DeviceEventEmitter
+ * when it makes an entry decision for a monitored app.
+ * 
+ * This is separate from HeadlessTask because it's a UI-level event
+ * that needs to launch SystemSurface immediately.
+ */
+DeviceEventEmitter.addListener('QUICK_TASK_DECISION', (event) => {
+  console.log('[System Brain] 📨 QUICK_TASK_DECISION event received');
+  console.log('[System Brain] Event:', JSON.stringify(event, null, 2));
+  
+  handleQuickTaskDecision(event).catch((error) => {
+    console.error('[System Brain] ❌ Error handling Quick Task decision:', error);
+  });
+});
+
 console.log('[System Brain] Headless JS task registered (single event path)');
+console.log('[System Brain] QUICK_TASK_DECISION listener registered');

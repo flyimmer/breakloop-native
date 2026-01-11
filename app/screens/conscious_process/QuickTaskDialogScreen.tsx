@@ -3,7 +3,7 @@ import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
 import { getQuickTaskRemainingForDisplay, setLastIntervenedApp, transitionQuickTaskToActive, clearQuickTaskPhase } from '@/src/systemBrain/publicApi';
-import { setSystemSurfaceDecision } from '@/src/systemBrain/stateManager';
+import { setSystemSurfaceActive } from '@/src/systemBrain/stateManager';
 import { getQuickTaskDurationMs } from '@/src/os/osConfig';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
@@ -184,9 +184,9 @@ export default function QuickTaskDialogScreen() {
       setTransientTargetApp(session.app);
       console.log('[QuickTaskDialog] Set transient targetApp:', session.app);
       
-      // Set decision to FINISH (IN-MEMORY ONLY)
-      setSystemSurfaceDecision('FINISH');
-      console.log('[QuickTaskDialog] Decision set to FINISH');
+      // Notify native that SystemSurface is finishing
+      setSystemSurfaceActive(false);
+      console.log('[QuickTaskDialog] Notified native: SystemSurface finishing');
       
       // End session and return to app (idempotent, immediate)
       console.log('[QuickTaskDialog] STEP 3: Calling safeEndSession (shouldLaunchHome: false)...');
@@ -230,9 +230,9 @@ export default function QuickTaskDialogScreen() {
         }
       }
       
-      // Set decision to FINISH (IN-MEMORY ONLY)
-      setSystemSurfaceDecision('FINISH');
-      console.log('[QuickTaskDialog] Decision set to FINISH');
+      // Notify native that SystemSurface is finishing
+      setSystemSurfaceActive(false);
+      console.log('[QuickTaskDialog] Notified native: SystemSurface finishing');
       
       // End session and launch home (idempotent, immediate)
       console.log('[QuickTaskDialog] Calling safeEndSession (shouldLaunchHome: true)...');

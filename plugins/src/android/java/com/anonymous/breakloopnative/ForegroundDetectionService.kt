@@ -97,6 +97,49 @@ class ForegroundDetectionService : AccessibilityService() {
         private val quickTaskTimers = mutableMapOf<String, Long>()
         
         /**
+         * Cached global Quick Task quota (n_quickTask)
+         * 
+         * PHASE 4.1: Entry decision authority
+         * 
+         * Source of truth: JavaScript product logic
+         * Native caches this value for runtime entry decisions
+         * 
+         * Updated via AppMonitorModule.updateQuickTaskQuota()
+         * Must be synced on: app start, quota change, Quick Task usage
+         * 
+         * IMPORTANT: This is a runtime cache ONLY, NOT a second source of truth
+         */
+        private var cachedQuickTaskQuota: Int = 1  // Default to 1 use
+        
+        /**
+         * Track last app we made an entry decision for
+         * 
+         * PHASE 4.1: Edge-triggered entry decisions
+         * 
+         * Prevents duplicate decisions on same app entry
+         * Reset when SystemSurface finishes
+         */
+        private var lastDecisionApp: String? = null
+        
+        /**
+         * Track if SystemSurface is currently active
+         * 
+         * PHASE 4.1: Lifecycle guard for entry decisions
+         * 
+         * Prevents emitting decisions while UI is already showing
+         * Set by JS when SystemSurface launches/finishes
+         */
+        @Volatile
+        private var isSystemSurfaceActive: Boolean = false
+        
+        /**
+         * Timestamp when isSystemSurfaceActive was last set to true
+         * Used for auto-recovery if flag gets stuck
+         */
+        @Volatile
+        private var systemSurfaceActiveTimestamp: Long = 0
+        
+        /**
          * Wake suppression timestamps per app
          * 
          * Maps packageName -> suppressUntil timestamp
@@ -218,6 +261,44 @@ class ForegroundDetectionService : AccessibilityService() {
             dynamicMonitoredApps.clear()
             dynamicMonitoredApps.addAll(apps)
             Log.i(TAG, "📱 Monitored apps updated: $dynamicMonitoredApps")
+        }
+        
+        /**
+         * Update cached Quick Task quota
+         * 
+         * PHASE 4.1: Entry decision authority
+         * 
+         * Called by JS when quota changes (user settings, usage, etc.)
+         * Native caches this value for runtime entry decisions
+         * 
+         * @param quota Current global Quick Task quota (n_quickTask)
+         */
+        @JvmStatic
+        fun updateQuickTaskQuota(quota: Int) {
+            cachedQuickTaskQuota = quota
+            Log.i(TAG, "📊 Quick Task quota updated: $quota")
+        }
+        
+        /**
+         * Set SystemSurface active state
+         * 
+         * PHASE 4.1: Lifecycle guard for entry decisions
+         * 
+         * Called by JS when SystemSurface launches or finishes
+         * Prevents duplicate entry decisions while UI is showing
+         * 
+         * @param active true if SystemSurface is active, false if finished
+         */
+        @JvmStatic
+        fun setSystemSurfaceActive(active: Boolean) {
+            isSystemSurfaceActive = active
+            if (active) {
+                systemSurfaceActiveTimestamp = System.currentTimeMillis()
+            } else {
+                systemSurfaceActiveTimestamp = 0
+                lastDecisionApp = null  // Reset on surface close
+            }
+            Log.i(TAG, "🎯 SystemSurface active: $active")
         }
     }
 
@@ -452,21 +533,67 @@ class ForegroundDetectionService : AccessibilityService() {
         if (dynamicMonitoredApps.contains(packageName)) {
             Log.i(TAG, "🎯 MONITORED APP DETECTED: $packageName")
             
-            // Log timer information for this monitored app
-            val now = System.currentTimeMillis()
-            val quickTaskExpiresAt = quickTaskTimers[packageName]
-            val tQuickTaskRemaining = if (quickTaskExpiresAt != null && now < quickTaskExpiresAt) {
-                val remainingSec = (quickTaskExpiresAt - now) / 1000
-                "$remainingSec seconds"
-            } else {
-                "none (not active)"
+            // PHASE 4.1: Native decides Quick Task entry (EDGE-TRIGGERED)
+            
+            // Auto-Recovery: Clear stuck flag if it's been active too long
+            // SystemSurface should only be active for seconds, not minutes
+            // If flag has been true for > 10 seconds, it's stuck
+            if (isSystemSurfaceActive) {
+                val flagAge = System.currentTimeMillis() - systemSurfaceActiveTimestamp
+                val maxFlagAge = 10000L  // 10 seconds
+                
+                if (flagAge > maxFlagAge) {
+                    Log.w(TAG, "⚠️ SystemSurface flag was stuck (active for ${flagAge}ms), auto-clearing")
+                    isSystemSurfaceActive = false
+                    systemSurfaceActiveTimestamp = 0
+                    lastDecisionApp = null
+                    Log.i(TAG, "✅ Stuck flag cleared, proceeding with entry decision")
+                }
             }
             
-            Log.i(TAG, "📊 Timer Status for $packageName:")
-            Log.i(TAG, "   └─ t_quickTask remaining: $tQuickTaskRemaining")
-            Log.i(TAG, "   └─ Note: n_quickTask and t_intention are managed by JavaScript (System Brain)")
+            // Guard 1: Do NOT emit if SystemSurface is already active
+            if (isSystemSurfaceActive) {
+                Log.d(TAG, "⏭️ SystemSurface already active, skipping entry decision for $packageName")
+                return
+            }
             
-            launchInterventionActivity(packageName)
+            // Guard 2: Do NOT emit duplicate decision for same app
+            if (lastDecisionApp == packageName) {
+                Log.d(TAG, "⏭️ Already made entry decision for $packageName, skipping")
+                return
+            }
+            
+            // Make entry decision (GUARANTEED EMISSION)
+            val hasActiveTimer = hasValidQuickTaskTimer(packageName)
+            val quotaAvailable = cachedQuickTaskQuota > 0
+            
+            // Log decision inputs
+            Log.i(TAG, "📊 Entry Decision Inputs:")
+            Log.i(TAG, "   └─ hasActiveTimer: $hasActiveTimer")
+            Log.i(TAG, "   └─ cachedQuickTaskQuota: $cachedQuickTaskQuota")
+            Log.i(TAG, "   └─ quotaAvailable: $quotaAvailable")
+            
+            // Decision logic: ALWAYS emit exactly one event
+            val decision = if (!hasActiveTimer && quotaAvailable) {
+                "SHOW_QUICK_TASK_DIALOG"
+            } else {
+                "NO_QUICK_TASK_AVAILABLE"
+            }
+            
+            // Emit decision (GUARANTEED)
+            lastDecisionApp = packageName  // Mark decision made
+            emitQuickTaskDecisionEvent(packageName, decision)
+            
+            // Log decision
+            if (decision == "SHOW_QUICK_TASK_DIALOG") {
+                Log.i(TAG, "✅ DECISION: Quick Task available for $packageName (quota: $cachedQuickTaskQuota)")
+            } else {
+                val reason = when {
+                    hasActiveTimer -> "timer already active"
+                    else -> "quota exhausted (n_quickTask = 0)"
+                }
+                Log.i(TAG, "❌ DECISION: Quick Task not available for $packageName ($reason)")
+            }
         } else {
             Log.d(TAG, "  └─ Not a monitored app, no intervention needed")
         }
@@ -503,6 +630,40 @@ class ForegroundDetectionService : AccessibilityService() {
             Log.d(TAG, "  └─ Event emitted to JavaScript: $packageName")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to emit foreground app changed event", e)
+        }
+    }
+    
+    /**
+     * Emit Quick Task entry decision event to System Brain
+     * 
+     * PHASE 4.1: Entry decision authority
+     * 
+     * Native has decided whether Quick Task is available for this app entry.
+     * System Brain will execute this decision as a COMMAND (no re-evaluation).
+     * 
+     * @param packageName App package name
+     * @param decision "SHOW_QUICK_TASK_DIALOG" or "NO_QUICK_TASK_AVAILABLE"
+     */
+    private fun emitQuickTaskDecisionEvent(packageName: String, decision: String) {
+        val reactContext = AppMonitorService.getReactContext()
+        if (reactContext != null && reactContext.hasActiveReactInstance()) {
+            try {
+                val params = Arguments.createMap().apply {
+                    putString("packageName", packageName)
+                    putString("decision", decision)
+                    putDouble("timestamp", System.currentTimeMillis().toDouble())
+                }
+                
+                reactContext
+                    .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                    .emit("QUICK_TASK_DECISION", params)
+                
+                Log.i(TAG, "📤 Emitted QUICK_TASK_DECISION: $decision for $packageName")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to emit Quick Task decision event", e)
+            }
+        } else {
+            Log.w(TAG, "React context not available, cannot emit Quick Task decision")
         }
     }
     

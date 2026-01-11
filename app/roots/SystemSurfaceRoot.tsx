@@ -19,7 +19,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Platform, NativeModules, DeviceEventEmitter } from 'react-native';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
-import { getNextSessionOverride, clearNextSessionOverride, getInMemoryStateCache, markSystemInitiatedForegroundChange, getSystemSurfaceDecision } from '@/src/systemBrain/stateManager';
+import { getNextSessionOverride, clearNextSessionOverride, getInMemoryStateCache, markSystemInitiatedForegroundChange, getSystemSurfaceDecision, setSystemSurfaceActive } from '@/src/systemBrain/stateManager';
 import InterventionFlow from '../flows/InterventionFlow';
 import QuickTaskFlow from '../flows/QuickTaskFlow';
 import AlternativeActivityFlow from '../flows/AlternativeActivityFlow';
@@ -246,7 +246,7 @@ export default function SystemSurfaceRoot() {
         // Read Intent extras from native
         if (!AppMonitorModule) {
           console.error('[SystemSurfaceRoot] ❌ AppMonitorModule not available');
-          setSystemSurfaceDecision('FINISH');
+          setSystemSurfaceActive(false);
           safeEndSession(true);  // Bootstrap failure - go to home
           return;
         }
@@ -255,7 +255,7 @@ export default function SystemSurfaceRoot() {
 
         if (!extras || !extras.triggeringApp) {
           console.error('[SystemSurfaceRoot] ❌ No Intent extras - finishing activity');
-          setSystemSurfaceDecision('FINISH');
+          setSystemSurfaceActive(false);
           safeEndSession(true);  // Bootstrap failure - go to home
           return;
         }
@@ -347,7 +347,7 @@ export default function SystemSurfaceRoot() {
         }
       } catch (error) {
         console.error('[SystemSurfaceRoot] ❌ Bootstrap initialization failed:', error);
-        setSystemSurfaceDecision('FINISH');
+        setSystemSurfaceActive(false);
         safeEndSession(true);  // Bootstrap failure - go to home
       }
     };
@@ -592,7 +592,7 @@ export default function SystemSurfaceRoot() {
           underlyingApp,
         });
       }
-      setSystemSurfaceDecision('FINISH');
+      setSystemSurfaceActive(false);
       safeEndSession(true);  // User left underlying app - go to home
     }
   }, [session, underlyingApp, safeEndSession]);
@@ -651,7 +651,7 @@ export default function SystemSurfaceRoot() {
           underlyingApp,
         });
       }
-      setSystemSurfaceDecision('FINISH');
+      setSystemSurfaceActive(false);
       safeEndSession(true);  // User left app - go to home
     }
   }, [session, underlyingApp, safeEndSession, isReplaceSessionTransition]);

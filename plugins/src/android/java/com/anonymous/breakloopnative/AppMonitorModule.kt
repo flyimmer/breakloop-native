@@ -940,6 +940,55 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
         }
     }
     
+    /**
+     * Update cached Quick Task quota in Native
+     * 
+     * PHASE 4.1: Entry decision authority
+     * 
+     * Called by JS when quota changes (user settings, usage, etc.)
+     * Native caches this value for runtime entry decisions
+     * 
+     * IMPORTANT: This is a runtime cache ONLY, NOT a second source of truth
+     * Must be synced on: app start, quota change, Quick Task usage
+     * 
+     * @param quota Current global Quick Task quota (n_quickTask)
+     * @param promise Resolves when quota is updated
+     */
+    @ReactMethod
+    fun updateQuickTaskQuota(quota: Int, promise: Promise) {
+        try {
+            ForegroundDetectionService.updateQuickTaskQuota(quota)
+            android.util.Log.i("AppMonitorModule", "📊 Quick Task quota updated: $quota")
+            promise.resolve(true)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to update quota", e)
+            promise.reject("UPDATE_QUOTA_ERROR", "Failed to update quota: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Notify Native that SystemSurface is active/inactive
+     * 
+     * PHASE 4.1: Lifecycle guard for entry decisions
+     * 
+     * Called by JS when SystemSurface launches or finishes
+     * Prevents duplicate entry decisions while UI is showing
+     * 
+     * @param active true if SystemSurface is active, false if finished
+     * @param promise Resolves when state is updated
+     */
+    @ReactMethod
+    fun setSystemSurfaceActive(active: Boolean, promise: Promise) {
+        try {
+            ForegroundDetectionService.setSystemSurfaceActive(active)
+            android.util.Log.i("AppMonitorModule", "🎯 SystemSurface active: $active")
+            promise.resolve(true)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to set SystemSurface active", e)
+            promise.reject("SET_ACTIVE_ERROR", "Failed to set active state: ${e.message}", e)
+        }
+    }
+    
     override fun invalidate() {
         super.invalidate()
         // Clean up React context reference when module is invalidated

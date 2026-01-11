@@ -242,6 +242,19 @@ const SettingsScreen = () => {
       // Update osConfig immediately - applies to next Quick Task check
       setQuickTaskConfig(durationMs, usesPerWindow, isPremium);
       console.log('[SettingsScreen] ✅ Successfully saved Quick Task settings (applied immediately)');
+      
+      // PHASE 4.1 FIX: Sync quota to Native after settings change
+      // Native needs updated quota cache for entry decisions
+      try {
+        const { loadTimerState } = require('../../../src/systemBrain/stateManager');
+        const { syncQuotaToNative } = require('../../../src/systemBrain/decisionEngine');
+        const state = await loadTimerState();
+        await syncQuotaToNative(state);
+        console.log('[SettingsScreen] ✅ Synced quota to Native after settings change');
+      } catch (syncError) {
+        console.warn('[SettingsScreen] ⚠️ Failed to sync quota to Native:', syncError);
+        // Non-critical error - settings are still saved
+      }
     } catch (error) {
       console.error('[SettingsScreen] ❌ Failed to save Quick Task settings:', error);
       Alert.alert('Error', 'Failed to save Quick Task settings. Please try again.');

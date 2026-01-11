@@ -181,12 +181,17 @@ export async function transitionQuickTaskToActive(
   // STEP 6: Update in-memory cache (FOURTH, after persistence)
   setInMemoryStateCache(state);
   
-  // STEP 7: Log completion (informational only)
+  // STEP 7: Sync quota to Native (PHASE 4.1)
+  // Native needs updated quota for next entry decision
+  const { syncQuotaToNative } = require('./decisionEngine');
+  await syncQuotaToNative(state);
+  
+  // STEP 8: Log completion (informational only)
   console.log('[QuickTask] Phase transition: DECISION → ACTIVE', {
     app,
     timestamp,
     remainingUses: state.quickTaskUsageHistory.length,
-    note: 'Phase and quota updated - safe to proceed with timer storage',
+    note: 'Phase, quota, and Native cache updated - safe to proceed with timer storage',
   });
   
   // Function returns - calling code may now safely perform side effects

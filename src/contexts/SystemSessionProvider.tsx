@@ -385,7 +385,15 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
         bootstrapReady: state.bootstrapState === 'READY',
         shouldLaunchHome: state.shouldLaunchHome,
       });
-      clearSystemSurfaceActive();  // Clear in-memory flag only
+      clearSystemSurfaceActive();  // Clear in-memory flag only (JS side)
+      
+      // PHASE 4.1: Notify Native that SystemSurface is inactive
+      if (AppMonitorModule) {
+        AppMonitorModule.setSystemSurfaceActive(false).catch((error: any) => {
+          console.warn('[SystemSurfaceInvariant] Failed to notify Native of surface finish:', error);
+        });
+      }
+      
       hasEndedSessionRef.current = false;  // Reset for next session
       console.log('[SystemSurfaceInvariant] FINISH confirmed — surface inactive');
       console.log('[SystemSurfaceInvariant] ========================================');

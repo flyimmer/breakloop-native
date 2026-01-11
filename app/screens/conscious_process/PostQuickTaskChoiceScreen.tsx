@@ -18,7 +18,7 @@ import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
 import { getQuickTaskRemainingForDisplay, setQuickTaskPhase, clearQuickTaskPhase } from '@/src/systemBrain/publicApi';
-import { clearExpiredQuickTaskInMemory, clearBlockingState, setSystemSurfaceDecision } from '@/src/systemBrain/stateManager';
+import { clearExpiredQuickTaskInMemory, clearBlockingState, setSystemSurfaceActive } from '@/src/systemBrain/stateManager';
 import { clearQuickTaskSuppression } from '@/src/systemBrain/decisionEngine';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
@@ -85,9 +85,9 @@ export default function PostQuickTaskChoiceScreen() {
     clearExpiredQuickTaskInMemory(targetApp);
     clearQuickTaskSuppression();
     
-    // Set decision to FINISH (IN-MEMORY ONLY)
-    setSystemSurfaceDecision('FINISH');
-    console.log('[PostQuickTaskChoice] Decision set to FINISH');
+    // Notify native that SystemSurface is finishing
+    setSystemSurfaceActive(false);
+    console.log('[PostQuickTaskChoice] Notified native: SystemSurface finishing');
     
     console.log('[PostQuickTaskChoice] 🔓 Blocking state cleared - exiting to home');
     

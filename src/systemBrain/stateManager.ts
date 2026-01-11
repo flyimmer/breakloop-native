@@ -281,6 +281,26 @@ export function setSystemSurfaceDecision(decision: 'PENDING' | 'SHOW_SESSION' | 
 }
 
 /**
+ * Notify native that SystemSurface is active or inactive.
+ * 
+ * PHASE 4.1: Lifecycle notification for entry decision guards.
+ * 
+ * Called when SystemSurface launches or finishes to update native guards.
+ * This prevents duplicate entry decisions while UI is showing.
+ * 
+ * @param active - true if SystemSurface is launching, false if finishing
+ */
+export function setSystemSurfaceActive(active: boolean): void {
+  try {
+    const { NativeModules } = require('react-native');
+    NativeModules.AppMonitorModule.setSystemSurfaceActive(active);
+    console.log('[State Manager] Notified native: SystemSurface active =', active);
+  } catch (error) {
+    console.error('[State Manager] Failed to notify native:', error);
+  }
+}
+
+/**
  * In-memory session override for UI coordination.
  * 
  * When System Brain determines a session should transition

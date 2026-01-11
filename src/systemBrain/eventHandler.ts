@@ -626,22 +626,111 @@ async function handleForegroundChange(
   // No blocking state guard needed - session-based blocking is handled by SystemSurface
   
   // ============================================================================
-  // Call Decision Engine (UI-safe boundary)
+  // PHASE 4.1: FOREGROUND_CHANGED no longer triggers Quick Task entry decisions
   // ============================================================================
-  console.log('[System Brain] UI-safe boundary - calling decision engine');
+  // Native now emits separate QUICK_TASK_DECISION events for monitored apps
+  // This handler is kept for:
+  // - State tracking (currentForegroundApp, lastMeaningfulApp)
+  // - Non-Quick-Task logic (if any)
+  // 
+  // DEPRECATED: Decision engine call for monitored apps
+  // Native makes entry decisions, JS reacts to QUICK_TASK_DECISION events
   
-  const decision = await decideSystemSurfaceAction(
-    { type: 'FOREGROUND_CHANGED', packageName, timestamp },
-    state
-  );
+  console.log('[System Brain] FOREGROUND_CHANGED (mechanical event only - Phase 4.1)');
+  console.log('[System Brain] Entry decisions now handled by Native via QUICK_TASK_DECISION events');
+  console.log('[System Brain] This event is for state tracking only');
   
-  if (decision.type === 'LAUNCH') {
-    console.log('[System Brain] Decision: LAUNCH SystemSurface', {
-      app: decision.app,
-      wakeReason: decision.wakeReason,
-    });
-    await launchSystemSurface(decision.app, decision.wakeReason);
-  } else {
-    console.log('[System Brain] Decision: NONE - no launch needed');
+  // ❌ DO NOT call decideSystemSurfaceAction() for monitored apps
+  // ❌ DO NOT launch SystemSurface from this handler
+  // ✅ Native emits QUICK_TASK_DECISION events separately
+}
+
+/**
+ * Handle Quick Task decision from Native (COMMAND HANDLER)
+ * 
+ * PHASE 4.1: Entry decision authority
+ * 
+ * INVARIANT: Native's decision is FINAL and UNCONDITIONAL.
+ * JS must NOT re-evaluate, suppress, or override this decision.
+ * 
+ * Native has already checked:
+ * - Timer existence
+ * - Quota availability
+ * - SystemSurface lifecycle
+ * 
+ * JS only checks t_intention for NO_QUICK_TASK_AVAILABLE case.
+ * 
+ * @param event - Quick Task decision event from Native
+ */
+export async function handleQuickTaskDecision(event: {
+  packageName: string;
+  decision: 'SHOW_QUICK_TASK_DIALOG' | 'NO_QUICK_TASK_AVAILABLE';
+  timestamp: number;
+}): Promise<void> {
+  const { packageName, decision, timestamp } = event;
+  
+  console.log('[System Brain] ========================================');
+  console.log('[System Brain] QUICK TASK DECISION (COMMAND FROM NATIVE)');
+  console.log('[System Brain] App:', packageName);
+  console.log('[System Brain] Decision:', decision);
+  console.log('[System Brain] Timestamp:', new Date(timestamp).toISOString());
+  console.log('[System Brain] ========================================');
+  
+  // Load state
+  const state = await loadTimerState();
+  setInMemoryStateCache(state);
+  
+  if (decision === 'SHOW_QUICK_TASK_DIALOG') {
+    // ✅ UNCONDITIONAL: Native authorized Quick Task dialog
+    console.log('[System Brain] ✅ EXECUTING NATIVE COMMAND: Show Quick Task dialog');
+    console.log('[System Brain] NO re-evaluation, NO suppression, NO fallback');
+    
+    // Set phase = DECISION
+    state.quickTaskPhaseByApp[packageName] = 'DECISION';
+    await saveTimerState(state);
+    
+    // Notify Native that SystemSurface is launching
+    try {
+      const { NativeModules, Platform } = require('react-native');
+      if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
+        await NativeModules.AppMonitorModule.setSystemSurfaceActive(true);
+      }
+    } catch (e) {
+      console.warn('[System Brain] Failed to notify Native of SystemSurface launch:', e);
+    }
+    
+    // Launch SystemSurface with Quick Task dialog (UNCONDITIONAL)
+    await launchSystemSurface(packageName, 'SHOW_QUICK_TASK_DIALOG');
+    
+  } else if (decision === 'NO_QUICK_TASK_AVAILABLE') {
+    // Native says Quick Task not available
+    // ONLY check t_intention (minimal suppression check)
+    console.log('[System Brain] Native declined Quick Task');
+    console.log('[System Brain] Checking t_intention suppression...');
+    
+    const intentionTimer = state.intentionTimers[packageName];
+    if (intentionTimer && timestamp < intentionTimer.expiresAt) {
+      const remainingSec = Math.round((intentionTimer.expiresAt - timestamp) / 1000);
+      console.log('[System Brain] ✓ t_intention active - suppressing ALL UI');
+      console.log('[System Brain] Remaining:', remainingSec, 'seconds');
+      return; // Suppress everything
+    }
+    
+    // No t_intention - start Intervention immediately
+    console.log('[System Brain] ✓ No t_intention - starting Intervention');
+    
+    // Notify Native that SystemSurface is launching
+    try {
+      const { NativeModules, Platform } = require('react-native');
+      if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
+        await NativeModules.AppMonitorModule.setSystemSurfaceActive(true);
+      }
+    } catch (e) {
+      console.warn('[System Brain] Failed to notify Native of SystemSurface launch:', e);
+    }
+    
+    await launchSystemSurface(packageName, 'START_INTERVENTION_FLOW');
   }
+  
+  console.log('[System Brain] ========================================');
 }
