@@ -521,6 +521,27 @@ export default function SystemSurfaceRoot() {
   }, [systemSurfaceDecision, bootstrapState, shouldLaunchHome]);
 
   /**
+   * CRITICAL: Update decision to FINISH when session ends
+   * 
+   * When END_SESSION is dispatched, session becomes null but systemSurfaceDecision
+   * is not automatically updated. This useEffect detects session === null and
+   * updates the decision to FINISH, which triggers the finish useEffect above.
+   * 
+   * This is the missing link that was causing SystemSurface to stay open after
+   * Quick Task, leaving Instagram frozen underneath.
+   */
+  useEffect(() => {
+    if (
+      bootstrapState === 'READY' &&
+      session === null &&
+      systemSurfaceDecision !== 'FINISH'
+    ) {
+      console.log('[SystemSurfaceRoot] Session ended, updating decision to FINISH');
+      setSystemSurfaceDecisionState('FINISH');
+    }
+  }, [session, bootstrapState, systemSurfaceDecision]);
+
+  /**
    * CRITICAL: Background app immediately when POST_QUICK_TASK_CHOICE starts
    * 
    * POST_QUICK_TASK_CHOICE is a blocking screen, not an overlay.

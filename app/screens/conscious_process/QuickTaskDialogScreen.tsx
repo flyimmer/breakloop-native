@@ -142,62 +142,45 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] Set isProcessing to true');
     
     try {
-      const now = Date.now();
-      
-      // ⚠️ CRITICAL ORDERING: Phase must be updated BEFORE side effects
-      // STEP 1: Transition phase and decrement quota (awaits completion)
-      // This must complete fully before proceeding to timer storage
-      console.log('[QuickTaskDialog] STEP 1: Transitioning phase DECISION → ACTIVE...');
-      await transitionQuickTaskToActive(session.app, now);
-      console.log('[QuickTaskDialog] Phase transition complete - quota decremented');
-      
-      // STEP 2: Now that phase is ACTIVE and quota is decremented, store timer
-      // Timer storage is safe because phase state is already authoritative
+      // PHASE 4.2: Send intent to Native, Native handles everything
       const durationMs = getQuickTaskDurationMs();
-      const expiresAt = now + durationMs;
+      
+      console.log('[QuickTaskDialog] PHASE 4.2: Sending quickTaskAccept intent to Native');
+      console.log('[QuickTaskDialog] App:', session.app);
+      console.log('[QuickTaskDialog] Duration:', durationMs, 'ms');
       
       if (AppMonitorModule) {
         try {
-          await AppMonitorModule.storeQuickTaskTimer(session.app, expiresAt);
-          console.log('[QuickTaskDialog] ✅ Timer stored successfully');
-          console.log('[QuickTaskDialog] STEP 2: Timer stored AFTER phase transition:', {
-            app: session.app,
-            durationMs,
-            expiresAt,
-            note: 'Native will emit TIMER_SET event to System Brain',
-          });
+          // Native will:
+          // 1. Transition state DECISION → ACTIVE
+          // 2. Set expiresAt
+          // 3. Decrement quota
+          // 4. Persist state
+          // 5. Start timer
+          // 6. Emit START_QUICK_TASK_ACTIVE command (silent - no UI)
+          await AppMonitorModule.quickTaskAccept(session.app, durationMs);
+          console.log('[QuickTaskDialog] ✅ Native accepted Quick Task');
+          console.log('[QuickTaskDialog] ACTIVE phase is silent - closing SystemSurface');
         } catch (error) {
-          console.error('[QuickTaskDialog] ❌ Failed to store Quick Task timer:', error);
-          // Timer storage failed - this is critical, user should know
+          console.error('[QuickTaskDialog] ❌ Failed to accept Quick Task:', error);
           setIsProcessing(false);
           return;
         }
       }
       
-      // STEP 3: UI transitions and session ending (after phase and timer)
-      // Set lastIntervenedApp flag in System Brain state (fire-and-forget)
-      // No await - END_SESSION must happen immediately to release overlay
-      setLastIntervenedApp(session.app);
-      console.log('[QuickTaskDialog] lastIntervenedApp set (fire-and-forget)');
+      // PHASE 4.2: ACTIVE phase is silent - close SystemSurface immediately
+      // User continues using the app, Native enforces timer
+      console.log('[QuickTaskDialog] Closing SystemSurface, user returns to app');
       
       // Set transient targetApp for finish-time navigation
       setTransientTargetApp(session.app);
-      console.log('[QuickTaskDialog] Set transient targetApp:', session.app);
       
-      // Notify native that SystemSurface is finishing
-      setSystemSurfaceActive(false);
-      console.log('[QuickTaskDialog] Notified native: SystemSurface finishing');
-      
-      // End session and return to app (idempotent, immediate)
-      console.log('[QuickTaskDialog] STEP 3: Calling safeEndSession (shouldLaunchHome: false)...');
+      // End session and return to app (ACTIVE phase has no UI)
       safeEndSession(false);
-      console.log('[QuickTaskDialog] safeEndSession called - SystemSurface will finish, user returns to app');
+      console.log('[QuickTaskDialog] SystemSurface closed, user continues using app');
       
-      // Reset isProcessing after a delay
-      setTimeout(() => {
-        setIsProcessing(false);
-        console.log('[QuickTaskDialog] Reset isProcessing to false (timeout)');
-      }, 2000);
+      // Reset isProcessing
+      setIsProcessing(false);
     } catch (error) {
       console.error('[QuickTaskDialog] Error in handleQuickTask:', error);
       setIsProcessing(false);
@@ -219,12 +202,18 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] Set isProcessing to true');
     
     try {
-      // Clear any running Quick Task timer for this app
-      // User chose Conscious Process, so any active timer is invalid
+      // PHASE 4.2: Send decline intent to Native
+      console.log('[QuickTaskDialog] PHASE 4.2: Sending quickTaskDecline intent to Native');
+      
       if (AppMonitorModule && session?.app) {
         try {
-          await AppMonitorModule.clearQuickTaskTimer(session.app);
-          console.log('[QuickTaskDialog] Cleared Quick Task timer (user chose Conscious Process)');
+          // Native will:
+          // 1. Remove entry from quickTaskMap
+          // 2. Clear persisted state
+          // 3. Emit FINISH_SYSTEM_SURFACE command
+          await AppMonitorModule.quickTaskDecline(session.app);
+          console.log('[QuickTaskDialog] ✅ Native declined Quick Task');
+          console.log('[QuickTaskDialog] Native will emit FINISH_SYSTEM_SURFACE command');
         } catch (error) {
           console.error('[QuickTaskDialog] Failed to clear Quick Task timer:', error);
         }

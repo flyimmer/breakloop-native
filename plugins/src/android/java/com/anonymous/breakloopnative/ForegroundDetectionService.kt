@@ -112,6 +112,48 @@ class ForegroundDetectionService : AccessibilityService() {
         private var cachedQuickTaskQuota: Int = 1  // Default to 1 use
         
         /**
+         * Quick Task state machine (per-app)
+         * PHASE 4.2: Native owns ACTIVE phase
+         * 
+         * AUTHORITATIVE SKELETON - Do NOT add extra states or fields
+         */
+        enum class QuickTaskState {
+            IDLE,          // No Quick Task active
+            DECISION,      // Dialog shown, waiting for user intent
+            ACTIVE,        // Timer running
+            POST_CHOICE    // Timer expired in foreground, waiting for user choice
+        }
+        
+        /**
+         * Per-app Quick Task entry
+         * AUTHORITATIVE SKELETON - Do NOT add extra fields
+         */
+        data class QuickTaskEntry(
+            val app: String,
+            var state: QuickTaskState,
+            var expiresAt: Long? = null,  // Null except when ACTIVE
+            var postChoiceShown: Boolean = false  // One-shot guard for POST_CHOICE UI
+        )
+        
+        /**
+         * Runtime authority - source of truth while running
+         * Maps app package name -> Quick Task entry
+         */
+        private val quickTaskMap = mutableMapOf<String, QuickTaskEntry>()
+        
+        /**
+         * SharedPreferences key for crash recovery backup
+         */
+        private const val PREFS_QUICK_TASK_STATE = "quick_task_state_v1"
+        
+        /**
+         * Last detected foreground app (for expiration checks)
+         * Updated by service instance, read by timer expiration
+         */
+        @Volatile
+        private var currentForegroundApp: String? = null
+        
+        /**
          * Track last app we made an entry decision for
          * 
          * PHASE 4.1: Edge-triggered entry decisions
@@ -300,6 +342,383 @@ class ForegroundDetectionService : AccessibilityService() {
             }
             Log.i(TAG, "🎯 SystemSurface active: $active")
         }
+        
+        // ============================================================================
+        // PHASE 4.2: State Machine Persistence (Crash Recovery)
+        // ============================================================================
+        
+        /**
+         * Persist single entry to SharedPreferences (crash recovery backup)
+         * Called after each state transition
+         */
+        private fun persistState(entry: QuickTaskEntry, context: android.content.Context) {
+            val prefs = context.getSharedPreferences(PREFS_QUICK_TASK_STATE, android.content.Context.MODE_PRIVATE)
+            val json = org.json.JSONObject().apply {
+                put("app", entry.app)
+                put("state", entry.state.name)
+                if (entry.expiresAt != null) {
+                    put("expiresAt", entry.expiresAt)
+                }
+            }
+            prefs.edit().putString(entry.app, json.toString()).apply()
+        }
+        
+        /**
+         * Clear persisted state for app
+         */
+        private fun clearPersistedState(app: String, context: android.content.Context) {
+            val prefs = context.getSharedPreferences(PREFS_QUICK_TASK_STATE, android.content.Context.MODE_PRIVATE)
+            prefs.edit().remove(app).apply()
+        }
+        
+        /**
+         * Restore from disk (crash recovery)
+         * Called on service start
+         * 
+         * CRITICAL: This must be called early in service lifecycle
+         */
+        @JvmStatic
+        fun restoreFromDisk(context: android.content.Context) {
+            val prefs = context.getSharedPreferences(PREFS_QUICK_TASK_STATE, android.content.Context.MODE_PRIVATE)
+            val now = System.currentTimeMillis()
+            
+            prefs.all.forEach { (app, value) ->
+                try {
+                    val json = org.json.JSONObject(value as String)
+                    val state = QuickTaskState.valueOf(json.getString("state"))
+                    val expiresAt = if (json.has("expiresAt")) json.getLong("expiresAt") else null
+                    
+                    // Only restore ACTIVE entries with valid expiration
+                    if (state == QuickTaskState.ACTIVE && expiresAt != null && expiresAt > now) {
+                        val entry = QuickTaskEntry(app, state, expiresAt)
+                        quickTaskMap[app] = entry
+                        restartTimer(app, expiresAt)
+                        Log.i(TAG, "[$app] Restored ACTIVE state, expires in ${expiresAt - now}ms")
+                    } else {
+                        // Stale or non-ACTIVE state, clear it
+                        clearPersistedState(app, context)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to restore state for $app", e)
+                    clearPersistedState(app, context)
+                }
+            }
+        }
+        
+        /**
+         * Restart timer after crash recovery
+         * Uses same expiration logic as normal timer start
+         */
+        private fun restartTimer(app: String, expiresAt: Long) {
+            val delay = expiresAt - System.currentTimeMillis()
+            if (delay > 0) {
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    onQuickTaskTimerExpired(app)
+                }, delay)
+            } else {
+                // Already expired, handle immediately
+                onQuickTaskTimerExpired(app)
+            }
+        }
+        
+        // ============================================================================
+        // PHASE 4.2: User Intent Handlers (SKELETON FUNCTIONS)
+        // ============================================================================
+        
+        /**
+         * User accepted Quick Task
+         * SKELETON FUNCTION - Do NOT modify signature
+         */
+        @JvmStatic
+        fun onQuickTaskAccepted(app: String, durationMs: Long, context: android.content.Context) {
+            val entry = quickTaskMap[app] ?: return
+
+            entry.state = QuickTaskState.ACTIVE
+            entry.expiresAt = System.currentTimeMillis() + durationMs
+
+            decrementGlobalQuota(context)
+            persistState(entry, context)
+
+            startNativeTimer(app, entry.expiresAt!!)
+            emitStartQuickTaskActive(app, context)
+            
+            Log.i(TAG, "[$app] State: DECISION → ACTIVE (expires in ${durationMs}ms)")
+        }
+
+        /**
+         * User declined Quick Task
+         * SKELETON FUNCTION - Do NOT modify signature
+         */
+        @JvmStatic
+        fun onQuickTaskDeclined(app: String, context: android.content.Context) {
+            quickTaskMap.remove(app)
+            clearPersistedState(app, context)
+            emitFinishSystemSurface(context)
+            
+            Log.i(TAG, "[$app] State: DECISION → IDLE (declined)")
+        }
+
+        /**
+         * User chose to continue after POST_CHOICE
+         * SKELETON FUNCTION - Do NOT modify signature
+         */
+        @JvmStatic
+        fun onPostChoiceContinue(app: String, context: android.content.Context) {
+            quickTaskMap.remove(app)
+            clearPersistedState(app, context)
+
+            if (cachedQuickTaskQuota > 0) {
+                quickTaskMap[app] = QuickTaskEntry(app, QuickTaskState.DECISION)
+                persistState(quickTaskMap[app]!!, context)
+                emitShowQuickTaskDialog(app, context)
+                Log.i(TAG, "[$app] State: POST_CHOICE → DECISION (quota available)")
+            } else {
+                emitNoQuickTaskAvailable(app, context)
+                Log.i(TAG, "[$app] State: POST_CHOICE → IDLE (quota exhausted)")
+            }
+        }
+
+        /**
+         * User chose to quit after POST_CHOICE
+         * SKELETON FUNCTION - Do NOT modify signature
+         */
+        @JvmStatic
+        fun onPostChoiceQuit(app: String, context: android.content.Context) {
+            quickTaskMap.remove(app)
+            clearPersistedState(app, context)
+            emitFinishSystemSurface(context)
+            
+            Log.i(TAG, "[$app] State: POST_CHOICE → IDLE (quit)")
+        }
+
+        /**
+         * Decrement global quota atomically
+         * Native owns quota decrement (Phase 4.2 Decision 4)
+         */
+        private fun decrementGlobalQuota(context: android.content.Context) {
+            if (cachedQuickTaskQuota > 0) {
+                cachedQuickTaskQuota--
+                Log.i(TAG, "📊 Quota decremented: $cachedQuickTaskQuota")
+                emitQuotaUpdate(cachedQuickTaskQuota, context)
+            }
+        }
+        
+        // ============================================================================
+        // PHASE 4.2: Timer Management (SKELETON FUNCTIONS)
+        // ============================================================================
+        
+        /**
+         * Start native timer
+         * Called when transitioning to ACTIVE
+         */
+        private fun startNativeTimer(app: String, expiresAt: Long) {
+            val delay = expiresAt - System.currentTimeMillis()
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                onQuickTaskTimerExpired(app)
+            }, delay)
+        }
+
+        /**
+         * Timer expiration handler
+         * SKELETON FUNCTION - Do NOT modify logic
+         * 
+         * Key guarantees:
+         * - JS never decides expiration behavior
+         * - Foreground truth is native-only
+         * - Background expiration is silent
+         */
+        @JvmStatic
+        fun onQuickTaskTimerExpired(app: String) {
+            val entry = quickTaskMap[app] ?: return
+
+            // Verify state is ACTIVE (guard against stale timers)
+            if (entry.state != QuickTaskState.ACTIVE) {
+                Log.w(TAG, "[$app] Timer expired but state is ${entry.state}, ignoring")
+                return
+            }
+
+            // Native tracks foreground independently (Phase 4.2 Decision 3)
+            val isForeground = isAppForeground(app)
+
+            if (isForeground) {
+                // App is foreground → show POST_CHOICE
+                entry.state = QuickTaskState.POST_CHOICE
+                entry.expiresAt = null
+                entry.postChoiceShown = false  // Reset guard for new POST_CHOICE
+                
+                // Need context for persistence - get from service instance
+                // This will be called from service context
+                val context = AppMonitorService.getReactContext()?.applicationContext
+                if (context != null) {
+                    persistState(entry, context)
+                    emitShowPostQuickTaskChoice(app, context)
+                }
+                
+                Log.i(TAG, "[$app] State: ACTIVE → POST_CHOICE (expired in foreground)")
+            } else {
+                // App is background → silent cleanup
+                quickTaskMap.remove(app)
+                
+                val context = AppMonitorService.getReactContext()?.applicationContext
+                if (context != null) {
+                    clearPersistedState(app, context)
+                }
+                
+                Log.i(TAG, "[$app] State: ACTIVE → IDLE (expired in background, silent)")
+            }
+        }
+
+        /**
+         * Check if app is currently in foreground
+         * Native tracks this independently (no JS dependency)
+         */
+        private fun isAppForeground(app: String): Boolean {
+            return currentForegroundApp == app
+        }
+        
+        /**
+         * Update current foreground app
+         * Called by service instance when foreground changes
+         */
+        @JvmStatic
+        fun updateCurrentForegroundApp(app: String?) {
+            currentForegroundApp = app
+        }
+        
+        // ============================================================================
+        // PHASE 4.2: Command Emission Methods
+        // ============================================================================
+        
+        /**
+         * Emit: Show Quick Task dialog
+         */
+        private fun emitShowQuickTaskDialog(app: String, context: android.content.Context) {
+            emitQuickTaskCommand("SHOW_QUICK_TASK_DIALOG", app, context)
+        }
+
+        /**
+         * Emit: Start Quick Task ACTIVE phase
+         */
+        private fun emitStartQuickTaskActive(app: String, context: android.content.Context) {
+            emitQuickTaskCommand("START_QUICK_TASK_ACTIVE", app, context)
+        }
+
+        /**
+         * Emit: Show POST_CHOICE screen
+         */
+        private fun emitShowPostQuickTaskChoice(app: String, context: android.content.Context) {
+            emitQuickTaskCommand("SHOW_POST_QUICK_TASK_CHOICE", app, context)
+        }
+
+        /**
+         * Emit: Finish SystemSurface
+         */
+        private fun emitFinishSystemSurface(context: android.content.Context) {
+            emitQuickTaskCommand("FINISH_SYSTEM_SURFACE", "", context)
+        }
+
+        /**
+         * Emit: No Quick Task available (quota exhausted)
+         */
+        private fun emitNoQuickTaskAvailable(app: String, context: android.content.Context) {
+            emitQuickTaskCommand("NO_QUICK_TASK_AVAILABLE", app, context)
+        }
+
+        /**
+         * Base command emitter
+         */
+        private fun emitQuickTaskCommand(command: String, app: String, context: android.content.Context) {
+            val reactContext = AppMonitorService.getReactContext()
+            if (reactContext == null || !reactContext.hasActiveReactInstance()) {
+                Log.w(TAG, "React context not available, cannot emit command")
+                return
+            }
+            
+            val params = com.facebook.react.bridge.Arguments.createMap().apply {
+                putString("command", command)
+                putString("app", app)
+                putDouble("timestamp", System.currentTimeMillis().toDouble())
+            }
+            
+            reactContext
+                .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit("QUICK_TASK_COMMAND", params)
+            
+            Log.i(TAG, "📤 Emitted QUICK_TASK_COMMAND: $command for $app")
+        }
+
+        /**
+         * Emit quota update to JS
+         * Native decrements, JS displays (Phase 4.2 Decision 4)
+         */
+        private fun emitQuotaUpdate(newQuota: Int, context: android.content.Context) {
+            val reactContext = AppMonitorService.getReactContext()
+            if (reactContext == null || !reactContext.hasActiveReactInstance()) {
+                return
+            }
+            
+            val params = com.facebook.react.bridge.Arguments.createMap().apply {
+                putInt("quota", newQuota)
+                putDouble("timestamp", System.currentTimeMillis().toDouble())
+            }
+            
+            reactContext
+                .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit("QUICK_TASK_QUOTA_UPDATE", params)
+            
+            Log.i(TAG, "📤 Emitted quota update: $newQuota")
+        }
+        
+        // ============================================================================
+        // PHASE 4.2: Entry Decision (SKELETON FUNCTION)
+        // ============================================================================
+        
+        /**
+         * Entry decision for monitored app foreground
+         * SKELETON FUNCTION - Phase 4.1 + 4.2 compatible
+         * 
+         * Important:
+         * - No JS state consulted
+         * - No lastDecisionApp
+         * - No suppression
+         * - Every foreground entry is a decision
+         */
+        @JvmStatic
+        fun onMonitoredAppForeground(app: String, context: android.content.Context) {
+            val entry = quickTaskMap[app]
+
+            when (entry?.state) {
+                QuickTaskState.ACTIVE -> {
+                    // ACTIVE phase persists, no entry dialog
+                    Log.i(TAG, "[$app] ACTIVE phase persists, no entry decision")
+                    return
+                }
+                QuickTaskState.POST_CHOICE -> {
+                    // POST_CHOICE one-shot: only emit UI once per expiration
+                    if (!entry.postChoiceShown) {
+                        entry.postChoiceShown = true  // Mark as shown
+                        persistState(entry, context)   // Persist the flag
+                        emitShowPostQuickTaskChoice(app, context)
+                        Log.i(TAG, "[$app] POST_CHOICE first entry → showing choice screen")
+                    } else {
+                        Log.i(TAG, "[$app] POST_CHOICE already shown → silent (awaiting user intent)")
+                    }
+                    return
+                }
+                else -> {
+                    // IDLE or DECISION or null → make entry decision
+                    if (cachedQuickTaskQuota > 0) {
+                        quickTaskMap[app] = QuickTaskEntry(app, QuickTaskState.DECISION)
+                        persistState(quickTaskMap[app]!!, context)
+                        emitShowQuickTaskDialog(app, context)
+                        Log.i(TAG, "[$app] State: IDLE → DECISION (quota: $cachedQuickTaskQuota)")
+                    } else {
+                        emitNoQuickTaskAvailable(app, context)
+                        Log.i(TAG, "[$app] No Quick Task available (quota: 0)")
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -412,6 +831,10 @@ class ForegroundDetectionService : AccessibilityService() {
         Log.i(TAG, "✅ ForegroundDetectionService connected and ready")
         isServiceConnected = true
         
+        // PHASE 4.2: Restore Quick Task state from disk (crash recovery)
+        // CRITICAL: This must be called early in service lifecycle
+        restoreFromDisk(applicationContext)
+        
         // Configure the service to receive window state changes AND user interaction events
         val info = AccessibilityServiceInfo().apply {
             // Event types: Window state changes + user interactions
@@ -516,6 +939,9 @@ class ForegroundDetectionService : AccessibilityService() {
         // Update last detected package
         lastPackageName = packageName
         
+        // PHASE 4.2: Update foreground app for timer expiration checks
+        updateCurrentForegroundApp(packageName)
+
         // Log all foreground changes for debugging
         Log.i(TAG, "📱 Foreground app changed: $packageName")
         
@@ -533,40 +959,8 @@ class ForegroundDetectionService : AccessibilityService() {
         if (dynamicMonitoredApps.contains(packageName)) {
             Log.i(TAG, "🎯 MONITORED APP DETECTED: $packageName")
             
-            // PHASE 4.1: Native decides Quick Task entry (EDGE-TRIGGERED)
-            // NO GUARDS - Every monitored app entry MUST emit exactly one decision
-            
-            // Make entry decision (GUARANTEED EMISSION for every monitored app entry)
-            val hasActiveTimer = hasValidQuickTaskTimer(packageName)
-            val quotaAvailable = cachedQuickTaskQuota > 0
-            
-            // Log decision inputs
-            Log.i(TAG, "📊 Entry Decision Inputs:")
-            Log.i(TAG, "   └─ hasActiveTimer: $hasActiveTimer")
-            Log.i(TAG, "   └─ cachedQuickTaskQuota: $cachedQuickTaskQuota")
-            Log.i(TAG, "   └─ quotaAvailable: $quotaAvailable")
-            
-            // Decision logic: ALWAYS emit exactly one event
-            val decision = if (!hasActiveTimer && quotaAvailable) {
-                "SHOW_QUICK_TASK_DIALOG"
-            } else {
-                "NO_QUICK_TASK_AVAILABLE"
-            }
-            
-            // Emit decision (GUARANTEED)
-            lastDecisionApp = packageName  // Mark decision made
-            emitQuickTaskDecisionEvent(packageName, decision)
-            
-            // Log decision
-            if (decision == "SHOW_QUICK_TASK_DIALOG") {
-                Log.i(TAG, "✅ DECISION: Quick Task available for $packageName (quota: $cachedQuickTaskQuota)")
-            } else {
-                val reason = when {
-                    hasActiveTimer -> "timer already active"
-                    else -> "quota exhausted (n_quickTask = 0)"
-                }
-                Log.i(TAG, "❌ DECISION: Quick Task not available for $packageName ($reason)")
-            }
+            // PHASE 4.2: Call skeleton entry decision function
+            onMonitoredAppForeground(packageName, applicationContext)
         } else {
             Log.d(TAG, "  └─ Not a monitored app, no intervention needed")
         }

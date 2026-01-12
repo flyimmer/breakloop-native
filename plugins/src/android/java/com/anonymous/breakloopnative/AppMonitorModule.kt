@@ -989,6 +989,80 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
         }
     }
     
+    // ============================================================================
+    // PHASE 4.2: User Intent Handlers (Call Skeleton Functions)
+    // ============================================================================
+    
+    /**
+     * User accepted Quick Task
+     * PHASE 4.2: Intent from JS → calls skeleton function
+     */
+    @ReactMethod
+    fun quickTaskAccept(app: String, durationMs: Double, promise: Promise) {
+        try {
+            val duration = durationMs.toLong()
+            
+            // Call skeleton function
+            ForegroundDetectionService.onQuickTaskAccepted(app, duration, reactApplicationContext)
+            
+            promise.resolve(true)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to accept Quick Task", e)
+            promise.reject("QUICK_TASK_ACCEPT_ERROR", e.message, e)
+        }
+    }
+
+    /**
+     * User declined Quick Task
+     * PHASE 4.2: Intent from JS → calls skeleton function
+     */
+    @ReactMethod
+    fun quickTaskDecline(app: String, promise: Promise) {
+        try {
+            // Call skeleton function
+            ForegroundDetectionService.onQuickTaskDeclined(app, reactApplicationContext)
+            
+            promise.resolve(true)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to decline Quick Task", e)
+            promise.reject("QUICK_TASK_DECLINE_ERROR", e.message, e)
+        }
+    }
+
+    /**
+     * User chose to continue after POST_CHOICE
+     * PHASE 4.2: Intent from JS → calls skeleton function
+     */
+    @ReactMethod
+    fun quickTaskPostContinue(app: String, promise: Promise) {
+        try {
+            // Call skeleton function
+            ForegroundDetectionService.onPostChoiceContinue(app, reactApplicationContext)
+            
+            promise.resolve(true)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to handle post continue", e)
+            promise.reject("QUICK_TASK_POST_CONTINUE_ERROR", e.message, e)
+        }
+    }
+
+    /**
+     * User chose to quit after POST_CHOICE
+     * PHASE 4.2: Intent from JS → calls skeleton function
+     */
+    @ReactMethod
+    fun quickTaskPostQuit(app: String, promise: Promise) {
+        try {
+            // Call skeleton function
+            ForegroundDetectionService.onPostChoiceQuit(app, reactApplicationContext)
+            
+            promise.resolve(true)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to handle post quit", e)
+            promise.reject("QUICK_TASK_POST_QUIT_ERROR", e.message, e)
+        }
+    }
+    
     override fun invalidate() {
         super.invalidate()
         // Clean up React context reference when module is invalidated

@@ -74,24 +74,25 @@ export default function PostQuickTaskChoiceScreen() {
     setIsProcessing(true);
     console.log('[PostQuickTaskChoice] User chose: Quit this app');
     
-    // Clear phase when user quits
-    await clearQuickTaskPhase(targetApp);
-    console.log('[PostQuickTaskChoice] Phase cleared');
+    // PHASE 4.2: Send quit intent to Native
+    console.log('[PostQuickTaskChoice] PHASE 4.2: Sending quickTaskPostQuit intent to Native');
     
-    // Clear blocking state synchronously (in-memory)
-    clearBlockingState(targetApp);
+    if (AppMonitorModule && targetApp) {
+      try {
+        // Native will:
+        // 1. Remove entry from quickTaskMap
+        // 2. Clear persisted state
+        // 3. Emit FINISH_SYSTEM_SURFACE command
+        await AppMonitorModule.quickTaskPostQuit(targetApp);
+        console.log('[PostQuickTaskChoice] ✅ Native handled quit');
+        console.log('[PostQuickTaskChoice] Native will emit FINISH_SYSTEM_SURFACE command');
+      } catch (error) {
+        console.error('[PostQuickTaskChoice] ❌ Failed to quit:', error);
+      }
+    }
     
-    // Clear legacy UI coordination flags
-    clearExpiredQuickTaskInMemory(targetApp);
-    clearQuickTaskSuppression();
-    
-    // Notify native that SystemSurface is finishing
-    setSystemSurfaceActive(false);
-    console.log('[PostQuickTaskChoice] Notified native: SystemSurface finishing');
-    
-    console.log('[PostQuickTaskChoice] 🔓 Blocking state cleared - exiting to home');
-    
-    // End session and go to home
+    // Native handles the rest - JS just ends session
+    console.log('[PostQuickTaskChoice] Ending session and going to home');
     safeEndSession(true);
   };
 
@@ -109,46 +110,27 @@ export default function PostQuickTaskChoiceScreen() {
     console.log('[PostQuickTaskChoice] User chose: Continue using this app');
     console.log('[PostQuickTaskChoice] Quick Task remaining:', quickTaskRemaining);
     
-    // Clear blocking state synchronously (in-memory)
-    clearBlockingState(targetApp);
+    // PHASE 4.2: Send continue intent to Native
+    console.log('[PostQuickTaskChoice] PHASE 4.2: Sending quickTaskPostContinue intent to Native');
     
-    // Clear legacy UI coordination flags
-    clearQuickTaskSuppression();
-    
-    if (quickTaskRemaining > 0) {
-      // Case A: Quota available → Show Quick Task dialog
-      console.log('[PostQuickTaskChoice] n_quickTask > 0 → Launching Quick Task dialog');
-      console.log('[PostQuickTaskChoice] 🔓 Blocking state cleared - showing Quick Task dialog');
-      
-      // Set phase = DECISION before showing dialog
-      await setQuickTaskPhase(targetApp, 'DECISION');
-      console.log('[PostQuickTaskChoice] Phase set to DECISION');
-      
-      // Replace current session with QUICK_TASK
-      dispatchSystemEvent({
-        type: 'REPLACE_SESSION',
-        newKind: 'QUICK_TASK',
-        app: targetApp,
-      });
-    } else {
-      // Case B: Quota exhausted → Start Intervention Flow
-      console.log('[PostQuickTaskChoice] n_quickTask = 0 → Starting Intervention Flow');
-      console.log('[PostQuickTaskChoice] 🔓 Blocking state cleared - starting Intervention');
-      
-      // Clear phase (transitioning to Intervention)
-      await clearQuickTaskPhase(targetApp);
-      console.log('[PostQuickTaskChoice] Phase cleared');
-      
-      // Clear legacy flag explicitly
-      clearExpiredQuickTaskInMemory(targetApp);
-      
-      // Replace current session with INTERVENTION
-      dispatchSystemEvent({
-        type: 'REPLACE_SESSION',
-        newKind: 'INTERVENTION',
-        app: targetApp,
-      });
+    if (AppMonitorModule && targetApp) {
+      try {
+        // Native will:
+        // 1. Remove entry from quickTaskMap
+        // 2. Clear persisted state
+        // 3. Check quota
+        // 4. If quota > 0: Create new DECISION entry, emit SHOW_QUICK_TASK_DIALOG
+        // 5. If quota = 0: Emit NO_QUICK_TASK_AVAILABLE (starts Intervention)
+        await AppMonitorModule.quickTaskPostContinue(targetApp);
+        console.log('[PostQuickTaskChoice] ✅ Native handled continue');
+        console.log('[PostQuickTaskChoice] Native will emit appropriate command based on quota');
+      } catch (error) {
+        console.error('[PostQuickTaskChoice] ❌ Failed to continue:', error);
+      }
     }
+    
+    // Native handles the rest - JS waits for commands
+    console.log('[PostQuickTaskChoice] Waiting for Native commands...')
     
     setIsProcessing(false);
   };

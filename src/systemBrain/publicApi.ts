@@ -197,12 +197,28 @@ export async function transitionQuickTaskToActive(
   // Function returns - calling code may now safely perform side effects
 }
 
-/**
- * Clear Quick Task phase for an app.
- * Called when user chooses "Conscious Process" or when Quick Task is cancelled.
- * 
- * @param app - App package name
- */
+// ============================================================================
+// PHASE 4.2: JS TIMER/PHASE LOGIC DISABLED
+// Native now owns Quick Task ACTIVE phase, timers, and state machine
+// This code is kept for reference but must NOT be used for new Quick Task flows
+//
+// JS must never:
+// - start timers
+// - stop timers
+// - decrement quota (Native does this atomically)
+// - infer ACTIVE / POST_CHOICE
+// - suppress dialogs
+// - decide expiration
+//
+// JS only:
+// - renders UI when instructed by Native commands
+// - sends user intent events to Native
+// ============================================================================
+
+/*
+DISABLED: clearQuickTaskPhase
+Native now manages phase transitions
+
 export async function clearQuickTaskPhase(app: string): Promise<void> {
   const state = await loadTimerState();
   
@@ -216,24 +232,22 @@ export async function clearQuickTaskPhase(app: string): Promise<void> {
     console.log('[QuickTask] No phase to clear for:', app);
   }
 }
+*/
 
-/**
- * Get Quick Task phase for an app.
- * 
- * @param app - App package name
- * @returns Phase ('DECISION' | 'ACTIVE') or null
- */
+/*
+DISABLED: getQuickTaskPhase
+Native now owns phase state
+
 export async function getQuickTaskPhase(app: string): Promise<'DECISION' | 'ACTIVE' | null> {
   const state = await loadTimerState();
   return state.quickTaskPhaseByApp[app] || null;
 }
+*/
 
-/**
- * Set Quick Task phase for an app (used by System Brain internally).
- * 
- * @param app - App package name
- * @param phase - Phase to set
- */
+/*
+DISABLED: setQuickTaskPhase
+Native now owns phase transitions
+
 export async function setQuickTaskPhase(
   app: string,
   phase: 'DECISION' | 'ACTIVE'
@@ -245,3 +259,8 @@ export async function setQuickTaskPhase(
   
   console.log('[QuickTask] Phase set:', { app, phase });
 }
+*/
+
+// ============================================================================
+// END DISABLED CODE
+// ============================================================================

@@ -729,3 +729,86 @@ export async function handleQuickTaskDecision(event: {
   
   console.log('[System Brain] ========================================');
 }
+
+/**
+ * Handle Quick Task commands from Native
+ * PHASE 4.2: JS obeys Native commands, never decides
+ * 
+ * Native owns the Quick Task state machine and emits commands.
+ * JS is a passive UI renderer that executes commands.
+ */
+export async function handleQuickTaskCommand(event: {
+  command: string;
+  app: string;
+  timestamp: number;
+}): Promise<void> {
+  const { command, app, timestamp } = event;
+  
+  console.log('[System Brain] ========================================');
+  console.log('[System Brain] 📨 QUICK_TASK_COMMAND received');
+  console.log('[System Brain] Command:', command);
+  console.log('[System Brain] App:', app);
+  console.log('[System Brain] Timestamp:', new Date(timestamp).toISOString());
+
+  switch (command) {
+    case 'START_QUICK_TASK_ACTIVE':
+      // Native started ACTIVE phase - close SystemSurface, user continues using app
+      // ACTIVE phase is native-only, silent enforcement
+      // UI will only reappear on expiration (POST_QUICK_TASK_CHOICE)
+      console.log('[System Brain] ✅ EXECUTING: Start Quick Task ACTIVE phase (silent)');
+      console.log('[System Brain] Native timer started, closing SystemSurface');
+      console.log('[System Brain] User continues using app, Native enforces timer');
+      // SystemSurface will close via session end (no new session created)
+      break;
+
+    case 'SHOW_POST_QUICK_TASK_CHOICE':
+      // Native says timer expired in foreground, show choice screen
+      console.log('[System Brain] ✅ EXECUTING: Show POST_QUICK_TASK_CHOICE screen');
+      await launchSystemSurface(app, 'POST_QUICK_TASK_CHOICE');
+      break;
+
+    case 'FINISH_SYSTEM_SURFACE':
+      // Native says close SystemSurface
+      console.log('[System Brain] ✅ EXECUTING: Finish SystemSurface');
+      // SystemSurface will finish via session end
+      break;
+
+    case 'NO_QUICK_TASK_AVAILABLE':
+      // Native says no Quick Task available, start Intervention
+      console.log('[System Brain] ✅ EXECUTING: Start Intervention (no Quick Task)');
+      await launchSystemSurface(app, 'START_INTERVENTION_FLOW');
+      break;
+
+    case 'SHOW_QUICK_TASK_DIALOG':
+      // Native says show Quick Task dialog
+      console.log('[System Brain] ✅ EXECUTING: Show Quick Task dialog');
+      await launchSystemSurface(app, 'SHOW_QUICK_TASK_DIALOG');
+      break;
+
+    default:
+      console.warn('[System Brain] ⚠️ Unknown Quick Task command:', command);
+  }
+  
+  console.log('[System Brain] ========================================');
+}
+
+/**
+ * Handle quota updates from Native
+ * PHASE 4.2: Native decrements, JS displays
+ */
+export async function handleQuotaUpdate(event: {
+  quota: number;
+  timestamp: number;
+}): Promise<void> {
+  console.log('[System Brain] ========================================');
+  console.log('[System Brain] 📊 QUOTA_UPDATE received from Native');
+  console.log('[System Brain] New quota:', event.quota);
+  
+  // Update local state for display only
+  const state = await loadTimerState();
+  state.n_quickTask = event.quota;
+  await saveTimerState(state);
+  
+  console.log('[System Brain] ✅ Quota updated in JS state (display only)');
+  console.log('[System Brain] ========================================');
+}

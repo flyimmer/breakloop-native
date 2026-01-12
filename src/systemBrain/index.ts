@@ -24,7 +24,7 @@
  */
 
 import { AppRegistry, DeviceEventEmitter } from 'react-native';
-import { handleSystemEvent, handleQuickTaskDecision } from './eventHandler';
+import { handleSystemEvent, handleQuickTaskDecision, handleQuickTaskCommand, handleQuotaUpdate } from './eventHandler';
 import { loadTimerState } from './stateManager';
 import { syncQuotaToNative, clearSystemSurfaceActive } from './decisionEngine';
 
@@ -114,5 +114,31 @@ DeviceEventEmitter.addListener('QUICK_TASK_DECISION', (event) => {
   });
 });
 
+/**
+ * Register Quick Task command listener
+ * PHASE 4.2: Native commands, JS obeys
+ */
+DeviceEventEmitter.addListener('QUICK_TASK_COMMAND', (event) => {
+  console.log('[System Brain] 📨 QUICK_TASK_COMMAND event received');
+  
+  handleQuickTaskCommand(event).catch((error) => {
+    console.error('[System Brain] ❌ Error handling Quick Task command:', error);
+  });
+});
+
+/**
+ * Register quota update listener
+ * PHASE 4.2: Native decrements, JS displays
+ */
+DeviceEventEmitter.addListener('QUICK_TASK_QUOTA_UPDATE', (event) => {
+  console.log('[System Brain] 📨 QUICK_TASK_QUOTA_UPDATE event received');
+  
+  handleQuotaUpdate(event).catch((error) => {
+    console.error('[System Brain] ❌ Error handling quota update:', error);
+  });
+});
+
 console.log('[System Brain] Headless JS task registered (single event path)');
 console.log('[System Brain] QUICK_TASK_DECISION listener registered');
+console.log('[System Brain] QUICK_TASK_COMMAND listener registered');
+console.log('[System Brain] QUICK_TASK_QUOTA_UPDATE listener registered');
