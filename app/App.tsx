@@ -33,6 +33,7 @@ import {
   handleForegroundAppChange, 
   setSystemSessionDispatcher,
 } from '@/src/os/osTriggerBrain';
+import { appDiscoveryService } from '@/src/services/appDiscovery';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -227,6 +228,37 @@ const App = () => {
     };
 
     loadQuickTaskSettings();
+  }, []);
+
+  /**
+   * Initialize app discovery service (Android only)
+   * 
+   * Starts multi-source app discovery:
+   * - Launcher: Fast seed (synchronous)
+   * - UsageStats: Async backfill (may be slow)
+   * - Accessibility: Runtime discovery (event-driven)
+   * 
+   * Also sets up periodic reconciliation (daily cleanup).
+   */
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      appDiscoveryService.initialize().catch((error) => {
+        console.error('[App] Failed to initialize app discovery:', error);
+      });
+
+      // Periodic reconciliation (daily)
+      const reconciliationInterval = setInterval(() => {
+        appDiscoveryService.reconcile().catch((error) => {
+          console.error('[App] Reconciliation failed:', error);
+        });
+      }, 24 * 60 * 60 * 1000); // 24 hours
+
+      // Cleanup on unmount
+      return () => {
+        clearInterval(reconciliationInterval);
+        appDiscoveryService.cleanup();
+      };
+    }
   }, []);
 
   /**

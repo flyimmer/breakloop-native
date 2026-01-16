@@ -16,12 +16,10 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { NativeModules } from 'react-native';
-import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/native-modules/AppMonitorModule';
+import { appDiscoveryService } from '@/src/services/appDiscovery';
+import { DiscoveredApp } from '@/src/storage/appDiscovery';
 import { MainAppStackParamList } from '../../../roots/MainAppRoot';
 import { matchesAppSearch, getMatchScore } from '@/constants/appAliases';
-
-const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
 type NavigationProp = NativeStackNavigationProp<MainAppStackParamList>;
 
@@ -45,75 +43,68 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
   const [websites, setWebsites] = useState<string[]>(initialWebsites);
   const [websiteInput, setWebsiteInput] = useState('');
   
-  // Real installed apps from device
-  const [installedApps, setInstalledApps] = useState<InstalledApp[]>([]);
+  // Discovered apps from multi-source discovery
+  const [discoveredApps, setDiscoveredApps] = useState<DiscoveredApp[]>([]);
   const [isLoadingApps, setIsLoadingApps] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Fetch installed apps on mount (Android only)
+  // Initialize discovery service and subscribe to updates
   useEffect(() => {
-    if (Platform.OS === 'android' && AppMonitorModule && AppMonitorModuleType) {
-      loadInstalledApps();
-    } else {
-      // iOS or module not available - show empty state or fallback
+    if (Platform.OS !== 'android') {
       setIsLoadingApps(false);
-      if (Platform.OS !== 'android') {
-        Alert.alert(
-          'Not Available',
-          'App list is only available on Android devices.',
-          [{ text: 'OK' }]
-        );
-      }
-    }
-  }, []);
-
-  const loadInstalledApps = async () => {
-    try {
-      setIsLoadingApps(true);
-      const apps = await AppMonitorModuleType.getInstalledApps();
-      
-      console.log(`[EditMonitoredApps] Loaded ${apps.length} apps`);
-      console.log('[EditMonitoredApps] First 10 apps:', apps.slice(0, 10).map(a => a.appName));
-      
-      // Debug: Check if Instagram is in the list
-      const instagram = apps.find(app => 
-        app.packageName.includes('instagram') || 
-        app.appName.toLowerCase().includes('instagram')
-      );
-      console.log('[EditMonitoredApps] Instagram found:', instagram);
-      
-      // Debug: Check if TikTok is in the list
-      const tiktok = apps.find(app => 
-        app.packageName.toLowerCase().includes('tiktok') || 
-        app.packageName.includes('musically') ||
-        app.appName.toLowerCase().includes('tiktok')
-      );
-      console.log('[EditMonitoredApps] TikTok found:', tiktok);
-      
-      // Debug: Log all package names that contain common social media keywords
-      const socialApps = apps.filter(app =>
-        app.packageName.includes('facebook') ||
-        app.packageName.includes('twitter') ||
-        app.packageName.includes('snapchat') ||
-        app.packageName.includes('reddit')
-      );
-      console.log('[EditMonitoredApps] Social apps found:', socialApps.length, socialApps.map(a => a.packageName));
-      
-      // Sort by app name alphabetically
-      apps.sort((a, b) => a.appName.localeCompare(b.appName));
-      
-      setInstalledApps(apps);
-    } catch (error: any) {
-      console.error('Failed to load installed apps:', error);
       Alert.alert(
-        'Error',
-        'Failed to load installed apps. Please try again.',
+        'Not Available',
+        'App list is only available on Android devices.',
         [{ text: 'OK' }]
       );
-    } finally {
-      setIsLoadingApps(false);
+      return;
     }
-  };
+
+    let unsubscribe: (() => void) | null = null;
+
+    async function initializeDiscovery() {
+      try {
+        setIsLoadingApps(true);
+        
+        // Initialize discovery service (starts launcher discovery immediately)
+        await appDiscoveryService.initialize();
+        
+        // Subscribe to progressive updates
+        unsubscribe = appDiscoveryService.subscribe((apps) => {
+          setDiscoveredApps(apps);
+          setIsLoadingApps(false);
+        });
+      } catch (error: any) {
+        console.error('[EditMonitoredApps] Failed to initialize discovery:', error);
+        Alert.alert(
+          'Error',
+          'Failed to load apps. Please try again.',
+          [{ text: 'OK' }]
+        );
+        setIsLoadingApps(false);
+      }
+    }
+
+    initializeDiscovery();
+
+    // Cleanup on unmount
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, []);
+
+  // Convert DiscoveredApp to display format
+  const installedApps = discoveredApps.map(app => ({
+    packageName: app.packageName,
+    appName: app.label || app.packageName,
+    iconPath: app.iconPath
+  }));
+  
+  // Note: Icons are now stored as file URIs in iconPath
+  // No need to load them separately - React Native <Image /> can load file URIs directly
+  // The iconCache is kept for compatibility but we'll use iconPath directly
 
   // Toggle app selection (by package name)
   const handleToggleApp = (packageName: string) => {
@@ -248,7 +239,8 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
           ) : (
             filteredApps.map((app) => {
               const isSelected = selectedApps.includes(app.packageName);
-              const iconUri = app.icon ? `data:image/png;base64,${app.icon}` : null;
+              // Use iconPath directly (file URI) - React Native <Image /> supports file URIs
+              const iconUri = app.iconPath || null;
               return (
                 <Pressable
                   key={app.packageName}
@@ -262,7 +254,11 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
                       resizeMode="contain"
                     />
                   ) : (
-                    <View style={styles.appIconPlaceholder} />
+                    <View style={styles.appIconPlaceholder}>
+                      <Text style={styles.appIconPlaceholderText}>
+                        {app.appName.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
                   )}
                   <View style={styles.appInfo}>
                     <Text style={styles.appName}>{app.appName}</Text>
@@ -516,7 +512,14 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 8,
     marginRight: 12,
-    backgroundColor: '#E4E4E7', // Placeholder color
+    backgroundColor: '#E4E4E7',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  appIconPlaceholderText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#A1A1AA',
   },
   appInfo: {
     flex: 1,

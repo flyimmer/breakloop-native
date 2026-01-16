@@ -54,6 +54,8 @@ function getSourcePaths(projectRoot) {
     appMonitorService: path.join(javaPath, 'AppMonitorService.kt'),
     systemSurfaceActivity: path.join(javaPath, 'SystemSurfaceActivity.kt'),
     systemBrainService: path.join(javaPath, 'SystemBrainService.kt'),
+    appDiscoveryModule: path.join(javaPath, 'AppDiscoveryModule.kt'),
+    appDiscoveryPackage: path.join(javaPath, 'AppDiscoveryPackage.kt'),
     accessibilityXml: path.join(pluginSrcPath, 'res', 'xml', 'accessibility_service.xml'),
     stringsXml: path.join(pluginSrcPath, 'res', 'values', 'strings.xml'),
     stylesXml: path.join(pluginSrcPath, 'res', 'values', 'styles.xml'),
@@ -73,6 +75,8 @@ function getDestinationPaths(projectRoot) {
     appMonitorService: path.join(javaPath, 'AppMonitorService.kt'),
     systemSurfaceActivity: path.join(javaPath, 'SystemSurfaceActivity.kt'),
     systemBrainService: path.join(javaPath, 'SystemBrainService.kt'),
+    appDiscoveryModule: path.join(javaPath, 'AppDiscoveryModule.kt'),
+    appDiscoveryPackage: path.join(javaPath, 'AppDiscoveryPackage.kt'),
     accessibilityXml: path.join(androidMainPath, 'res', 'xml', 'accessibility_service.xml'),
   };
 }
@@ -138,10 +142,26 @@ function copyKotlinFiles(projectRoot) {
   } else {
     console.warn(`[${PLUGIN_NAME}] SystemBrainService.kt not found, skipping (optional)`);
   }
+  
+  // Copy AppDiscoveryModule.kt
+  if (fs.existsSync(sourcePaths.appDiscoveryModule)) {
+    fs.copyFileSync(sourcePaths.appDiscoveryModule, destPaths.appDiscoveryModule);
+    console.log(`[${PLUGIN_NAME}] Copied AppDiscoveryModule.kt`);
+  } else {
+    console.warn(`[${PLUGIN_NAME}] AppDiscoveryModule.kt not found, skipping (optional)`);
+  }
+  
+  // Copy AppDiscoveryPackage.kt
+  if (fs.existsSync(sourcePaths.appDiscoveryPackage)) {
+    fs.copyFileSync(sourcePaths.appDiscoveryPackage, destPaths.appDiscoveryPackage);
+    console.log(`[${PLUGIN_NAME}] Copied AppDiscoveryPackage.kt`);
+  } else {
+    console.warn(`[${PLUGIN_NAME}] AppDiscoveryPackage.kt not found, skipping (optional)`);
+  }
 }
 
 /**
- * Modify MainApplication.kt to register AppMonitorPackage
+ * Modify MainApplication.kt to register AppMonitorPackage and AppDiscoveryPackage
  */
 function registerAppMonitorPackage(projectRoot) {
   const mainApplicationPath = path.join(
@@ -164,27 +184,46 @@ function registerAppMonitorPackage(projectRoot) {
   
   let content = fs.readFileSync(mainApplicationPath, 'utf-8');
   
-  // Check if already registered
-  if (content.includes('add(AppMonitorPackage())')) {
+  let modified = false;
+  
+  // Register AppMonitorPackage
+  if (!content.includes('add(AppMonitorPackage())')) {
+    const applyBlockPattern = /(PackageList\(this\)\.packages\.apply\s*\{[\s\S]*?)(            \})/;
+    
+    if (applyBlockPattern.test(content)) {
+      content = content.replace(
+        applyBlockPattern,
+        '$1              add(AppMonitorPackage())\n$2'
+      );
+      modified = true;
+      console.log(`[${PLUGIN_NAME}] ✅ Registered AppMonitorPackage in MainApplication.kt`);
+    } else {
+      console.warn(`[${PLUGIN_NAME}] Could not find package registration location in MainApplication.kt`);
+    }
+  } else {
     console.log(`[${PLUGIN_NAME}] AppMonitorPackage already registered in MainApplication.kt`);
-    return;
   }
   
-  // Find the closing brace of the apply block and add the package before it
-  // Pattern: PackageList(this).packages.apply { ... }
-  const applyBlockPattern = /(PackageList\(this\)\.packages\.apply\s*\{[\s\S]*?)(            \})/;
-  
-  if (applyBlockPattern.test(content)) {
-    content = content.replace(
-      applyBlockPattern,
-      '$1              add(AppMonitorPackage())\n$2'
-    );
+  // Register AppDiscoveryPackage
+  if (!content.includes('add(AppDiscoveryPackage())')) {
+    const applyBlockPattern = /(PackageList\(this\)\.packages\.apply\s*\{[\s\S]*?)(            \})/;
     
-    fs.writeFileSync(mainApplicationPath, content);
-    console.log(`[${PLUGIN_NAME}] ✅ Registered AppMonitorPackage in MainApplication.kt`);
+    if (applyBlockPattern.test(content)) {
+      content = content.replace(
+        applyBlockPattern,
+        '$1              add(AppDiscoveryPackage())\n$2'
+      );
+      modified = true;
+      console.log(`[${PLUGIN_NAME}] ✅ Registered AppDiscoveryPackage in MainApplication.kt`);
+    } else {
+      console.warn(`[${PLUGIN_NAME}] Could not find package registration location for AppDiscoveryPackage`);
+    }
   } else {
-    console.warn(`[${PLUGIN_NAME}] Could not find package registration location in MainApplication.kt`);
-    console.warn(`[${PLUGIN_NAME}] Please manually add: add(AppMonitorPackage()) to getPackages() in MainApplication.kt`);
+    console.log(`[${PLUGIN_NAME}] AppDiscoveryPackage already registered in MainApplication.kt`);
+  }
+  
+  if (modified) {
+    fs.writeFileSync(mainApplicationPath, content);
   }
 }
 
@@ -223,6 +262,52 @@ function withAndroidManifestModifications(config) {
       throw new Error('[withForegroundService] AndroidManifest.xml not found');
     }
     
+    // Add <queries> block for launcher intent discovery (Android 11+ package visibility)
+    // This allows us to discover ALL user-launchable apps without QUERY_ALL_PACKAGES
+    if (!manifest.queries) {
+      manifest.queries = [];
+    }
+    
+    const queries = Array.isArray(manifest.queries) ? manifest.queries : [manifest.queries];
+    
+    // Check if launcher intent query already exists
+    const hasLauncherQuery = queries.some((query) => {
+      if (!query.intent) return false;
+      const intents = Array.isArray(query.intent) ? query.intent : [query.intent];
+      return intents.some((intent) => {
+        const actions = intent.action ? (Array.isArray(intent.action) ? intent.action : [intent.action]) : [];
+        const categories = intent.category ? (Array.isArray(intent.category) ? intent.category : [intent.category]) : [];
+        const hasMainAction = actions.some(a => a.$['android:name'] === 'android.intent.action.MAIN');
+        const hasLauncherCategory = categories.some(c => c.$['android:name'] === 'android.intent.category.LAUNCHER');
+        return hasMainAction && hasLauncherCategory;
+      });
+    });
+    
+    if (!hasLauncherQuery) {
+      queries.push({
+        intent: [
+          {
+            action: [
+              {
+                $: {
+                  'android:name': 'android.intent.action.MAIN',
+                },
+              },
+            ],
+            category: [
+              {
+                $: {
+                  'android:name': 'android.intent.category.LAUNCHER',
+                },
+              },
+            ],
+          },
+        ],
+      });
+      manifest.queries = queries;
+      console.log(`[${PLUGIN_NAME}] Added <queries> block for launcher intent discovery (Android 11+ package visibility)`);
+    }
+    
     // Add required permissions
     if (!manifest['uses-permission']) {
       manifest['uses-permission'] = [];
@@ -259,6 +344,21 @@ function withAndroidManifestModifications(config) {
         },
       });
       console.log(`[${PLUGIN_NAME}] Added WAKE_LOCK permission`);
+    }
+    
+    // Add PACKAGE_USAGE_STATS permission (for UsageStats discovery)
+    const hasUsageStatsPermission = permissions.some(
+      (perm) => perm.$['android:name'] === 'android.permission.PACKAGE_USAGE_STATS'
+    );
+    
+    if (!hasUsageStatsPermission) {
+      permissions.push({
+        $: {
+          'android:name': 'android.permission.PACKAGE_USAGE_STATS',
+          'tools:ignore': 'ProtectedPermissions',
+        },
+      });
+      console.log(`[${PLUGIN_NAME}] Added PACKAGE_USAGE_STATS permission`);
     }
     
     manifest['uses-permission'] = permissions;

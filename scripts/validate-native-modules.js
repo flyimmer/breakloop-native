@@ -47,6 +47,11 @@ const requiredPackages = [
     registration: 'add(AppMonitorPackage())',
     description: 'Core native module for app monitoring and interventions',
   },
+  {
+    name: 'AppDiscoveryPackage',
+    registration: 'add(AppDiscoveryPackage())',
+    description: 'Multi-source app discovery (launcher, UsageStats, accessibility)',
+  },
 ];
 
 let allRegistered = true;

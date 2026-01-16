@@ -17,6 +17,68 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Validation is mandatory** - if `npm run validate:native` fails, the module won't work.
 
+### Native Code Verification Protocol (MANDATORY)
+
+**BEFORE modifying ANY Kotlin file, READ THIS:**
+
+Every Kotlin change MUST follow this verification protocol. Skipping steps causes silent failures that waste hours.
+
+**The 10-Step Verification Process:**
+
+1. **Edit** Kotlin file in `plugins/src/android/java/`
+2. **Verify source** - Check your changes are in the file you edited
+3. **Sync** - Run `npm run sync:kotlin`
+4. **Verify sync** - Diff source and synced files (must be identical)
+5. **Clean** - Run `cd android && ./gradlew clean && cd ..`
+6. **Build** - Run `npm run android`
+7. **Verify build** - Check logs show `:app:compileDebugKotlin` (not UP-TO-DATE)
+8. **Verify APK** - Check APK timestamp is recent
+9. **Test** - Open relevant screen in app
+10. **Verify logs** - Native logs must appear within 5 seconds
+
+**If ANY verification step fails, STOP and fix it before continuing.**
+
+**Common Silent Failures:**
+- Sync says "Already up to date" but you just made changes → Force re-sync
+- Build shows `:app:compileDebugKotlin UP-TO-DATE` → Delete `kotlin-classes` directory, then `./gradlew clean`
+- No native logs appear → Code isn't in APK, delete `kotlin-classes` and rebuild from step 1
+- Compiled class timestamp older than source → `./gradlew clean` didn't work, delete `kotlin-classes` manually
+
+**Red Flag Commands:**
+- ❌ `npm run sync:kotlin` alone (no verification)
+- ❌ `npm run android` without deleting `kotlin-classes` and `./gradlew clean` first
+- ❌ `./gradlew clean` alone (doesn't delete compiled Kotlin classes!)
+- ❌ Assuming build worked because it succeeded
+
+**Correct Workflow:**
+```bash
+# 1. Edit file in plugins/src/android/java/
+# 2. Verify changes in source file
+Select-String -Path "plugins/src/android/java/.../AppMonitorModule.kt" -Pattern "YOUR_CHANGE"
+
+# 3. Sync
+npm run sync:kotlin
+
+# 4. Verify sync worked (files must be identical)
+$source = Get-Content "plugins/src/android/java/.../AppMonitorModule.kt" -Raw
+$synced = Get-Content "android/app/src/main/java/.../AppMonitorModule.kt" -Raw
+if ($source -ne $synced) { Write-Host "SYNC FAILED!" }
+
+# 5. Clean (MANDATORY) - Delete Kotlin compiled classes first!
+Remove-Item -Recurse -Force android\app\build\tmp\kotlin-classes -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force android\app\build\intermediates\classes -ErrorAction SilentlyContinue
+cd android && ./gradlew clean && cd ..
+
+# 6. Build
+npm run android
+
+# 7. Test immediately - logs must appear
+adb logcat -c
+adb logcat -s AppMonitorModule:*
+```
+
+See `spec/development_workflow_guide_c213276d.plan.md` for complete verification protocol.
+
 ## Development Commands
 
 ```bash
@@ -50,18 +112,38 @@ npm run lint
 - `plugins/src/android/java/.../*.kt`
 - These are the SOURCE OF TRUTH
 
-**Workflow:**
-1. Edit Kotlin file in `plugins/src/android/java/com/anonymous/breakloopnative/`
-2. Run `npm run android` (automatically syncs files before building)
-3. Build uses updated code ✨
+**Standard Workflow (Editing Existing Files):**
+```bash
+# 1. Edit Kotlin file in plugins/src/android/java/com/anonymous/breakloopnative/
+# 2. Run the app (auto-syncs and builds)
+npm run android
+```
+
+**⚠️ IMPORTANT: First Time / Native Module Registration Issues**
+
+If native logs don't appear or you get "Native module not found":
+
+```bash
+# 1. Check if module is registered
+grep "AppMonitorPackage" android/app/src/main/java/com/anonymous/breakloopnative/MainApplication.kt
+
+# 2. If NOT found, run prebuild to register the module
+npx expo prebuild --platform android --clean
+npm run android
+```
 
 **When to use `expo prebuild`:**
-- Adding/removing Kotlin files (not just editing)
-- Changing AndroidManifest.xml structure
-- Modifying plugin configuration
-- Setting up project for the first time
+- ✅ First time building project / after cloning
+- ✅ Adding NEW Kotlin files (not just editing existing ones)
+- ✅ Native module not registered (module not found errors)
+- ✅ Changing AndroidManifest.xml structure
+- ✅ Modifying plugin configuration
+- ❌ NOT needed for editing existing Kotlin files (if module already registered)
 
-For **editing existing Kotlin files**, just use `npm run android` - the sync system handles it automatically!
+**Diagnostic: If native logs don't appear after `npm run android`:**
+1. Check if `AppMonitorPackage` is in `MainApplication.kt` (see command above)
+2. If missing → Run `npx expo prebuild --platform android --clean`
+3. If present → Uninstall app completely: `adb uninstall com.anonymous.breakloopnative`, then `npm run android`
 
 See `docs/KOTLIN_FILE_SYNC.md` for complete workflow documentation.
 

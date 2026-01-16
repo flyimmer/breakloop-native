@@ -21,6 +21,8 @@ const KOTLIN_FILES = [
   'AppMonitorService.kt',
   'SystemSurfaceActivity.kt',
   'SystemBrainService.kt',
+  'AppDiscoveryModule.kt',
+  'AppDiscoveryPackage.kt',
 ];
 
 function syncKotlinFiles() {

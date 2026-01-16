@@ -13,6 +13,7 @@
     "sync:kotlin": "node scripts/sync-kotlin-files.js",
     "validate:kotlin": "node scripts/validate-kotlin-plugin.js",
     "validate:native": "node scripts/validate-native-modules.js",
+    "clean:native": "powershell -Command \"Remove-Item -Recurse -Force android/app/build/tmp/kotlin-classes -ErrorAction SilentlyContinue; Remove-Item -Recurse -Force android/app/build/intermediates/classes -ErrorAction SilentlyContinue; cd android; ./gradlew clean\"",
     "prebuild": "npm run validate:kotlin && expo prebuild"
   },
   "dependencies": {

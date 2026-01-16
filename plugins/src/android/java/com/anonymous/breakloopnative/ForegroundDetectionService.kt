@@ -939,6 +939,10 @@ class ForegroundDetectionService : AccessibilityService() {
         // Update last detected package
         lastPackageName = packageName
         
+        // Emit app discovery event for AppDiscoveryModule
+        // This allows JavaScript to discover apps as they're opened
+        emitAppDiscoveryEvent(packageName)
+        
         // PHASE 4.2: Update foreground app for timer expiration checks
         updateCurrentForegroundApp(packageName)
 
@@ -997,6 +1001,38 @@ class ForegroundDetectionService : AccessibilityService() {
             Log.d(TAG, "  └─ Event emitted to JavaScript: $packageName")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to emit foreground app changed event", e)
+        }
+    }
+    
+    /**
+     * Emit app discovery event for AppDiscoveryModule
+     * 
+     * Called when TYPE_WINDOW_STATE_CHANGED is detected.
+     * Allows JavaScript to discover apps as they're opened (accessibility source).
+     * 
+     * @param packageName Package name of the discovered app
+     */
+    private fun emitAppDiscoveryEvent(packageName: String) {
+        try {
+            val reactContext = AppMonitorService.getReactContext()
+            if (reactContext == null) {
+                Log.d(TAG, "React context not available for app discovery event")
+                return
+            }
+            
+            val params = Arguments.createMap().apply {
+                putString("packageName", packageName)
+                putString("source", "accessibility")
+                putDouble("timestamp", System.currentTimeMillis().toDouble())
+            }
+            
+            reactContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit("onAppDiscovered", params)
+                
+            Log.d(TAG, "🔍 App discovery event emitted: $packageName (accessibility)")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to emit app discovery event", e)
         }
     }
     
