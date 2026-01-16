@@ -40,6 +40,16 @@ class AppDiscoveryModule(reactContext: ReactApplicationContext) : ReactContextBa
         return "AppDiscoveryModule"
     }
     
+    @ReactMethod
+    fun addListener(eventName: String) {
+        // Required for NativeEventEmitter - stub implementation
+    }
+
+    @ReactMethod
+    fun removeListeners(count: Int) {
+        // Required for NativeEventEmitter - stub implementation
+    }
+    
     /**
      * Convert Drawable to base64-encoded PNG string
      */
