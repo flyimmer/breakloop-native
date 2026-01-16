@@ -50,11 +50,8 @@ class AppDiscoveryService {
    */
   async initialize(): Promise<void> {
     if (this.isInitialized) {
-      console.log('[AppDiscovery] Already initialized');
       return;
     }
-
-    console.log('[AppDiscovery] Initializing...');
 
     try {
       // 0. Run one-time migration (if needed)
@@ -65,11 +62,9 @@ class AppDiscoveryService {
       
       // 1. Load persisted apps
       const cached = await loadDiscoveredApps();
-      console.log(`[AppDiscovery] Loaded ${cached.length} cached apps`);
 
       // 2. Discover launcher apps (fast seed)
       const launcherApps = await AppDiscoveryModule.discoverLauncherApps();
-      console.log(`[AppDiscovery] Found ${launcherApps.length} launcher apps`);
       await mergeApps(
         launcherApps.map(app => app.packageName),
         'launcher'
@@ -89,7 +84,6 @@ class AppDiscoveryService {
       await markForceReresolutionComplete();
 
       this.isInitialized = true;
-      console.log('[AppDiscovery] Initialization complete');
     } catch (error) {
       console.error('[AppDiscovery] Initialization failed:', error);
       throw error;
@@ -106,13 +100,10 @@ class AppDiscoveryService {
     try {
       const hasPermission = await AppDiscoveryModule.hasUsageStatsPermission();
       if (!hasPermission) {
-        console.log('[AppDiscovery] UsageStats permission not granted, skipping discovery');
         return;
       }
 
-      console.log('[AppDiscovery] Starting UsageStats discovery...');
       const usageApps = await AppDiscoveryModule.discoverUsageStatsApps(14);
-      console.log(`[AppDiscovery] Found ${usageApps.length} apps from UsageStats`);
 
       await mergeApps(
         usageApps.map(app => app.packageName),
@@ -123,9 +114,7 @@ class AppDiscoveryService {
       // Resolve metadata for newly discovered apps
       await this.resolveAllMetadata();
     } catch (error: any) {
-      if (error.code === 'NO_PERMISSION') {
-        console.log('[AppDiscovery] UsageStats permission not granted, will retry later');
-      } else {
+      if (error.code !== 'NO_PERMISSION') {
         console.error('[AppDiscovery] UsageStats discovery failed:', error);
       }
     }
@@ -144,15 +133,11 @@ class AppDiscoveryService {
     this.accessibilityListener = appDiscoveryEmitter.addListener(
       'onAppDiscovered',
       async (event: DiscoveredAppInfo) => {
-        console.log(`[AppDiscovery] App discovered via accessibility: ${event.packageName}`);
-        
         await mergeApps([event.packageName], 'accessibility');
         await this.resolveMetadata(event.packageName);
         this.notifyListeners();
       }
     );
-
-    console.log('[AppDiscovery] Listening for accessibility discoveries');
   }
 
   /**
@@ -160,7 +145,6 @@ class AppDiscoveryService {
    */
   async resolveAllMetadata(): Promise<void> {
     const unresolved = await getUnresolvedApps();
-    console.log(`[AppDiscovery] Resolving metadata for ${unresolved.length} apps`);
 
     for (const app of unresolved) {
       await this.resolveMetadata(app.packageName);
@@ -178,7 +162,6 @@ class AppDiscoveryService {
       const metadata = await AppDiscoveryModule.resolveAppMetadata(packageName);
 
       if (metadata.uninstalled) {
-        console.log(`[AppDiscovery] App uninstalled: ${packageName}`);
         await markUninstalled(packageName);
         this.notifyListeners();
         return;
@@ -205,9 +188,6 @@ class AppDiscoveryService {
           });
           this.notifyListeners();
         }
-      } else {
-        // Temporary failure - will retry later
-        console.log(`[AppDiscovery] Metadata resolution failed for ${packageName}: ${metadata.error}`);
       }
     } catch (error) {
       console.error(`[AppDiscovery] Failed to resolve metadata for ${packageName}:`, error);
@@ -268,8 +248,6 @@ class AppDiscoveryService {
    * Should be called daily or on app start.
    */
   async reconcile(): Promise<void> {
-    console.log('[AppDiscovery] Running reconciliation...');
-
     // Retry metadata resolution for unresolved apps
     await this.resolveAllMetadata();
 

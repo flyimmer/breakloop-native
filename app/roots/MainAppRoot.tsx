@@ -47,10 +47,6 @@ const Stack = createNativeStackNavigator<MainAppStackParamList>();
 export default function MainAppRoot() {
   const colorScheme = useColorScheme();
 
-  if (__DEV__) {
-    console.log('[MainAppRoot] Rendering main app UI');
-  }
-
   return (
     <NavigationContainer theme={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack.Navigator

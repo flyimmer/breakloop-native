@@ -41,12 +41,6 @@ export async function loadTimerState(): Promise<TimerState> {
     const json = await AsyncStorage.getItem(STATE_KEY);
     if (json) {
       const state = JSON.parse(json);
-      console.log('[System Brain] State loaded from storage:', {
-        quickTaskTimers: Object.keys(state.quickTaskTimers || {}).length,
-        intentionTimers: Object.keys(state.intentionTimers || {}).length,
-        usageHistoryLength: (state.quickTaskUsageHistory || []).length,
-        lastMeaningfulApp: state.lastMeaningfulApp,
-      });
       
       // Migrate expiredQuickTasks from old array format to new Record format
       const rawExpired = state.expiredQuickTasks || state.pendingQuickTaskIntervention || [];
@@ -71,7 +65,6 @@ export async function loadTimerState(): Promise<TimerState> {
       
       if (!state.quickTaskPhaseByApp) {
         // Migration: Initialize quickTaskPhaseByApp if missing
-        console.log('[System Brain] Migrating: initializing quickTaskPhaseByApp');
         
         // CONSERVATIVE MIGRATION: Only infer ACTIVE from active (non-expired) timers
         // We can safely infer ACTIVE because:
@@ -90,12 +83,6 @@ export async function loadTimerState(): Promise<TimerState> {
           // Only infer ACTIVE if timer exists AND is not expired
           if (timer && currentTimestamp < timer.expiresAt) {
             quickTaskPhaseByApp[app] = 'ACTIVE';
-            console.log('[Migration] Inferred ACTIVE phase from existing active timer:', {
-              app,
-              expiresAt: timer.expiresAt,
-              expiresAtTime: new Date(timer.expiresAt).toISOString(),
-              remainingSeconds: Math.round((timer.expiresAt - currentTimestamp) / 1000),
-            });
           } else {
             // Timer expired or missing → do NOT infer phase
             // App will start fresh without a phase (correct behavior)
@@ -163,13 +150,6 @@ export async function saveTimerState(state: TimerState): Promise<void> {
   try {
     const json = JSON.stringify(state);
     await AsyncStorage.setItem(STATE_KEY, json);
-    console.log('[System Brain] State saved to storage:', {
-      quickTaskTimers: Object.keys(state.quickTaskTimers).length,
-      intentionTimers: Object.keys(state.intentionTimers).length,
-      usageHistoryLength: state.quickTaskUsageHistory.length,
-      lastMeaningfulApp: state.lastMeaningfulApp,
-      expiredQuickTasks: state.expiredQuickTasks,
-    });
   } catch (e) {
     console.warn('[System Brain] Failed to save state:', e);
   }
@@ -421,7 +401,6 @@ export function mergeWithInMemoryCache(persistedState: TimerState): TimerState {
   for (const app in inMemoryStateCache.expiredQuickTasks) {
     if (!mergedExpiredQuickTasks[app]) {
       mergedExpiredQuickTasks[app] = inMemoryStateCache.expiredQuickTasks[app];
-      console.log('[SystemBrain] Merge: Added new expiredQuickTask flag from memory:', app);
     }
   }
   
@@ -429,8 +408,6 @@ export function mergeWithInMemoryCache(persistedState: TimerState): TimerState {
     ...persistedState,
     expiredQuickTasks: mergedExpiredQuickTasks,
   };
-  
-  console.log('[SystemBrain] Merged in-memory overrides into persisted state');
   
   return mergedState;
 }

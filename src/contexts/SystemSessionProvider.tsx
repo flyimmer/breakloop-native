@@ -115,10 +115,6 @@ function systemSessionReducer(
   state: SystemSessionState,
   event: SystemSessionEvent | { type: 'UPDATE_FOREGROUND_APP'; app: string | null }
 ): SystemSessionState {
-  if (__DEV__) {
-    console.log('[SystemSession] Event:', event.type, event);
-  }
-
   // Handle foreground app updates (internal event)
   if (event.type === 'UPDATE_FOREGROUND_APP') {
     return {
@@ -131,12 +127,6 @@ function systemSessionReducer(
   // IMPORTANT: All session events exit bootstrap phase
   switch (event.type) {
     case 'START_INTERVENTION':
-      if (__DEV__) {
-        console.log('[SystemSession] Starting INTERVENTION session for app:', event.app);
-        if (state.bootstrapState === 'BOOTSTRAPPING') {
-          console.log('[SystemSession] Bootstrap phase complete - session established');
-        }
-      }
       return {
         ...state,
         session: { kind: 'INTERVENTION', app: event.app },
@@ -144,12 +134,6 @@ function systemSessionReducer(
       };
 
     case 'START_QUICK_TASK':
-      if (__DEV__) {
-        console.log('[SystemSession] Starting QUICK_TASK session for app:', event.app);
-        if (state.bootstrapState === 'BOOTSTRAPPING') {
-          console.log('[SystemSession] Bootstrap phase complete - session established');
-        }
-      }
       return {
         ...state,
         session: { kind: 'QUICK_TASK', app: event.app },
@@ -157,12 +141,6 @@ function systemSessionReducer(
       };
 
     case 'START_POST_QUICK_TASK_CHOICE':
-      if (__DEV__) {
-        console.log('[SystemSession] Starting POST_QUICK_TASK_CHOICE session for app:', event.app);
-        if (state.bootstrapState === 'BOOTSTRAPPING') {
-          console.log('[SystemSession] Bootstrap phase complete - session established');
-        }
-      }
       return {
         ...state,
         session: { kind: 'POST_QUICK_TASK_CHOICE', app: event.app },
@@ -170,12 +148,6 @@ function systemSessionReducer(
       };
 
     case 'START_ALTERNATIVE_ACTIVITY':
-      if (__DEV__) {
-        console.log('[SystemSession] Starting ALTERNATIVE_ACTIVITY session for app:', event.app);
-        if (state.bootstrapState === 'BOOTSTRAPPING') {
-          console.log('[SystemSession] Bootstrap phase complete - session established');
-        }
-      }
       return {
         ...state,
         session: { kind: 'ALTERNATIVE_ACTIVITY', app: event.app },
@@ -185,13 +157,6 @@ function systemSessionReducer(
       };
 
     case 'REPLACE_SESSION':
-      if (__DEV__) {
-        console.log('[SystemSession] Replacing session atomically:', {
-          from: state.session?.kind,
-          to: event.newKind,
-          app: event.app,
-        });
-      }
       return {
         ...state,
         session: { kind: event.newKind, app: event.app },
@@ -200,23 +165,8 @@ function systemSessionReducer(
       };
 
     case 'END_SESSION':
-      if (__DEV__) {
-        console.log('[SystemSession] ========================================');
-        console.log('[SystemSession] END_SESSION - Starting teardown', {
-          currentSession: state.session,
-          bootstrapState: state.bootstrapState,
-          shouldLaunchHome: event.shouldLaunchHome ?? true,
-        });
-        if (state.bootstrapState === 'BOOTSTRAPPING') {
-          console.log('[SystemSession] Bootstrap phase complete - explicit "do nothing" decision');
-        }
-      }
-      
       // Clear Quick Task suppression when intervention completes
       if (state.session?.kind === 'INTERVENTION') {
-        if (__DEV__) {
-          console.log('[SystemSession] Intervention ended - clearing Quick Task suppression');
-        }
         clearQuickTaskSuppression();
       }
       
@@ -310,9 +260,6 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
     const subscription = emitter.addListener(
       'onForegroundAppChanged',
       (event: { packageName: string; timestamp: number }) => {
-        if (__DEV__) {
-          console.log('[SystemSession] Foreground app changed:', event.packageName);
-        }
         dispatch({ type: 'UPDATE_FOREGROUND_APP', app: event.packageName });
       }
     );
@@ -349,9 +296,6 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
    * Event dispatcher - ONLY way to modify session (Rule 2)
    */
   const dispatchSystemEvent = (event: SystemSessionEvent) => {
-    if (__DEV__) {
-      console.log('[SystemSession] dispatchSystemEvent:', event);
-    }
     dispatch(event);
   };
 
@@ -367,7 +311,6 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
       return;
     }
     hasEndedSessionRef.current = true;
-    console.log('[SystemSurfaceInvariant] END_SESSION dispatched');
     dispatchSystemEvent({ type: 'END_SESSION', shouldLaunchHome });
   };
   
@@ -379,24 +322,17 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
    */
   useEffect(() => {
     if (state.session === null && state.bootstrapState === 'READY') {
-      console.log('[SystemSurfaceInvariant] ========================================');
-      console.log('[SystemSurfaceInvariant] Teardown sequence complete', {
-        sessionNull: state.session === null,
-        bootstrapReady: state.bootstrapState === 'READY',
-        shouldLaunchHome: state.shouldLaunchHome,
-      });
       clearSystemSurfaceActive();  // Clear in-memory flag only (JS side)
       
       // PHASE 4.1: Notify Native that SystemSurface is inactive
       if (AppMonitorModule) {
         AppMonitorModule.setSystemSurfaceActive(false).catch((error: any) => {
-          console.warn('[SystemSurfaceInvariant] Failed to notify Native of surface finish:', error);
+          // Silent failure - lifecycle coordination is best-effort
         });
       }
       
       hasEndedSessionRef.current = false;  // Reset for next session
-      console.log('[SystemSurfaceInvariant] FINISH confirmed — surface inactive');
-      console.log('[SystemSurfaceInvariant] ========================================');
+      console.log('[SS][CLOSE]');
     }
   }, [state.session, state.bootstrapState]);
 

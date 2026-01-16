@@ -220,7 +220,6 @@ let interventionStateGetter: (() => { state: string; targetApp: string | null })
  */
 export function setInterventionDispatcher(dispatcher: (action: any) => void): void {
   interventionDispatcher = dispatcher;
-  console.log('[OS Trigger Brain] Intervention dispatcher connected (DEPRECATED)');
 }
 
 /**
@@ -233,7 +232,6 @@ export function setInterventionDispatcher(dispatcher: (action: any) => void): vo
  */
 export function setSystemSessionDispatcher(dispatcher: (event: any) => void): void {
   systemSessionDispatcher = dispatcher;
-  console.log('[OS Trigger Brain] System Session dispatcher connected');
 }
 
 /**
@@ -246,7 +244,6 @@ export function setSystemSessionDispatcher(dispatcher: (event: any) => void): vo
  */
 export function setInterventionStateGetter(getter: () => { state: string; targetApp: string | null }): void {
   interventionStateGetter = getter;
-  console.log('[OS Trigger Brain] Intervention state getter connected');
 }
 
 
@@ -264,7 +261,6 @@ export function dispatchQuickTaskExpired(packageName: string): void {
     return;
   }
   
-  console.log('[OS Trigger Brain] Dispatching SHOW_EXPIRED for app:', packageName);
   interventionDispatcher({
     type: 'SHOW_EXPIRED',
     app: packageName,
@@ -295,11 +291,6 @@ export function handleForegroundAppChange(
   
   if (lastForegroundApp !== null && lastForegroundApp !== packageName) {
     lastExitTimestamps.set(lastForegroundApp, timestamp);
-    console.log('[OS Trigger Brain] App exited foreground:', {
-      packageName: lastForegroundApp,
-      exitTimestamp: timestamp,
-      exitTime: new Date(timestamp).toISOString(),
-    });
   }
 
   // ============================================================================
@@ -312,18 +303,7 @@ export function handleForegroundAppChange(
     // Record launcher event time for transition detection
     lastLauncherEventTime = timestamp;
     
-    // Launcher detected - log but don't treat as meaningful app
-    if (__DEV__) {
-      console.log('[OS Trigger Brain] Launcher event:', {
-        packageName,
-        timestamp,
-      });
-    }
-    
-    // Debug log for BreakLoop infrastructure filtering
-    if (packageName === 'com.anonymous.breakloopnative') {
-      console.log('[OS Trigger Brain] BreakLoop infrastructure detected, lastMeaningfulApp unchanged:', lastMeaningfulApp);
-    }
+    // Launcher detected - don't treat as meaningful app
     
     // Update raw tracking (for exit inference) but NOT meaningful app tracking
     lastForegroundApp = packageName;
@@ -343,12 +323,7 @@ export function handleForegroundAppChange(
   const isLauncherTransition = lastLauncherEventTime > 0 && timeSinceLauncher < LAUNCHER_TRANSITION_THRESHOLD_MS;
   
   if (isLauncherTransition) {
-    console.log('[OS Trigger Brain] Launcher was transition (not destination):', {
-      fromApp: lastMeaningfulApp,
-      toApp: packageName,
-      timeSinceLauncher,
-      threshold: LAUNCHER_TRANSITION_THRESHOLD_MS,
-    });
+    // Launcher was a transition, not a destination
   }
   
   // Reset launcher time
@@ -358,14 +333,7 @@ export function handleForegroundAppChange(
   // Step 4: Handle meaningful app entry
   // ============================================================================
   
-  // Log the new meaningful app entering foreground (only on actual change)
-  if (lastForegroundApp !== packageName) {
-    console.log('[OS Trigger Brain] App entered foreground:', {
-      packageName,
-      timestamp,
-      enterTime: new Date(timestamp).toISOString(),
-    });
-  }
+  // Track the new meaningful app entering foreground
 
   // ============================================================================
   // Step 5: Monitored app intervention logic
@@ -376,13 +344,6 @@ export function handleForegroundAppChange(
   
   if (!isMonitored) {
     // Not a monitored app - skip intervention logic
-    if (lastMeaningfulApp !== packageName) {
-      console.log('[OS Trigger Brain] App is NOT monitored, skipping intervention:', {
-        packageName,
-        monitoredAppsCount: getMonitoredAppsList().length,
-        monitoredApps: getMonitoredAppsList(),
-      });
-    }
     // Update tracking but don't trigger intervention
     lastForegroundApp = packageName;
     if (packageName !== 'com.anonymous.breakloopnative') {
@@ -392,14 +353,6 @@ export function handleForegroundAppChange(
   }
   
   if (isMonitored) {
-    // Log entry only when app actually changes
-    if (lastMeaningfulApp !== packageName) {
-      console.log('[OS Trigger Brain] Monitored app entered foreground:', {
-        packageName,
-        timestamp,
-        time: new Date(timestamp).toISOString(),
-      });
-    }
 
     // ============================================================================
     // PRIORITY 0: Quick Task timer cleanup REMOVED
@@ -413,14 +366,6 @@ export function handleForegroundAppChange(
     const intentionJustExpired = intentionTimer && timestamp > intentionTimer.expiresAt;
     
     if (intentionJustExpired) {
-      const expiredSec = Math.round((timestamp - intentionTimer.expiresAt) / 1000);
-      console.log('[OS Trigger Brain] Intention timer expired (will be deleted)', {
-        packageName,
-        expiresAt: intentionTimer.expiresAt,
-        expiresAtTime: new Date(intentionTimer.expiresAt).toISOString(),
-        expiredMs: timestamp - intentionTimer.expiresAt,
-        expiredSec: `${expiredSec}s ago`,
-      });
       // Delete the expired timer
       intentionTimers.delete(packageName);
     }
@@ -433,22 +378,8 @@ export function handleForegroundAppChange(
     if (lastMeaningfulApp === packageName && !intentionJustExpired && !force) {
       // This is a heartbeat event for the same app - skip all logic
       // UNLESS intention timer just expired OR force flag is set
-      if (__DEV__) {
-        console.log('[OS Trigger Brain] Duplicate event filtered (same meaningful app):', {
-          packageName,
-          lastMeaningfulApp,
-        });
-      }
       lastForegroundApp = packageName;
       return;
-    }
-    
-    if (lastMeaningfulApp === packageName && intentionJustExpired) {
-      console.log('[OS Trigger Brain] Heartbeat event BUT intention timer just expired - will re-evaluate logic');
-    }
-    
-    if (lastMeaningfulApp === packageName && force) {
-      console.log('[OS Trigger Brain] Duplicate event BUT force === true (SystemSurface bootstrap) - will re-evaluate logic');
     }
 
     // ============================================================================
@@ -466,15 +397,6 @@ export function handleForegroundAppChange(
     // because per spec: "t_intention counts down independently of which app is in foreground"
     for (const [monitoredPkg, timer] of intentionTimers.entries()) {
       if (timestamp > timer.expiresAt) {
-        console.log('[OS Trigger Brain] Monitored app timer expired (not in foreground) — intervention on next entry', {
-          packageName: monitoredPkg,
-          currentForegroundApp: packageName,
-          expiresAt: timer.expiresAt,
-          expiresAtTime: new Date(timer.expiresAt).toISOString(),
-          currentTimestamp: timestamp,
-          currentTime: new Date(timestamp).toISOString(),
-          expiredMs: timestamp - timer.expiresAt,
-        });
         // Timer expired while user was in different app
         // Intervention will trigger when they re-open the monitored app
       }
@@ -516,16 +438,7 @@ export function getCurrentMeaningfulApp(): string | null {
  */
 export function setIntentionTimer(packageName: string, durationMs: number, currentTimestamp: number): void {
   const expiresAt = currentTimestamp + durationMs;
-  const durationSec = Math.round(durationMs / 1000);
   intentionTimers.set(packageName, { expiresAt });
-  
-  console.log('[OS Trigger Brain] Intention timer set', {
-    packageName,
-    durationMs,
-    durationSec: `${durationSec}s`,
-    expiresAt,
-    expiresAtTime: new Date(expiresAt).toISOString(),
-  });
 }
 
 /**
@@ -580,14 +493,6 @@ export function setQuickTaskTimer(packageName: string, durationMs: number, curre
     const { NativeModules, Platform } = require('react-native');
     if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
       NativeModules.AppMonitorModule.storeQuickTaskTimer(packageName, expiresAt);
-      console.log('[OS Trigger Brain] Quick Task timer stored in native', {
-        packageName,
-        durationMs,
-        durationMin: `${durationMin}min`,
-        expiresAt,
-        expiresAtTime: new Date(expiresAt).toISOString(),
-        note: 'Native will emit TIMER_SET → System Brain persists → TIMER_EXPIRED → System Brain classifies',
-      });
     }
   } catch (e) {
     console.warn('[OS Trigger Brain] Failed to store Quick Task timer in native layer:', e);
@@ -652,75 +557,23 @@ export function checkForegroundIntentionExpiration(currentTimestamp: number): vo
   // IMPORTANT: Only trigger intervention for the CURRENT foreground app
   // For background apps, just delete the expired timer - intervention will trigger on next entry
   
-  // Debug: Always log that the check is running
-  if (__DEV__ && intentionTimers.size > 0) {
-    console.log('[OS Trigger Brain] Periodic timer check running', {
-      currentTimestamp,
-      currentTime: new Date(currentTimestamp).toISOString(),
-      activeTimers: intentionTimers.size,
-      currentForegroundApp: lastMeaningfulApp,
-    });
-  }
-  
   for (const [packageName, timer] of intentionTimers.entries()) {
     if (!isMonitoredApp(packageName)) {
       continue;
     }
     
-    // Debug: Log each timer being checked
-    if (__DEV__) {
-      const remainingMs = timer.expiresAt - currentTimestamp;
-      const remainingSec = Math.round(remainingMs / 1000);
-      console.log('[OS Trigger Brain] Checking timer for', {
-        packageName,
-        expiresAt: timer.expiresAt,
-        expiresAtTime: new Date(timer.expiresAt).toISOString(),
-        currentTimestamp,
-        currentTime: new Date(currentTimestamp).toISOString(),
-        remainingMs,
-        remainingSec: `${remainingSec}s`,
-        expired: currentTimestamp > timer.expiresAt,
-        isForeground: packageName === lastMeaningfulApp,
-      });
-    }
-    
     if (currentTimestamp > timer.expiresAt) {
-      const expiredMs = currentTimestamp - timer.expiresAt;
-      const expiredSec = Math.round(expiredMs / 1000);
-      
       // CRITICAL FIX: Only trigger intervention if this is the CURRENT foreground app
       // For background apps, just delete the timer - intervention will trigger on next entry
       const isForeground = packageName === lastMeaningfulApp;
       
       if (isForeground) {
-        console.log('[OS Trigger Brain] Intention timer expired for FOREGROUND app — re-evaluating logic', {
-          packageName,
-          expiresAt: timer.expiresAt,
-          expiresAtTime: new Date(timer.expiresAt).toISOString(),
-          currentTimestamp,
-          currentTime: new Date(currentTimestamp).toISOString(),
-          expiredMs,
-          expiredSec: `${expiredSec}s`,
-        });
-        
         // Clear the expired timer
         intentionTimers.delete(packageName);
         
         // Phase 2: evaluateTriggerLogic() removed
         // System Brain handles all trigger logic evaluation.
       } else {
-        console.log('[OS Trigger Brain] Intention timer expired for BACKGROUND app — deleting timer', {
-          packageName,
-          currentForegroundApp: lastMeaningfulApp,
-          expiresAt: timer.expiresAt,
-          expiresAtTime: new Date(timer.expiresAt).toISOString(),
-          currentTimestamp,
-          currentTime: new Date(currentTimestamp).toISOString(),
-          expiredMs,
-          expiredSec: `${expiredSec}s`,
-          note: 'Timer deleted - intervention will trigger when user returns to this app',
-        });
-        
         // DELETE the expired timer for background app
         // When user returns to this app, handleForegroundAppChange() will see:
         // 1. No intention timer exists (expired)
@@ -743,12 +596,6 @@ export function checkBackgroundIntentionExpiration(currentTimestamp: number): vo
   for (const [packageName, timer] of intentionTimers.entries()) {
     // Only check apps that are NOT the current meaningful app (meaningful app expiration is checked separately)
     if (packageName !== lastMeaningfulApp && currentTimestamp > timer.expiresAt) {
-      console.log('[OS Trigger Brain] Background intention timer expired — intervention on next entry', {
-        packageName,
-        expiresAt: timer.expiresAt,
-        currentTimestamp,
-        expiredMs: currentTimestamp - timer.expiresAt,
-      });
       // Note: Intervention will trigger when app enters foreground
       // Timer is NOT cleared - it will be detected on next entry
     }
@@ -763,7 +610,6 @@ export function checkBackgroundIntentionExpiration(currentTimestamp: number): vo
  */
 export function clearIntentionTimer(packageName: string): void {
   intentionTimers.delete(packageName);
-  console.log('[OS Trigger Brain] Intention timer cleared for app:', packageName);
 }
 
 /**
@@ -780,6 +626,5 @@ export function resetTrackingState(): void {
   // Usage quota is time-based (15-minute rolling window) and should persist
   // until timestamps naturally expire. Clearing it would incorrectly reset
   // the usage count and allow users to bypass the quota limit.
-  console.log('[OS Trigger Brain] Tracking state reset (intention timers cleared, usage history preserved)');
 }
 

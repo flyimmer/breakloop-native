@@ -68,20 +68,12 @@ export async function getQuickTaskRemainingForDisplay(): Promise<QuickTaskDispla
     const remaining = Math.max(0, maxUses - recentUsages.length);
     const windowMinutes = Math.round(windowMs / (60 * 1000));
     
-    console.log('[System Brain Public API] Quick Task remaining (display only):', {
-      maxUses,
-      recentUsages: recentUsages.length,
-      remaining,
-      windowMinutes,
-    });
-    
     // Return simple DTO (no internal details exposed)
     return {
       remaining,
       windowMinutes,
     };
   } catch (e) {
-    console.warn('[System Brain Public API] Failed to calculate remaining uses:', e);
     // Fallback DTO
     return {
       remaining: 1,
@@ -111,9 +103,6 @@ export async function getQuickTaskRemainingForDisplay(): Promise<QuickTaskDispla
  */
 export async function setLastIntervenedApp(packageName: string): Promise<void> {
   try {
-    console.log('[System Brain Public API] Setting lastIntervenedApp:', packageName);
-    console.log('[System Brain Public API] Writing to AsyncStorage immediately (event-driven coordination)');
-    
     // Load System Brain state
     const stateJson = await AsyncStorage.getItem('system_brain_state_v1');
     const state = stateJson ? JSON.parse(stateJson) : {};
@@ -124,11 +113,7 @@ export async function setLastIntervenedApp(packageName: string): Promise<void> {
     // Save updated state IMMEDIATELY (blocking write)
     // System Brain will load this on next event
     await AsyncStorage.setItem('system_brain_state_v1', JSON.stringify(state));
-    
-    console.log('[System Brain Public API] ✅ lastIntervenedApp persisted to AsyncStorage');
-    console.log('[System Brain Public API] Next System Brain event will load this value');
   } catch (e) {
-    console.error('[System Brain Public API] ❌ Failed to set lastIntervenedApp:', e);
     throw e; // Propagate error so caller knows coordination failed
   }
 }
@@ -168,12 +153,6 @@ export async function transitionQuickTaskToActive(
   // STEP 4: Decrement global quota (record usage - SECOND, after phase set)
   // Add to persisted usage history
   state.quickTaskUsageHistory.push(timestamp);
-  console.log('[QuickTask] Quick Task usage recorded (GLOBAL, PERSISTED)', {
-    app,
-    timestamp,
-    totalUsagesGlobal: state.quickTaskUsageHistory.length,
-    note: 'Usage is GLOBAL across all apps and PERSISTED for kill-safety',
-  });
   
   // STEP 5: Save state persistently (THIRD, before in-memory cache)
   await saveTimerState(state);
@@ -185,14 +164,6 @@ export async function transitionQuickTaskToActive(
   // Native needs updated quota for next entry decision
   const { syncQuotaToNative } = require('./decisionEngine');
   await syncQuotaToNative(state);
-  
-  // STEP 8: Log completion (informational only)
-  console.log('[QuickTask] Phase transition: DECISION → ACTIVE', {
-    app,
-    timestamp,
-    remainingUses: state.quickTaskUsageHistory.length,
-    note: 'Phase, quota, and Native cache updated - safe to proceed with timer storage',
-  });
   
   // Function returns - calling code may now safely perform side effects
 }

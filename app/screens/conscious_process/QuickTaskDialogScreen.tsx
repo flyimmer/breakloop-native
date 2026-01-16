@@ -35,10 +35,6 @@ const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorMod
  */
 
 export default function QuickTaskDialogScreen() {
-  console.log('[QuickTaskDialog] ========================================');
-  console.log('[QuickTaskDialog] COMPONENT FUNCTION CALLED!');
-  console.log('[QuickTaskDialog] ========================================');
-
   const { session, dispatchSystemEvent, safeEndSession, setTransientTargetApp } = useSystemSession();
   const [isProcessing, setIsProcessing] = useState(false);
   const [displayInfo, setDisplayInfo] = useState<{ remaining: number; windowMinutes: number } | null>(null);
@@ -85,69 +81,43 @@ export default function QuickTaskDialogScreen() {
 
   // Navigation handlers
   const handleConsciousProcess = async () => {
-    console.log('[QuickTaskDialog] ========================================');
-    console.log('[QuickTaskDialog] handleConsciousProcess called!');
-    console.log('[QuickTaskDialog] isProcessing:', isProcessing);
-    
     if (isProcessing || !session || session.kind !== 'QUICK_TASK') {
-      console.log('[QuickTaskDialog] Already processing or invalid session, ignoring tap');
       return;
     }
     
     setIsProcessing(true);
-    console.log('[QuickTaskDialog] Set isProcessing to true');
     
     try {
       // Clear phase (user chose not to use Quick Task)
-      console.log('[QuickTaskDialog] Clearing Quick Task phase (user chose Conscious Process)...');
       await clearQuickTaskPhase(session.app);
-      console.log('[QuickTaskDialog] Phase cleared - quota unchanged');
       
       // Atomic session replacement - no transient null state
       // This prevents race condition where END_SESSION → session === null → activity finishes
-      console.log('[QuickTaskDialog] Dispatching REPLACE_SESSION (QUICK_TASK → INTERVENTION)...');
       dispatchSystemEvent({ 
         type: 'REPLACE_SESSION', 
         newKind: 'INTERVENTION', 
         app: session.app 
       });
-      console.log('[QuickTaskDialog] REPLACE_SESSION dispatched successfully');
-      console.log('[QuickTaskDialog] SystemSurface will transition to InterventionFlow');
       
       // Reset isProcessing after a delay
       setTimeout(() => {
         setIsProcessing(false);
-        console.log('[QuickTaskDialog] Reset isProcessing to false (timeout)');
       }, 2000);
     } catch (error) {
-      console.error('[QuickTaskDialog] Error in handleConsciousProcess:', error);
       setIsProcessing(false);
     }
-    console.log('[QuickTaskDialog] ========================================');
   };
 
   const handleQuickTask = async () => {
-    console.log('[QuickTaskDialog] ========================================');
-    console.log('[QuickTaskDialog] handleQuickTask called!');
-    console.log('[QuickTaskDialog] isProcessing:', isProcessing);
-    console.log('[QuickTaskDialog] session:', JSON.stringify(session));
-    console.log('[QuickTaskDialog] targetApp:', targetApp);
-    
     if (isProcessing || !session || session.kind !== 'QUICK_TASK') {
-      console.log('[QuickTaskDialog] Already processing or invalid session, ignoring tap');
       return;
     }
     
     setIsProcessing(true);
-    console.log('[QuickTaskDialog] Set isProcessing to true');
     
     try {
       // PHASE 4.2: Send intent to Native, Native handles everything
       const durationMs = getQuickTaskDurationMs();
-      
-      console.log('[QuickTaskDialog] PHASE 4.2: Sending quickTaskAccept intent to Native');
-      console.log('[QuickTaskDialog] App:', session.app);
-      console.log('[QuickTaskDialog] Duration:', durationMs, 'ms');
       
       if (AppMonitorModule) {
         try {
@@ -159,10 +129,8 @@ export default function QuickTaskDialogScreen() {
           // 5. Start timer
           // 6. Emit START_QUICK_TASK_ACTIVE command (silent - no UI)
           await AppMonitorModule.quickTaskAccept(session.app, durationMs);
-          console.log('[QuickTaskDialog] ✅ Native accepted Quick Task');
-          console.log('[QuickTaskDialog] ACTIVE phase is silent - closing SystemSurface');
+          console.log(`[QT][INTENT] ACCEPT app=${session.app} duration=${durationMs}`);
         } catch (error) {
-          console.error('[QuickTaskDialog] ❌ Failed to accept Quick Task:', error);
           setIsProcessing(false);
           return;
         }
@@ -170,41 +138,29 @@ export default function QuickTaskDialogScreen() {
       
       // PHASE 4.2: ACTIVE phase is silent - close SystemSurface immediately
       // User continues using the app, Native enforces timer
-      console.log('[QuickTaskDialog] Closing SystemSurface, user returns to app');
       
       // Set transient targetApp for finish-time navigation
       setTransientTargetApp(session.app);
       
       // End session and return to app (ACTIVE phase has no UI)
       safeEndSession(false);
-      console.log('[QuickTaskDialog] SystemSurface closed, user continues using app');
       
       // Reset isProcessing
       setIsProcessing(false);
     } catch (error) {
-      console.error('[QuickTaskDialog] Error in handleQuickTask:', error);
       setIsProcessing(false);
     }
-    console.log('[QuickTaskDialog] ========================================');
   };
 
   const handleClose = async () => {
-    console.log('[QuickTaskDialog] ========================================');
-    console.log('[QuickTaskDialog] handleClose called!');
-    console.log('[QuickTaskDialog] isProcessing:', isProcessing);
-    
     if (isProcessing) {
-      console.log('[QuickTaskDialog] Already processing, ignoring tap');
       return;
     }
     
     setIsProcessing(true);
-    console.log('[QuickTaskDialog] Set isProcessing to true');
     
     try {
       // PHASE 4.2: Send decline intent to Native
-      console.log('[QuickTaskDialog] PHASE 4.2: Sending quickTaskDecline intent to Native');
-      
       if (AppMonitorModule && session?.app) {
         try {
           // Native will:
@@ -212,36 +168,26 @@ export default function QuickTaskDialogScreen() {
           // 2. Clear persisted state
           // 3. Emit FINISH_SYSTEM_SURFACE command
           await AppMonitorModule.quickTaskDecline(session.app);
-          console.log('[QuickTaskDialog] ✅ Native declined Quick Task');
-          console.log('[QuickTaskDialog] Native will emit FINISH_SYSTEM_SURFACE command');
+          console.log(`[QT][INTENT] DECLINE app=${session.app}`);
         } catch (error) {
-          console.error('[QuickTaskDialog] Failed to clear Quick Task timer:', error);
+          // Silent failure
         }
       }
       
       // Notify native that SystemSurface is finishing
       setSystemSurfaceActive(false);
-      console.log('[QuickTaskDialog] Notified native: SystemSurface finishing');
       
       // End session and launch home (idempotent, immediate)
-      console.log('[QuickTaskDialog] Calling safeEndSession (shouldLaunchHome: true)...');
       safeEndSession(true);
-      console.log('[QuickTaskDialog] safeEndSession called - SystemSurface will finish and launch home');
-      console.log('[QuickTaskDialog] Quick Task uses unchanged (GLOBAL quota preserved)');
       
       // Reset isProcessing after a delay in case dismissal doesn't happen
       setTimeout(() => {
         setIsProcessing(false);
-        console.log('[QuickTaskDialog] Reset isProcessing to false (timeout)');
       }, 2000);
     } catch (error) {
-      console.error('[QuickTaskDialog] Error in handleClose:', error);
       setIsProcessing(false);
     }
-    console.log('[QuickTaskDialog] ========================================');
   };
-
-  console.log('[QuickTaskDialog] About to return JSX...');
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>

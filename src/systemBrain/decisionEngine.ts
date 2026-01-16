@@ -218,16 +218,9 @@ async function evaluateOSTriggerBrain(
   timestamp: number,
   state: TimerState
 ): Promise<OSTriggerResult> {
-  console.log('[Decision Engine] Evaluating OS Trigger Brain for:', app);
-  
   // Priority #1: Check t_intention (per-app suppressor)
   const intentionTimer = state.intentionTimers[app];
   if (intentionTimer && timestamp < intentionTimer.expiresAt) {
-    console.log('[Decision Engine] ✓ t_intention ACTIVE - suppressing intervention', {
-      app,
-      expiresAt: intentionTimer.expiresAt,
-      expiresAtTime: new Date(intentionTimer.expiresAt).toISOString(),
-    });
     return 'SUPPRESS';
   }
   
@@ -437,10 +430,6 @@ export async function decideSystemSurfaceAction(
   // Priority #2: Check expired Quick Task (background expiration)
   // ============================================================================
   if (expired && !expired.expiredWhileForeground) {
-    console.log('[Decision Engine] ℹ️ PRIORITY #2: Expired Quick Task (background) - clearing flag');
-    console.log('[Decision Engine] Quick Task expired while user was in DIFFERENT app');
-    console.log('[Decision Engine] Clearing flag and continuing to OS Trigger Brain');
-    
     // Clear the flag and continue to OS Trigger Brain
     delete state.expiredQuickTasks[app];
   }
@@ -451,12 +440,7 @@ export async function decideSystemSurfaceAction(
   const osDecision = await evaluateOSTriggerBrain(app, timestamp, state);
   
   if (osDecision === 'SUPPRESS') {
-    console.log('[Decision Engine] ✓ OS Trigger Brain: SUPPRESS - no launch needed');
-    
     // No need to notify native - SystemSurface is not launching
-    
-    console.log('[Decision Engine] Decision: NONE');
-    console.log('[Decision Engine] ========================================');
     return { type: 'NONE' };
   }
   
@@ -470,28 +454,18 @@ export async function decideSystemSurfaceAction(
     
     // Check if Quick Task is suppressed for this app entry
     if (suppressQuickTaskForApp === app) {
-      console.log('[Decision Engine] ⚠️ Quick Task suppressed for this app entry (DEPRECATED)');
-      console.log('[Decision Engine] Reason: Expired-foreground Quick Task already triggered intervention');
-      console.log('[Decision Engine] User must complete intervention or explicitly request Quick Task');
-      console.log('[Decision Engine] Decision: NONE');
-      console.log('[Decision Engine] ========================================');
       return { type: 'NONE' };
     }
-    
-    console.log('[Decision Engine] ✓ OS Trigger Brain: QUICK_TASK - launching Quick Task dialog (DEPRECATED path)');
     
     // Set phase = DECISION when showing dialog
     // Phase A: User sees dialog, no timer running yet
     state.quickTaskPhaseByApp[app] = 'DECISION';
-    console.log('[QuickTask] Phase set to DECISION (showing dialog):', app);
     
     // Notify native that SystemSurface is launching
     setSystemSurfaceActive(true);
     
     // Set lifecycle guard
     isSystemSurfaceActive = true;
-    console.log('[SystemSurfaceInvariant] LAUNCH', { app, wakeReason: 'SHOW_QUICK_TASK_DIALOG' });
-    console.log('[Decision Engine] ========================================');
     
     return {
       type: 'LAUNCH',
@@ -501,15 +475,11 @@ export async function decideSystemSurfaceAction(
   }
   
   if (osDecision === 'INTERVENTION') {
-    console.log('[Decision Engine] ✓ OS Trigger Brain: INTERVENTION - launching intervention flow');
-    
     // Notify native that SystemSurface is launching
     setSystemSurfaceActive(true);
     
     // Set lifecycle guard
     isSystemSurfaceActive = true;
-    console.log('[SystemSurfaceInvariant] LAUNCH', { app, wakeReason: 'START_INTERVENTION_FLOW' });
-    console.log('[Decision Engine] ========================================');
     
     return {
       type: 'LAUNCH',
@@ -522,7 +492,5 @@ export async function decideSystemSurfaceAction(
   // Priority #4: Default (should never reach here)
   // ============================================================================
   console.warn('[Decision Engine] ⚠️ Unexpected: OS Trigger Brain returned unknown result');
-  console.log('[Decision Engine] Decision: NONE (fallback)');
-  console.log('[Decision Engine] ========================================');
   return { type: 'NONE' };
 }

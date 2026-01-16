@@ -239,8 +239,6 @@ export default function SystemSurfaceRoot() {
   useEffect(() => {
     const initializeBootstrap = async () => {
       try {
-        console.log('[SystemSurfaceRoot] 🚀 Bootstrap initialization starting...');
-
         // Read Intent extras from native
         if (!AppMonitorModule) {
           console.error('[SystemSurfaceRoot] ❌ AppMonitorModule not available');
@@ -249,9 +247,7 @@ export default function SystemSurfaceRoot() {
           return;
         }
 
-        console.log('[SystemSurfaceRoot] Calling getSystemSurfaceIntentExtras...');
         const extras = await AppMonitorModule.getSystemSurfaceIntentExtras();
-        console.log('[SystemSurfaceRoot] Intent extras received:', extras);
 
         if (!extras || !extras.triggeringApp) {
           console.error('[SystemSurfaceRoot] ❌ No Intent extras - finishing activity', { extras });
@@ -261,11 +257,6 @@ export default function SystemSurfaceRoot() {
         }
 
         const { triggeringApp, wakeReason } = extras;
-
-        console.log('[SystemSurfaceRoot] 📋 Intent extras:', {
-          triggeringApp,
-          wakeReason,
-        });
 
         // ✅ CRITICAL: Check for session mismatch
         // Intent extras ALWAYS win over stale in-memory session state
@@ -292,29 +283,23 @@ export default function SystemSurfaceRoot() {
         // Dispatch session based on wake reason
         // System Brain already decided to launch us with this wake reason
         // We consume that decision without recomputing
-        console.log('[SystemSurfaceRoot] Dispatching session based on wake reason:', wakeReason);
-        
         if (wakeReason === 'SHOW_QUICK_TASK_DIALOG') {
-          console.log('[SystemSurfaceRoot] Dispatching START_QUICK_TASK for app:', triggeringApp);
           dispatchSystemEvent({
             type: 'START_QUICK_TASK',
             app: triggeringApp,
           });
         } else if (wakeReason === 'START_INTERVENTION_FLOW') {
-          console.log('[SystemSurfaceRoot] Dispatching START_INTERVENTION for app:', triggeringApp);
           dispatchSystemEvent({
             type: 'START_INTERVENTION',
             app: triggeringApp,
           });
         } else if (wakeReason === 'POST_QUICK_TASK_CHOICE') {
-          console.log('[SystemSurfaceRoot] Dispatching START_POST_QUICK_TASK_CHOICE for app:', triggeringApp);
           // Quick Task expired in foreground - show choice screen
           dispatchSystemEvent({
             type: 'START_POST_QUICK_TASK_CHOICE',
             app: triggeringApp,
           });
         } else if (wakeReason === 'INTENTION_EXPIRED_FOREGROUND') {
-          console.log('[SystemSurfaceRoot] Dispatching START_INTERVENTION (intention expired) for app:', triggeringApp);
           dispatchSystemEvent({
             type: 'START_INTERVENTION',
             app: triggeringApp,
@@ -340,14 +325,11 @@ export default function SystemSurfaceRoot() {
           });
         } else {
           console.error('[SystemSurfaceRoot] ❌ Unknown wake reason:', wakeReason);
-          console.log('[SystemSurfaceRoot] Defaulting to START_INTERVENTION for app:', triggeringApp);
           dispatchSystemEvent({
             type: 'START_INTERVENTION',
             app: triggeringApp,
           });
         }
-
-        console.log('[SystemSurfaceRoot] ✅ Bootstrap initialization complete');
       } catch (error) {
         console.error('[SystemSurfaceRoot] ❌ Bootstrap initialization failed:', error);
         setSystemSurfaceActive(false);
@@ -691,10 +673,6 @@ export default function SystemSurfaceRoot() {
    * which transitions bootstrapState from BOOTSTRAPPING → READY.
    */
   if (bootstrapState === 'BOOTSTRAPPING') {
-    console.log('[SystemSurfaceRoot] Bootstrap phase - waiting for session establishment', {
-      bootstrapState,
-      decision: systemSurfaceDecision,
-    });
     return null;
   }
 
@@ -711,37 +689,29 @@ export default function SystemSurfaceRoot() {
    * The useEffect above handles actual activity finish when decision === FINISH.
    */
   if (systemSurfaceDecision === 'SHOW_SESSION' && session === null) {
-    console.log('[SystemSurfaceRoot] Decision: SHOW_SESSION, waiting for session creation');
     return null; // Black screen while waiting
   }
 
   if (session === null) {
     // session is null but decision is not SHOW_SESSION
     // This means either PENDING or FINISH
-    console.log('[SystemSurfaceRoot] Session is null, decision:', systemSurfaceDecision);
     return null; // useEffect will handle finish if decision === FINISH
   }
 
   // Render flow based on session.kind
-  console.log('[SystemSurfaceRoot] Rendering flow for session:', { kind: session.kind, app: session.app });
-  
   switch (session.kind) {
     case 'POST_QUICK_TASK_CHOICE':
-      console.log('[SystemSurfaceRoot] Rendering PostQuickTaskChoiceScreen');
       return <PostQuickTaskChoiceScreen />;
 
     case 'INTERVENTION':
-      console.log('[SystemSurfaceRoot] Rendering InterventionFlow for app:', session.app);
       return <InterventionFlow app={session.app} />;
 
     case 'QUICK_TASK':
-      console.log('[SystemSurfaceRoot] Rendering QuickTaskFlow for app:', session.app);
       return <QuickTaskFlow app={session.app} />;
 
     case 'ALTERNATIVE_ACTIVITY':
       // v1: Alternative Activity is ALWAYS OUT_OF_APP
       // Always render UI, never check foregroundApp, never launch app
-      console.log('[SystemSurfaceRoot] Rendering AlternativeActivityFlow (OUT_OF_APP, always visible)');
       return <AlternativeActivityFlow app={session.app} />;
 
     default:

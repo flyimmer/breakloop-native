@@ -50,16 +50,7 @@ let IS_PREMIUM_CUSTOMER = true; // Default: true (for now, assume premium)
  * @returns true if app is monitored, false otherwise
  */
 export function isMonitoredApp(packageName: string): boolean {
-  const isMonitored = MONITORED_APPS.has(packageName);
-  if (__DEV__) {
-    console.log('[osConfig] isMonitoredApp check:', {
-      packageName,
-      isMonitored,
-      monitoredAppsCount: MONITORED_APPS.size,
-      monitoredApps: Array.from(MONITORED_APPS),
-    });
-  }
-  return isMonitored;
+  return MONITORED_APPS.has(packageName);
 }
 
 /**

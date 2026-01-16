@@ -34,39 +34,20 @@ export async function launchSystemSurface(
   triggeringApp: string,
   wakeReason: WakeReason
 ): Promise<void> {
-  console.log('[System Brain] launchSystemSurface called:', {
-    triggeringApp,
-    wakeReason,
-    AppMonitorModuleExists: !!AppMonitorModule,
-    AppMonitorModuleType: typeof AppMonitorModule,
-    hasLaunchMethod: AppMonitorModule ? typeof AppMonitorModule.launchSystemSurface : 'N/A',
-  });
-  
   if (!AppMonitorModule) {
-    console.error('[System Brain] ❌ AppMonitorModule is NULL - cannot launch SystemSurface');
-    console.error('[System Brain] This means NativeModules are not available in Headless Task context');
     return;
   }
   
   if (!AppMonitorModule.launchSystemSurface) {
-    console.error('[System Brain] ❌ launchSystemSurface method does not exist on AppMonitorModule');
-    console.error('[System Brain] Available methods:', Object.keys(AppMonitorModule));
     return;
   }
-  
-  console.log('[System Brain] 🚀 Launching SystemSurface:', {
-    triggeringApp,
-    wakeReason,
-    note: 'System Brain pre-decided UI flow',
-  });
   
   try {
     // Native module expects (wakeReason, triggeringApp) order
     AppMonitorModule.launchSystemSurface(wakeReason, triggeringApp);
-    console.log('[System Brain] ✅ launchSystemSurface call completed');
+    console.log(`[SS][OPEN] reason=${wakeReason} app=${triggeringApp}`);
   } catch (error) {
-    console.error('[System Brain] ❌ Failed to launch SystemSurface:', error);
-    console.error('[System Brain] Error details:', JSON.stringify(error));
+    // Silent failure - SystemSurface launch is best-effort
   }
 }
 

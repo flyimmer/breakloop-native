@@ -115,10 +115,6 @@ function AppContent() {
     }
   }, [runtime]);
 
-  if (__DEV__) {
-    console.log('[App] Rendering for runtime context:', runtime);
-  }
-
   // Dual-root architecture: render based on RuntimeContext
   if (runtime === 'SYSTEM_SURFACE') {
     return <SystemSurfaceRoot />;

@@ -77,21 +77,11 @@ initializeSystemBrain();
  * System Brain classifies semantic meaning and decides action.
  */
 AppRegistry.registerHeadlessTask('SystemEvent', () => async (taskData) => {
-  console.log('[System Brain] ========================================');
-  console.log('[System Brain] 📨 Event received (HeadlessTask)');
-  console.log('[System Brain] Event data:', JSON.stringify(taskData, null, 2));
-  console.log('[System Brain] Event type:', taskData?.type);
-  console.log('[System Brain] Package name:', taskData?.packageName);
-  console.log('[System Brain] Timestamp:', taskData?.timestamp);
-  
   try {
     await handleSystemEvent(taskData);
-    console.log('[System Brain] ✅ Event processed successfully');
   } catch (error) {
     console.error('[System Brain] ❌ Error processing event:', error);
   }
-  
-  console.log('[System Brain] ========================================');
 });
 
 /**
@@ -106,9 +96,6 @@ AppRegistry.registerHeadlessTask('SystemEvent', () => async (taskData) => {
  * that needs to launch SystemSurface immediately.
  */
 DeviceEventEmitter.addListener('QUICK_TASK_DECISION', (event) => {
-  console.log('[System Brain] 📨 QUICK_TASK_DECISION event received');
-  console.log('[System Brain] Event:', JSON.stringify(event, null, 2));
-  
   handleQuickTaskDecision(event).catch((error) => {
     console.error('[System Brain] ❌ Error handling Quick Task decision:', error);
   });
@@ -119,8 +106,6 @@ DeviceEventEmitter.addListener('QUICK_TASK_DECISION', (event) => {
  * PHASE 4.2: Native commands, JS obeys
  */
 DeviceEventEmitter.addListener('QUICK_TASK_COMMAND', (event) => {
-  console.log('[System Brain] 📨 QUICK_TASK_COMMAND event received');
-  
   handleQuickTaskCommand(event).catch((error) => {
     console.error('[System Brain] ❌ Error handling Quick Task command:', error);
   });
@@ -131,14 +116,7 @@ DeviceEventEmitter.addListener('QUICK_TASK_COMMAND', (event) => {
  * PHASE 4.2: Native decrements, JS displays
  */
 DeviceEventEmitter.addListener('QUICK_TASK_QUOTA_UPDATE', (event) => {
-  console.log('[System Brain] 📨 QUICK_TASK_QUOTA_UPDATE event received');
-  
   handleQuotaUpdate(event).catch((error) => {
     console.error('[System Brain] ❌ Error handling quota update:', error);
   });
 });
-
-console.log('[System Brain] Headless JS task registered (single event path)');
-console.log('[System Brain] QUICK_TASK_DECISION listener registered');
-console.log('[System Brain] QUICK_TASK_COMMAND listener registered');
-console.log('[System Brain] QUICK_TASK_QUOTA_UPDATE listener registered');

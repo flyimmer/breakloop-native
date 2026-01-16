@@ -205,8 +205,6 @@ class ForegroundDetectionService : AccessibilityService() {
         @JvmStatic
         fun setQuickTaskTimer(packageName: String, expiresAt: Long) {
             quickTaskTimers[packageName] = expiresAt
-            val remainingSec = (expiresAt - System.currentTimeMillis()) / 1000
-            Log.i(TAG, "🚀 Quick Task timer set for $packageName (${remainingSec}s remaining)")
         }
         
         /**
@@ -216,7 +214,7 @@ class ForegroundDetectionService : AccessibilityService() {
         @JvmStatic
         fun clearQuickTaskTimer(packageName: String) {
             quickTaskTimers.remove(packageName)
-            Log.i(TAG, "🧹 Quick Task timer cleared for $packageName")
+            Log.i(TAG, "[QT][TIMER] CLEAR app=$packageName")
         }
         
         /**
@@ -234,8 +232,6 @@ class ForegroundDetectionService : AccessibilityService() {
         @JvmStatic
         fun setSuppressWakeUntil(packageName: String, suppressUntil: Long) {
             suppressWakeUntil[packageName] = suppressUntil
-            val remainingSec = (suppressUntil - System.currentTimeMillis()) / 1000
-            Log.i(TAG, "🚫 Wake suppression set for $packageName (${remainingSec}s)")
         }
         
         /**
@@ -253,13 +249,10 @@ class ForegroundDetectionService : AccessibilityService() {
             val now = System.currentTimeMillis()
             
             if (now < suppressUntil) {
-                val remainingSec = (suppressUntil - now) / 1000
-                Log.d(TAG, "🚫 Wake suppressed for $packageName (${remainingSec}s remaining)")
                 return true
             } else {
                 // Suppression expired - automatically clean up
                 suppressWakeUntil.remove(packageName)
-                Log.d(TAG, "✅ Wake suppression expired for $packageName")
                 return false
             }
         }
@@ -276,13 +269,9 @@ class ForegroundDetectionService : AccessibilityService() {
             val now = System.currentTimeMillis()
             val isValid = now < expiresAt
             
-            if (isValid) {
-                val remainingSec = (expiresAt - now) / 1000
-                Log.i(TAG, "✅ Valid Quick Task timer for $packageName (${remainingSec}s remaining)")
-            } else {
+            if (!isValid) {
                 // Clean up expired timer
                 quickTaskTimers.remove(packageName)
-                Log.d(TAG, "⏰ Quick Task timer expired for $packageName")
             }
             
             return isValid
@@ -302,7 +291,6 @@ class ForegroundDetectionService : AccessibilityService() {
         fun updateMonitoredApps(apps: Set<String>) {
             dynamicMonitoredApps.clear()
             dynamicMonitoredApps.addAll(apps)
-            Log.i(TAG, "📱 Monitored apps updated: $dynamicMonitoredApps")
         }
         
         /**
@@ -318,7 +306,6 @@ class ForegroundDetectionService : AccessibilityService() {
         @JvmStatic
         fun updateQuickTaskQuota(quota: Int) {
             cachedQuickTaskQuota = quota
-            Log.i(TAG, "📊 Quick Task quota updated: $quota")
         }
         
         /**
@@ -340,7 +327,6 @@ class ForegroundDetectionService : AccessibilityService() {
                 systemSurfaceActiveTimestamp = 0
                 lastDecisionApp = null  // Reset on surface close
             }
-            Log.i(TAG, "🎯 SystemSurface active: $active")
         }
         
         // ============================================================================
@@ -393,13 +379,11 @@ class ForegroundDetectionService : AccessibilityService() {
                         val entry = QuickTaskEntry(app, state, expiresAt)
                         quickTaskMap[app] = entry
                         restartTimer(app, expiresAt)
-                        Log.i(TAG, "[$app] Restored ACTIVE state, expires in ${expiresAt - now}ms")
                     } else {
                         // Stale or non-ACTIVE state, clear it
                         clearPersistedState(app, context)
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to restore state for $app", e)
                     clearPersistedState(app, context)
                 }
             }
@@ -435,14 +419,17 @@ class ForegroundDetectionService : AccessibilityService() {
 
             entry.state = QuickTaskState.ACTIVE
             entry.expiresAt = System.currentTimeMillis() + durationMs
+            val expiresAtTime = entry.expiresAt!!
 
             decrementGlobalQuota(context)
             persistState(entry, context)
 
-            startNativeTimer(app, entry.expiresAt!!)
+            startNativeTimer(app, expiresAtTime)
             emitStartQuickTaskActive(app, context)
             
-            Log.i(TAG, "[$app] State: DECISION → ACTIVE (expires in ${durationMs}ms)")
+            Log.i(TAG, "[QT][STATE] app=$app DECISION → ACTIVE")
+            val expiresAtFormatted = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(expiresAtTime))
+            Log.i(TAG, "[QT][TIMER] START app=$app expiresAt=$expiresAtFormatted")
         }
 
         /**
@@ -455,7 +442,7 @@ class ForegroundDetectionService : AccessibilityService() {
             clearPersistedState(app, context)
             emitFinishSystemSurface(context)
             
-            Log.i(TAG, "[$app] State: DECISION → IDLE (declined)")
+            Log.i(TAG, "[QT][STATE] app=$app DECISION → IDLE")
         }
 
         /**
@@ -471,10 +458,10 @@ class ForegroundDetectionService : AccessibilityService() {
                 quickTaskMap[app] = QuickTaskEntry(app, QuickTaskState.DECISION)
                 persistState(quickTaskMap[app]!!, context)
                 emitShowQuickTaskDialog(app, context)
-                Log.i(TAG, "[$app] State: POST_CHOICE → DECISION (quota available)")
+                Log.i(TAG, "[QT][STATE] app=$app POST_CHOICE → DECISION")
             } else {
                 emitNoQuickTaskAvailable(app, context)
-                Log.i(TAG, "[$app] State: POST_CHOICE → IDLE (quota exhausted)")
+                Log.i(TAG, "[QT][STATE] app=$app POST_CHOICE → IDLE")
             }
         }
 
@@ -488,7 +475,7 @@ class ForegroundDetectionService : AccessibilityService() {
             clearPersistedState(app, context)
             emitFinishSystemSurface(context)
             
-            Log.i(TAG, "[$app] State: POST_CHOICE → IDLE (quit)")
+            Log.i(TAG, "[QT][STATE] app=$app POST_CHOICE → IDLE")
         }
 
         /**
@@ -498,7 +485,6 @@ class ForegroundDetectionService : AccessibilityService() {
         private fun decrementGlobalQuota(context: android.content.Context) {
             if (cachedQuickTaskQuota > 0) {
                 cachedQuickTaskQuota--
-                Log.i(TAG, "📊 Quota decremented: $cachedQuickTaskQuota")
                 emitQuotaUpdate(cachedQuickTaskQuota, context)
             }
         }
@@ -533,7 +519,6 @@ class ForegroundDetectionService : AccessibilityService() {
 
             // Verify state is ACTIVE (guard against stale timers)
             if (entry.state != QuickTaskState.ACTIVE) {
-                Log.w(TAG, "[$app] Timer expired but state is ${entry.state}, ignoring")
                 return
             }
 
@@ -554,7 +539,8 @@ class ForegroundDetectionService : AccessibilityService() {
                     emitShowPostQuickTaskChoice(app, context)
                 }
                 
-                Log.i(TAG, "[$app] State: ACTIVE → POST_CHOICE (expired in foreground)")
+                Log.i(TAG, "[QT][TIMER] EXPIRE app=$app foreground=true")
+                Log.i(TAG, "[QT][STATE] app=$app ACTIVE → POST_CHOICE")
             } else {
                 // App is background → silent cleanup
                 quickTaskMap.remove(app)
@@ -564,7 +550,8 @@ class ForegroundDetectionService : AccessibilityService() {
                     clearPersistedState(app, context)
                 }
                 
-                Log.i(TAG, "[$app] State: ACTIVE → IDLE (expired in background, silent)")
+                Log.i(TAG, "[QT][TIMER] EXPIRE app=$app foreground=false")
+                Log.i(TAG, "[QT][STATE] app=$app ACTIVE → IDLE")
             }
         }
 
@@ -630,7 +617,6 @@ class ForegroundDetectionService : AccessibilityService() {
         private fun emitQuickTaskCommand(command: String, app: String, context: android.content.Context) {
             val reactContext = AppMonitorService.getReactContext()
             if (reactContext == null || !reactContext.hasActiveReactInstance()) {
-                Log.w(TAG, "React context not available, cannot emit command")
                 return
             }
             
@@ -643,8 +629,6 @@ class ForegroundDetectionService : AccessibilityService() {
             reactContext
                 .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
                 .emit("QUICK_TASK_COMMAND", params)
-            
-            Log.i(TAG, "📤 Emitted QUICK_TASK_COMMAND: $command for $app")
         }
 
         /**
@@ -665,8 +649,6 @@ class ForegroundDetectionService : AccessibilityService() {
             reactContext
                 .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
                 .emit("QUICK_TASK_QUOTA_UPDATE", params)
-            
-            Log.i(TAG, "📤 Emitted quota update: $newQuota")
         }
         
         // ============================================================================
@@ -686,11 +668,11 @@ class ForegroundDetectionService : AccessibilityService() {
         @JvmStatic
         fun onMonitoredAppForeground(app: String, context: android.content.Context) {
             val entry = quickTaskMap[app]
+            val hasTimer = entry?.state == QuickTaskState.ACTIVE
 
             when (entry?.state) {
                 QuickTaskState.ACTIVE -> {
                     // ACTIVE phase persists, no entry dialog
-                    Log.i(TAG, "[$app] ACTIVE phase persists, no entry decision")
                     return
                 }
                 QuickTaskState.POST_CHOICE -> {
@@ -699,9 +681,6 @@ class ForegroundDetectionService : AccessibilityService() {
                         entry.postChoiceShown = true  // Mark as shown
                         persistState(entry, context)   // Persist the flag
                         emitShowPostQuickTaskChoice(app, context)
-                        Log.i(TAG, "[$app] POST_CHOICE first entry → showing choice screen")
-                    } else {
-                        Log.i(TAG, "[$app] POST_CHOICE already shown → silent (awaiting user intent)")
                     }
                     return
                 }
@@ -711,10 +690,10 @@ class ForegroundDetectionService : AccessibilityService() {
                         quickTaskMap[app] = QuickTaskEntry(app, QuickTaskState.DECISION)
                         persistState(quickTaskMap[app]!!, context)
                         emitShowQuickTaskDialog(app, context)
-                        Log.i(TAG, "[$app] State: IDLE → DECISION (quota: $cachedQuickTaskQuota)")
+                        Log.i(TAG, "[QT][ENTRY] app=$app quota=$cachedQuickTaskQuota hasTimer=$hasTimer → DECISION=SHOW_QUICK_TASK")
                     } else {
                         emitNoQuickTaskAvailable(app, context)
-                        Log.i(TAG, "[$app] No Quick Task available (quota: 0)")
+                        Log.i(TAG, "[QT][ENTRY] app=$app quota=0 hasTimer=$hasTimer → DECISION=NO_QUICK_TASK")
                     }
                 }
             }
@@ -752,25 +731,6 @@ class ForegroundDetectionService : AccessibilityService() {
         override fun run() {
             runCount++
             
-            // 🔧 Loop alive invariant - log once on first run
-            if (runCount == 1) {
-                Log.i(TAG, "🟢 Timer expiration loop confirmed alive")
-            }
-            
-            // Log health check every 5 seconds for visibility (not every second to avoid spam)
-            if (runCount % 5 == 1 && runCount > 1) {
-                Log.d(TAG, "⏰ Timer check running (run #$runCount)")
-                Log.d(TAG, "   Active Quick Task timers: ${quickTaskTimers.size}")
-                
-                if (quickTaskTimers.isNotEmpty()) {
-                    val now = System.currentTimeMillis()
-                    for ((pkg, expiresAt) in quickTaskTimers) {
-                        val remainingSec = (expiresAt - now) / 1000
-                        Log.d(TAG, "   - $pkg: ${remainingSec}s remaining")
-                    }
-                }
-            }
-            
             checkWakeSuppressionExpirations()  // Check wake suppression flags
             checkQuickTaskTimerExpirations()   // Check Quick Task timers
             
@@ -794,16 +754,14 @@ class ForegroundDetectionService : AccessibilityService() {
     private fun startTimerCheckIfNeeded() {
         synchronized(this) {
             if (timerCheckStarted) {
-                Log.d(TAG, "Timer check already started, skipping")
                 return
             }
             
             try {
                 handler.post(timerCheckRunnable)
                 timerCheckStarted = true
-                Log.i(TAG, "✅ Timer check mechanism started")
             } catch (e: Exception) {
-                Log.e(TAG, "❌ FAILED to start timer check mechanism", e)
+                // Silent failure - timer check will retry on next service connection
             }
         }
     }
@@ -814,7 +772,6 @@ class ForegroundDetectionService : AccessibilityService() {
      */
     override fun onCreate() {
         super.onCreate()
-        Log.i(TAG, "🟢 ForegroundDetectionService.onCreate() called")
         
         // Defensive timer check start (backup initialization point)
         startTimerCheckIfNeeded()
@@ -827,8 +784,6 @@ class ForegroundDetectionService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         
-        Log.i(TAG, "🟢 ForegroundDetectionService.onServiceConnected() called")
-        Log.i(TAG, "✅ ForegroundDetectionService connected and ready")
         isServiceConnected = true
         
         // PHASE 4.2: Restore Quick Task state from disk (crash recovery)
@@ -861,12 +816,7 @@ class ForegroundDetectionService : AccessibilityService() {
         
         serviceInfo = info
         
-        Log.i(TAG, "✅ Accessibility service configured to receive interaction events")
-        Log.d(TAG, "Event types: WINDOW_STATE_CHANGED, VIEW_SCROLLED, VIEW_CLICKED, WINDOW_CONTENT_CHANGED")
-        Log.d(TAG, "Flags: REPORT_VIEW_IDS, INCLUDE_NOT_IMPORTANT_VIEWS")
-        
         // Start periodic timer expiration checks (primary initialization point)
-        Log.i(TAG, "🔵 Attempting to start periodic timer checks...")
         startTimerCheckIfNeeded()
     }
 
@@ -902,16 +852,6 @@ class ForegroundDetectionService : AccessibilityService() {
         val packageName = event.packageName?.toString()
         if (packageName.isNullOrEmpty()) return
         
-        // Diagnostic logging for ALL accessibility events (temporary)
-        val eventTypeName = when (event.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "WINDOW_STATE_CHANGED"
-            AccessibilityEvent.TYPE_VIEW_SCROLLED -> "VIEW_SCROLLED"
-            AccessibilityEvent.TYPE_VIEW_CLICKED -> "VIEW_CLICKED"
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> "WINDOW_CONTENT_CHANGED"
-            else -> "OTHER(${event.eventType})"
-        }
-        Log.d(TAG, "📱 Accessibility event: type=$eventTypeName, package=$packageName")
-        
         // Handle user interaction events (for expired Quick Task enforcement)
         // Native emits these events UNCONDITIONALLY - System Brain decides what to do
         val isInteractionEvent = when (event.eventType) {
@@ -926,7 +866,6 @@ class ForegroundDetectionService : AccessibilityService() {
             // ❌ DO NOT check expiredQuickTasks (semantic state)
             // ❌ DO NOT decide whether enforcement is needed
             // ✅ Emit mechanical event unconditionally - System Brain decides
-            Log.i(TAG, "🔔 Emitting USER_INTERACTION_FOREGROUND for: $packageName")
             emitSystemEvent("USER_INTERACTION_FOREGROUND", packageName, System.currentTimeMillis())
             return  // Don't process as foreground change
         }
@@ -945,9 +884,6 @@ class ForegroundDetectionService : AccessibilityService() {
         
         // PHASE 4.2: Update foreground app for timer expiration checks
         updateCurrentForegroundApp(packageName)
-
-        // Log all foreground changes for debugging
-        Log.i(TAG, "📱 Foreground app changed: $packageName")
         
         // Emit event to JavaScript for ALL apps (including launchers)
         // This allows JavaScript to track exits and cancel incomplete interventions
@@ -961,12 +897,8 @@ class ForegroundDetectionService : AccessibilityService() {
         // Check if this is a monitored app (for launching intervention)
         // Use dynamicMonitoredApps (synced from JavaScript) instead of hardcoded MONITORED_APPS
         if (dynamicMonitoredApps.contains(packageName)) {
-            Log.i(TAG, "🎯 MONITORED APP DETECTED: $packageName")
-            
             // PHASE 4.2: Call skeleton entry decision function
             onMonitoredAppForeground(packageName, applicationContext)
-        } else {
-            Log.d(TAG, "  └─ Not a monitored app, no intervention needed")
         }
     }
     
@@ -985,7 +917,6 @@ class ForegroundDetectionService : AccessibilityService() {
         try {
             val reactContext = AppMonitorService.getReactContext()
             if (reactContext == null) {
-                Log.w(TAG, "React context not available, cannot emit event")
                 return
             }
             
@@ -997,10 +928,8 @@ class ForegroundDetectionService : AccessibilityService() {
             reactContext
                 .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
                 .emit("onForegroundAppChanged", params)
-                
-            Log.d(TAG, "  └─ Event emitted to JavaScript: $packageName")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to emit foreground app changed event", e)
+            // Silent failure - event emission is best-effort
         }
     }
     
@@ -1016,7 +945,6 @@ class ForegroundDetectionService : AccessibilityService() {
         try {
             val reactContext = AppMonitorService.getReactContext()
             if (reactContext == null) {
-                Log.d(TAG, "React context not available for app discovery event")
                 return
             }
             
@@ -1029,10 +957,8 @@ class ForegroundDetectionService : AccessibilityService() {
             reactContext
                 .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
                 .emit("onAppDiscovered", params)
-                
-            Log.d(TAG, "🔍 App discovery event emitted: $packageName (accessibility)")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to emit app discovery event", e)
+            // Silent failure - event emission is best-effort
         }
     }
     
@@ -1060,13 +986,9 @@ class ForegroundDetectionService : AccessibilityService() {
                 reactContext
                     .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
                     .emit("QUICK_TASK_DECISION", params)
-                
-                Log.i(TAG, "📤 Emitted QUICK_TASK_DECISION: $decision for $packageName")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to emit Quick Task decision event", e)
+                // Silent failure - event emission is best-effort
             }
-        } else {
-            Log.w(TAG, "React context not available, cannot emit Quick Task decision")
         }
     }
     
@@ -1120,17 +1042,13 @@ class ForegroundDetectionService : AccessibilityService() {
         // JavaScript sets this to say: "Don't wake before this time"
         // Native doesn't know WHY (intention timer, etc.) - just that wake is suppressed
         if (isWakeSuppressed(triggeringApp)) {
-            Log.i(TAG, "⏭️ Skipping - wake suppressed by JavaScript for $triggeringApp")
             return
         }
         
         // Check Quick Task timer
         if (hasValidQuickTaskTimer(triggeringApp)) {
-            Log.i(TAG, "⏭️ Skipping - Quick Task timer ACTIVE for $triggeringApp")
             return
         }
-        
-        Log.i(TAG, "[Accessibility] Launching SystemSurfaceActivity with WAKE_REASON=MONITORED_APP_FOREGROUND for $triggeringApp")
         
         try {
             val intent = Intent(this, SystemSurfaceActivity::class.java).apply {
@@ -1149,10 +1067,8 @@ class ForegroundDetectionService : AccessibilityService() {
             }
             
             startActivity(intent)
-            Log.d(TAG, "  └─ SystemSurfaceActivity launched successfully")
-            
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Failed to launch SystemSurfaceActivity", e)
+            // Silent failure - activity launch is best-effort
         }
     }
 
@@ -1161,7 +1077,7 @@ class ForegroundDetectionService : AccessibilityService() {
      * This is rare but can happen during system updates or reconfigurations
      */
     override fun onInterrupt() {
-        Log.w(TAG, "⚠️ ForegroundDetectionService interrupted")
+        // Silent - service interruption is handled automatically
     }
 
     /**
@@ -1195,15 +1111,6 @@ class ForegroundDetectionService : AccessibilityService() {
             for ((packageName, suppressUntil) in suppressWakeUntil) {
                 if (now >= suppressUntil) {
                     expiredApps.add(packageName)
-                    
-                    val isForeground = packageName == currentForegroundApp
-                    val expiredSec = (now - suppressUntil) / 1000
-                    
-                    if (isForeground) {
-                        Log.i(TAG, "⏰ Wake suppression EXPIRED for FOREGROUND app $packageName (${expiredSec}s ago)")
-                    } else {
-                        Log.i(TAG, "⏰ Wake suppression EXPIRED for BACKGROUND app $packageName (${expiredSec}s ago)")
-                    }
                 }
             }
             
@@ -1217,15 +1124,12 @@ class ForegroundDetectionService : AccessibilityService() {
                 val isForeground = packageName == currentForegroundApp
                 
                 if (isForeground) {
-                    Log.i(TAG, "🚨 Launching SystemSurface for expired suppression: $packageName")
                     launchInterventionActivity(packageName)
-                } else {
-                    Log.d(TAG, "  └─ Background app - no action needed")
                 }
             }
             
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error checking wake suppression expirations", e)
+            // Silent failure - expiration check will retry on next cycle
         }
     }
     
@@ -1259,8 +1163,6 @@ class ForegroundDetectionService : AccessibilityService() {
         expiresAt: Long? = null
     ) {
         try {
-            Log.i(TAG, "🔵 About to emit $eventType to SystemBrainService")
-            
             val intent = Intent(this, SystemBrainService::class.java).apply {
                 putExtra(SystemBrainService.EXTRA_EVENT_TYPE, eventType)
                 putExtra(SystemBrainService.EXTRA_PACKAGE_NAME, packageName)
@@ -1270,17 +1172,12 @@ class ForegroundDetectionService : AccessibilityService() {
                 }
             }
             
-            Log.i(TAG, "🔵 Intent created, calling startService()...")
-            
             // Start the HeadlessTaskService
             // This will invoke System Brain JS headless task
             startService(intent)
             
-            Log.i(TAG, "✅ startService() called successfully")
-            Log.i(TAG, "📤 Emitted mechanical event to System Brain: $eventType for $packageName")
-            
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Failed to emit SystemEvent to System Brain", e)
+            // Silent failure - event emission is best-effort
         }
     }
     
@@ -1289,15 +1186,11 @@ class ForegroundDetectionService : AccessibilityService() {
             val now = System.currentTimeMillis()
             val expiredApps = mutableListOf<String>()
             
-            Log.d(TAG, "🔍 Checking Quick Task timer expirations (${quickTaskTimers.size} active timers)")
-            
             // Find all expired timers
             for ((packageName, expiresAt) in quickTaskTimers) {
                 val remainingMs = expiresAt - now
                 if (remainingMs <= 0) {
                     expiredApps.add(packageName)
-                    val expiredSec = (-remainingMs) / 1000
-                    Log.i(TAG, "⏰ TIMER EXPIRED: $packageName (expired ${expiredSec}s ago)")
                 }
             }
             
@@ -1306,16 +1199,12 @@ class ForegroundDetectionService : AccessibilityService() {
                 // Remove from map
                 quickTaskTimers.remove(packageName)
                 
-                Log.i(TAG, "📤 Emitting TIMER_EXPIRED event to System Brain for $packageName")
-                
                 // Emit MECHANICAL event to System Brain JS
                 emitSystemEvent("TIMER_EXPIRED", packageName, now)
-                
-                Log.d(TAG, "   └─ Timer removed, event emitted")
             }
             
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error checking Quick Task timer expirations", e)
+            // Silent failure - expiration check will retry on next cycle
         }
     }
     
@@ -1326,8 +1215,6 @@ class ForegroundDetectionService : AccessibilityService() {
         
         // Stop periodic timer checks
         handler.removeCallbacks(timerCheckRunnable)
-        
-        Log.i(TAG, "❌ ForegroundDetectionService destroyed")
     }
 
     /**
@@ -1336,7 +1223,6 @@ class ForegroundDetectionService : AccessibilityService() {
      */
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         isServiceConnected = false
-        Log.d(TAG, "Service unbound")
         return super.onUnbind(intent)
     }
 }

@@ -46,7 +46,6 @@ export default function PostQuickTaskChoiceScreen() {
     async function loadRemaining() {
       const info = await getQuickTaskRemainingForDisplay();
       setQuickTaskRemaining(info.remaining);
-      console.log('[PostQuickTaskChoice] Quick Task remaining:', info.remaining);
     }
     loadRemaining();
   }, []);
@@ -72,11 +71,8 @@ export default function PostQuickTaskChoiceScreen() {
     if (isProcessing || !targetApp) return;
     
     setIsProcessing(true);
-    console.log('[PostQuickTaskChoice] User chose: Quit this app');
     
     // PHASE 4.2: Send quit intent to Native
-    console.log('[PostQuickTaskChoice] PHASE 4.2: Sending quickTaskPostQuit intent to Native');
-    
     if (AppMonitorModule && targetApp) {
       try {
         // Native will:
@@ -84,15 +80,13 @@ export default function PostQuickTaskChoiceScreen() {
         // 2. Clear persisted state
         // 3. Emit FINISH_SYSTEM_SURFACE command
         await AppMonitorModule.quickTaskPostQuit(targetApp);
-        console.log('[PostQuickTaskChoice] ✅ Native handled quit');
-        console.log('[PostQuickTaskChoice] Native will emit FINISH_SYSTEM_SURFACE command');
+        console.log(`[QT][INTENT] POST_QUIT app=${targetApp}`);
       } catch (error) {
-        console.error('[PostQuickTaskChoice] ❌ Failed to quit:', error);
+        // Silent failure
       }
     }
     
     // Native handles the rest - JS just ends session
-    console.log('[PostQuickTaskChoice] Ending session and going to home');
     safeEndSession(true);
   };
 
@@ -107,12 +101,8 @@ export default function PostQuickTaskChoiceScreen() {
     if (isProcessing || !session || !targetApp) return;
     
     setIsProcessing(true);
-    console.log('[PostQuickTaskChoice] User chose: Continue using this app');
-    console.log('[PostQuickTaskChoice] Quick Task remaining:', quickTaskRemaining);
     
     // PHASE 4.2: Send continue intent to Native
-    console.log('[PostQuickTaskChoice] PHASE 4.2: Sending quickTaskPostContinue intent to Native');
-    
     if (AppMonitorModule && targetApp) {
       try {
         // Native will:
@@ -122,16 +112,13 @@ export default function PostQuickTaskChoiceScreen() {
         // 4. If quota > 0: Create new DECISION entry, emit SHOW_QUICK_TASK_DIALOG
         // 5. If quota = 0: Emit NO_QUICK_TASK_AVAILABLE (starts Intervention)
         await AppMonitorModule.quickTaskPostContinue(targetApp);
-        console.log('[PostQuickTaskChoice] ✅ Native handled continue');
-        console.log('[PostQuickTaskChoice] Native will emit appropriate command based on quota');
+        console.log(`[QT][INTENT] POST_CONTINUE app=${targetApp}`);
       } catch (error) {
-        console.error('[PostQuickTaskChoice] ❌ Failed to continue:', error);
+        // Silent failure
       }
     }
     
     // Native handles the rest - JS waits for commands
-    console.log('[PostQuickTaskChoice] Waiting for Native commands...')
-    
     setIsProcessing(false);
   };
 
