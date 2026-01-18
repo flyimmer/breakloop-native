@@ -16,13 +16,13 @@
  * - When session === null, activity MUST finish immediately
  */
 
-import React, { useEffect, useState, useRef } from 'react';
-import { Platform, NativeModules, DeviceEventEmitter } from 'react-native';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
-import { getNextSessionOverride, clearNextSessionOverride, getInMemoryStateCache, markSystemInitiatedForegroundChange, getSystemSurfaceDecision, setSystemSurfaceActive } from '@/src/systemBrain/stateManager';
+import { clearNextSessionOverride, getNextSessionOverride, getSystemSurfaceDecision, setSystemSurfaceActive } from '@/src/systemBrain/stateManager';
+import React, { useEffect, useRef, useState } from 'react';
+import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
+import AlternativeActivityFlow from '../flows/AlternativeActivityFlow';
 import InterventionFlow from '../flows/InterventionFlow';
 import QuickTaskFlow from '../flows/QuickTaskFlow';
-import AlternativeActivityFlow from '../flows/AlternativeActivityFlow';
 import PostQuickTaskChoiceScreen from '../screens/conscious_process/PostQuickTaskChoiceScreen';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
@@ -52,21 +52,21 @@ const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorMod
  */
 function isBreakLoopInfrastructure(packageName: string | null): boolean {
   if (!packageName) return true; // null = not yet initialized
-  
+
   // BreakLoop's own app package
   if (packageName === 'com.anonymous.breakloopnative') return true;
-  
+
   // Android system navigation/gesture package
   // This appears briefly during React Navigation swipe gestures
   if (packageName === 'android') return true;
-  
+
   // Android system UI / non-behavioral foreground layers
   // These do NOT represent user intent to leave the intervention
   // - Notification shade pulled down
   // - Quick settings opened
   // - Status bar interactions
   if (packageName === 'com.android.systemui') return true;
-  
+
   // Phone call UI / non-behavioral interruptions
   // These do NOT represent user intent to leave the intervention
   // - Incoming phone calls
@@ -79,19 +79,16 @@ function isBreakLoopInfrastructure(packageName: string | null): boolean {
   if (packageName === 'com.android.phone') return true;          // Android Phone app
   if (packageName === 'com.samsung.android.incallui') return true; // Samsung In-Call UI
   if (packageName === 'com.samsung.android.dialer') return true;   // Samsung Dialer
-  
+
   return false;
 }
 
 /**
  * Check if package is a launcher/home screen app.
- * 
- * POST_QUICK_TASK_CHOICE intentionally backgrounds the app to the launcher.
- * This is an expected state, not a user exit.
  */
 function isLauncherApp(packageName: string | null): boolean {
   if (!packageName) return false;
-  
+
   return (
     packageName.includes('launcher') ||
     packageName === 'com.android.launcher' ||
@@ -155,16 +152,16 @@ function finishAndLaunchHome() {
  */
 export default function SystemSurfaceRoot() {
   const { session, bootstrapState, foregroundApp, shouldLaunchHome, lastSemanticChangeTs, dispatchSystemEvent, safeEndSession, getTransientTargetApp, setTransientTargetApp } = useSystemSession();
-  
+
   // Track underlying app (the app user is conceptually interacting with)
   const [underlyingApp, setUnderlyingApp] = useState<string | null>(null);
-  
+
   // Track wake reason for special routing cases (POST_QUICK_TASK_CHOICE)
   const [wakeReason, setWakeReason] = useState<string | null>(null);
-  
+
   // Track SystemSurface decision (in-memory only, reactive)
   const [systemSurfaceDecision, setSystemSurfaceDecisionState] = useState<'PENDING' | 'SHOW_SESSION' | 'FINISH'>('PENDING');
-  
+
   // Read wake reason on mount (bootstrap phase) - MUST be before any early returns
   useEffect(() => {
     const readWakeReason = async () => {
@@ -199,8 +196,8 @@ export default function SystemSurfaceRoot() {
 
   // Detect if this is a REPLACE_SESSION transition (QUICK_TASK → INTERVENTION)
   // This flag is computed with the PREVIOUS session kind (before ref update)
-  const isReplaceSessionTransition = 
-    prevSessionKindRef.current === 'QUICK_TASK' && 
+  const isReplaceSessionTransition =
+    prevSessionKindRef.current === 'QUICK_TASK' &&
     currentSessionKind === 'INTERVENTION';
 
   // Update ref for next render (happens synchronously during this render)
@@ -267,7 +264,7 @@ export default function SystemSurfaceRoot() {
             newApp: triggeringApp,
             wakeReason,
           });
-          
+
           // Use REPLACE_SESSION for atomic replacement (avoids duplicate lifecycle edges)
           dispatchSystemEvent({
             type: 'REPLACE_SESSION',
@@ -276,7 +273,7 @@ export default function SystemSurfaceRoot() {
               : 'INTERVENTION',
             app: triggeringApp,
           });
-          
+
           return; // Do not proceed with stale session
         }
 
@@ -311,7 +308,7 @@ export default function SystemSurfaceRoot() {
           console.warn('[SystemSurfaceRoot] ⚠️ UNEXPECTED: Launched for QUICK_TASK_EXPIRED_FOREGROUND');
           console.warn('[SystemSurfaceRoot] System Brain should handle silent expiration without launching UI');
           console.warn('[SystemSurfaceRoot] Finishing immediately to prevent hang');
-          
+
           // Finish immediately, no session event
           finishSurfaceOnly();
           return; // Hard stop - no further processing
@@ -352,7 +349,7 @@ export default function SystemSurfaceRoot() {
   useEffect(() => {
     const decision = getSystemSurfaceDecision();
     setSystemSurfaceDecisionState(decision);
-    
+
     if (__DEV__) {
       console.log('[SystemSurfaceRoot] Decision updated:', decision);
     }
@@ -377,7 +374,7 @@ export default function SystemSurfaceRoot() {
         setUnderlyingApp(event.packageName);
       }
     );
-    
+
     return () => subscription.remove();
   }, []);
 
@@ -427,11 +424,11 @@ export default function SystemSurfaceRoot() {
   useEffect(() => {
     // Guard: Only check if we have an active session
     if (!session || bootstrapState !== 'READY') return;
-    
+
     // Read in-memory state (no AsyncStorage, no polling, no emitters)
     const override = getNextSessionOverride();
     if (!override) return;
-    
+
     // Only allow transition FROM QUICK_TASK → POST_QUICK_TASK_CHOICE
     if (
       override.app === session.app &&
@@ -439,17 +436,17 @@ export default function SystemSurfaceRoot() {
       override.kind === 'POST_QUICK_TASK_CHOICE'
     ) {
       console.log('[SystemSurfaceRoot] Detected nextSessionOverride - transitioning QUICK_TASK → POST_QUICK_TASK_CHOICE');
-      
+
       dispatchSystemEvent({
         type: 'REPLACE_SESSION',
         newKind: 'POST_QUICK_TASK_CHOICE',
         app: override.app,
       });
-      
+
       clearNextSessionOverride();
       return;
     }
-    
+
     // Defensive cleanup: override no longer matches active session
     if (override.app !== session.app || session.kind !== 'QUICK_TASK') {
       console.log('[SystemSurfaceRoot] Clearing stale nextSessionOverride', {
@@ -492,7 +489,7 @@ export default function SystemSurfaceRoot() {
           shouldLaunchHome,
         });
       }
-      
+
       // Use explicit finish functions based on shouldLaunchHome flag
       if (shouldLaunchHome) {
         finishAndLaunchHome();
@@ -523,36 +520,6 @@ export default function SystemSurfaceRoot() {
     }
   }, [session, bootstrapState, systemSurfaceDecision]);
 
-  /**
-   * CRITICAL: Background app immediately when POST_QUICK_TASK_CHOICE starts
-   * 
-   * POST_QUICK_TASK_CHOICE is a blocking screen, not an overlay.
-   * The underlying app must be paused (audio/video stopped) before the user interacts.
-   * 
-   * This launches home screen to force the app to background,
-   * while keeping SystemSurface alive for the choice UI.
-   * 
-   * ARCHITECTURAL RULE: Blocking UI must not be an overlay on an active app.
-   * It must replace the app's foreground context.
-   */
-  useEffect(() => {
-    if (session?.kind === 'POST_QUICK_TASK_CHOICE') {
-      if (__DEV__) {
-        console.log('[SystemSurfaceRoot] Entering POST_QUICK_TASK_CHOICE — backgrounding app');
-      }
-      
-      if (Platform.OS === 'android' && AppMonitorModule?.launchHomeScreen) {
-        // Mark that we're about to background the app (system-initiated)
-        markSystemInitiatedForegroundChange();
-        
-        AppMonitorModule.launchHomeScreen();
-        
-        if (__DEV__) {
-          console.log('[SystemSurfaceRoot] Home screen launched - target app backgrounded');
-        }
-      }
-    }
-  }, [session?.kind]);
 
   /**
    * CRITICAL: End QUICK_TASK / POST_QUICK_TASK_CHOICE Session when underlying app changes
@@ -569,10 +536,10 @@ export default function SystemSurfaceRoot() {
   useEffect(() => {
     // Only check for QUICK_TASK and POST_QUICK_TASK_CHOICE sessions
     if (session?.kind !== 'QUICK_TASK' && session?.kind !== 'POST_QUICK_TASK_CHOICE') return;
-    
+
     // Wait for underlying app to be initialized
     if (!underlyingApp) return;
-    
+
     // Skip if underlying app is BreakLoop infrastructure
     if (isBreakLoopInfrastructure(underlyingApp)) {
       if (__DEV__) {
@@ -580,15 +547,7 @@ export default function SystemSurfaceRoot() {
       }
       return;
     }
-    
-    // Skip teardown when POST_QUICK_TASK_CHOICE intentionally backgrounds to launcher
-    if (session?.kind === 'POST_QUICK_TASK_CHOICE' && isLauncherApp(underlyingApp)) {
-      if (__DEV__) {
-        console.log('[SystemSurfaceRoot] POST_QUICK_TASK_CHOICE with launcher - expected, skipping teardown');
-      }
-      return;
-    }
-    
+
     // End session if underlying app changed from session target
     if (underlyingApp !== session.app) {
       if (__DEV__) {
@@ -620,10 +579,10 @@ export default function SystemSurfaceRoot() {
   useEffect(() => {
     // Only check for INTERVENTION and POST_QUICK_TASK_CHOICE sessions
     if (session?.kind !== 'INTERVENTION' && session?.kind !== 'POST_QUICK_TASK_CHOICE') return;
-    
+
     // Wait for underlying app to be initialized
     if (!underlyingApp) return;
-    
+
     // Skip if underlying app is BreakLoop infrastructure
     if (isBreakLoopInfrastructure(underlyingApp)) {
       if (__DEV__ && underlyingApp === 'com.android.systemui') {
@@ -631,7 +590,7 @@ export default function SystemSurfaceRoot() {
       }
       return;
     }
-    
+
     // Skip during REPLACE_SESSION transitions
     if (isReplaceSessionTransition) {
       if (__DEV__) {
@@ -639,15 +598,7 @@ export default function SystemSurfaceRoot() {
       }
       return;
     }
-    
-    // Skip teardown when POST_QUICK_TASK_CHOICE intentionally backgrounds to launcher
-    if (session?.kind === 'POST_QUICK_TASK_CHOICE' && isLauncherApp(underlyingApp)) {
-      if (__DEV__) {
-        console.log('[SystemSurfaceRoot] POST_QUICK_TASK_CHOICE with launcher - expected, skipping teardown');
-      }
-      return;
-    }
-    
+
     // End session if underlying app changed from session target
     if (underlyingApp !== session.app) {
       if (__DEV__) {

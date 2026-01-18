@@ -123,6 +123,9 @@ class SystemSurfaceActivity : ReactActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         Log.i(TAG, "🎯 SystemSurfaceActivity created")
         
+        // Signal native service that surface is now active (Lifecycle Gate)
+        ForegroundDetectionService.onSystemSurfaceOpened()
+        
         // Register this activity with AppMonitorModule for reliable cancellation
         AppMonitorModule.setSystemSurfaceActivity(this)
         
@@ -238,6 +241,9 @@ class SystemSurfaceActivity : ReactActivity() {
 
     override fun onDestroy() {
         Log.i(TAG, "❌ SystemSurfaceActivity destroyed")
+        
+        // Signal native service that surface is now destroyed (Lifecycle Gate)
+        ForegroundDetectionService.onSystemSurfaceDestroyed()
         
         // Clear the reference in AppMonitorModule
         AppMonitorModule.clearSystemSurfaceActivity()

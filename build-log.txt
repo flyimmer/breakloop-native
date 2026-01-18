@@ -1,0 +1,47 @@
+
+> breakloop-native@1.0.0 android
+> npm run sync:kotlin && npm run validate:native && expo run:android
+
+
+> breakloop-native@1.0.0 sync:kotlin
+> node scripts/sync-kotlin-files.js
+
+­ƒöä Syncing Kotlin plugin files...
+
+Ô£ô  ForegroundDetectionService.kt - Already up to date
+Ô£ô  AppMonitorModule.kt - Already up to date
+Ô£ô  AppMonitorPackage.kt - Already up to date
+Ô£ô  AppMonitorService.kt - Already up to date
+Ô£ô  SystemSurfaceActivity.kt - Already up to date
+Ô£ô  SystemBrainService.kt - Already up to date
+Ô£ô  AppDiscoveryModule.kt - Already up to date
+Ô£ô  AppDiscoveryPackage.kt - Already up to date
+
+­ƒôè Summary: 0 synced, 8 skipped, 0 errors
+
+
+> breakloop-native@1.0.0 validate:native
+> node scripts/validate-native-modules.js
+
+­ƒöì Validating native module registration...
+
+Checking required packages:
+
+Ô£à AppMonitorPackage
+   Core native module for app monitoring and interventions
+
+Ô£à AppDiscoveryPackage
+   Multi-source app discovery (launcher, UsageStats, accessibility)
+
+ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+­ƒôè Summary: 2/2 packages registered
+
+Ô£à All native modules are properly registered!
+
+ÔÇ║ Opening emulator Pixel_9_Pro
+Error: The emulator (Pixel_9_Pro) quit before it finished opening. You can try starting the emulator manually from the terminal with: C:\Android\Sdk/emulator/emulator @Pixel_9_Pro
+Error: The emulator (Pixel_9_Pro) quit before it finished opening. You can try starting the emulator manually from the terminal with: C:\Android\Sdk/emulator/emulator @Pixel_9_Pro
+    at stopWaitingAndReject (C:\Dev\BreakLoop\BreakLoop-Native\node_modules\.pnpm\@expo+cli@54.0.21_expo-rout_1eff7df4d2d4bdbe0ed767df4e3c82fc\node_modules\@expo\cli\src\start\platforms\android\emulator.ts:112:14)
+    at ChildProcess.<anonymous> (C:\Dev\BreakLoop\BreakLoop-Native\node_modules\.pnpm\@expo+cli@54.0.21_expo-rout_1eff7df4d2d4bdbe0ed767df4e3c82fc\node_modules\@expo\cli\src\start\platforms\android\emulator.ts:125:7)
+    at ChildProcess.emit (node:events:508:28)
+    at Process.ChildProcess._handle.onexit (node:internal/child_process:294:12)

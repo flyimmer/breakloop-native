@@ -145,6 +145,53 @@ class ForegroundDetectionService : AccessibilityService() {
          * SharedPreferences key for crash recovery backup
          */
         private const val PREFS_QUICK_TASK_STATE = "quick_task_state_v1"
+
+        /**
+         * Identifies the trigger for entry logic
+         */
+        private enum class EntrySource {
+            FOREGROUND,      // Automatic app switch/resume
+            POST_CONTINUE    // Manual re-entry from POST_CHOICE button
+        }
+        
+        /**
+         * Per-app entry suppression flag (Phase 4.1 ONLY)
+         * 
+         * CRITICAL BOUNDARY:
+         * - This flag is used ONLY by handleMonitoredAppEntry()
+         * - This flag must NEVER be checked by expiry logic
+         * 
+         * Set by POST_CONTINUE to prevent foreground-triggered duplicate entry.
+         * Consumed (cleared) after one use.
+         */
+        private val skipNextEntryDecision = mutableMapOf<String, Boolean>()
+
+        /**
+         * SystemSurface state tracking (Phase 4.2 Lifecycle Gate)
+         */
+        private var systemSurfaceActive = false
+        private var pendingDecisionApp: String? = null
+
+        @JvmStatic
+        fun onSystemSurfaceOpened() {
+            systemSurfaceActive = true
+            Log.d(TAG, "[QT][SURFACE] Surface ACTIVE")
+        }
+
+        @JvmStatic
+        fun onSystemSurfaceDestroyed() {
+            systemSurfaceActive = false
+            Log.e("QT_DEV", "🔥 SYSTEM_SURFACE DESTROYED")
+            
+            val app = pendingDecisionApp ?: return
+            pendingDecisionApp = null
+            
+            Log.e("QT_DEV", "🔥 RUN DECISION AFTER SURFACE DESTROYED for $app")
+            runDirectDecision(app)
+        }
+        
+        /**
+         * Last detected foreground app (for expiration checks)
         
         /**
          * Last detected foreground app (for expiration checks)
@@ -345,6 +392,7 @@ class ForegroundDetectionService : AccessibilityService() {
                 if (entry.expiresAt != null) {
                     put("expiresAt", entry.expiresAt)
                 }
+                put("postChoiceShown", entry.postChoiceShown)
             }
             prefs.edit().putString(entry.app, json.toString()).apply()
         }
@@ -374,14 +422,30 @@ class ForegroundDetectionService : AccessibilityService() {
                     val state = QuickTaskState.valueOf(json.getString("state"))
                     val expiresAt = if (json.has("expiresAt")) json.getLong("expiresAt") else null
                     
-                    // Only restore ACTIVE entries with valid expiration
-                    if (state == QuickTaskState.ACTIVE && expiresAt != null && expiresAt > now) {
-                        val entry = QuickTaskEntry(app, state, expiresAt)
-                        quickTaskMap[app] = entry
-                        restartTimer(app, expiresAt)
-                    } else {
-                        // Stale or non-ACTIVE state, clear it
-                        clearPersistedState(app, context)
+                    when (state) {
+                        QuickTaskState.ACTIVE -> {
+                            // Only restore ACTIVE entries with valid expiration
+                            if (expiresAt != null && expiresAt > now) {
+                                val entry = QuickTaskEntry(app, state, expiresAt)
+                                quickTaskMap[app] = entry
+                                restartTimer(app, expiresAt)
+                            } else {
+                                // Expired ACTIVE state, clear it
+                                clearPersistedState(app, context)
+                            }
+                        }
+                        QuickTaskState.POST_CHOICE -> {
+                            // Restore POST_CHOICE with postChoiceShown flag
+                            val postChoiceShown = if (json.has("postChoiceShown")) 
+                                json.getBoolean("postChoiceShown") else false
+                            val entry = QuickTaskEntry(app, state, null, postChoiceShown)
+                            quickTaskMap[app] = entry
+                            Log.i(TAG, "[QT][RESTORE] app=$app POST_CHOICE postChoiceShown=$postChoiceShown")
+                        }
+                        else -> {
+                            // IDLE or DECISION: clear stale state
+                            clearPersistedState(app, context)
+                        }
                     }
                 } catch (e: Exception) {
                     clearPersistedState(app, context)
@@ -427,6 +491,7 @@ class ForegroundDetectionService : AccessibilityService() {
             startNativeTimer(app, expiresAtTime)
             emitStartQuickTaskActive(app, context)
             
+            Log.e("QT_DEV", "🔥 QUICK TASK STARTED for $app expiresAt=$expiresAtTime")
             Log.i(TAG, "[QT][STATE] app=$app DECISION → ACTIVE")
             val expiresAtFormatted = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(expiresAtTime))
             Log.i(TAG, "[QT][TIMER] START app=$app expiresAt=$expiresAtFormatted")
@@ -451,17 +516,62 @@ class ForegroundDetectionService : AccessibilityService() {
          */
         @JvmStatic
         fun onPostChoiceContinue(app: String, context: android.content.Context) {
+            Log.e("QT_DEV", "🔥 POST_CONTINUE RECEIVED for $app")
+            val entry = quickTaskMap[app]
+            if (entry == null || entry.state != QuickTaskState.POST_CHOICE) {
+                Log.w(TAG, "[QT][WARN] POST_CONTINUE called but app not in POST_CHOICE state")
+                return
+            }
+            
+            // Step 1: Resolve POST_CHOICE completely
+            entry.state = QuickTaskState.IDLE
+            entry.postChoiceShown = false
+            entry.expiresAt = null
             quickTaskMap.remove(app)
             clearPersistedState(app, context)
+            
+            Log.i(TAG, "[QT][STATE] app=$app POST_CHOICE → IDLE (resolved)")
+            
+            // Step 2: Close SystemSurface
+            emitFinishSystemSurface(context)
+            
+            // Step 3: Queue decision until surface is destroyed (Lifecycle Gate)
+            pendingDecisionApp = app
+            Log.d(TAG, "[QT][QUEUE] Decision queued for $app (waiting for surface destroy)")
+        }
 
+        private fun runDirectDecision(app: String) {
+            // CRITICAL GUARD: Only run if no surface is active
+            if (systemSurfaceActive) {
+                // Determine which Session Intent would have been rendered
+                val intent = if (cachedQuickTaskQuota > 0) "SHOW_QUICK_TASK_DIALOG" else "START_INTERVENTION_FLOW"
+                
+                // INVARIANT LOG: Session render gate blocked
+                Log.i("SESSION_GATE", "Attempted to render Session while surface active → queued (intent=$intent, app=$app)")
+                
+                pendingDecisionApp = app
+                return
+            }
+            
+            val context = AppMonitorService.getReactContext()?.applicationContext ?: return
+            
+            Log.e("QT_DEV", "🔥 DIRECT DECISION PATH EXECUTED for $app")
+            // Direct decision (bypasses OS Trigger Brain and foreground subscriptions)
             if (cachedQuickTaskQuota > 0) {
                 quickTaskMap[app] = QuickTaskEntry(app, QuickTaskState.DECISION)
                 persistState(quickTaskMap[app]!!, context)
+                
+                // INVARIANT LOG: Session rendering (gate open)
+                Log.i("SESSION_GATE", "Rendering Session: SHOW_QUICK_TASK_DIALOG (app=$app)")
+                
                 emitShowQuickTaskDialog(app, context)
-                Log.i(TAG, "[QT][STATE] app=$app POST_CHOICE → DECISION")
+                Log.i(TAG, "[QT][DIRECT] app=$app POST_CONTINUE → DECISION (quota=$cachedQuickTaskQuota)")
             } else {
+                // INVARIANT LOG: Session rendering (gate open)
+                Log.i("SESSION_GATE", "Rendering Session: START_INTERVENTION_FLOW (app=$app)")
+                
                 emitNoQuickTaskAvailable(app, context)
-                Log.i(TAG, "[QT][STATE] app=$app POST_CHOICE → IDLE")
+                Log.i(TAG, "[QT][DIRECT] app=$app POST_CONTINUE → INTERVENTION (quota=0)")
             }
         }
 
@@ -471,11 +581,25 @@ class ForegroundDetectionService : AccessibilityService() {
          */
         @JvmStatic
         fun onPostChoiceQuit(app: String, context: android.content.Context) {
+            val entry = quickTaskMap[app]
+            if (entry == null || entry.state != QuickTaskState.POST_CHOICE) {
+                Log.w(TAG, "[QT][WARN] POST_QUIT called but app not in POST_CHOICE state")
+                return
+            }
+            
+            // CRITICAL: Atomically resolve POST_CHOICE → IDLE
+            entry.state = QuickTaskState.IDLE
+            entry.postChoiceShown = false
+            entry.expiresAt = null
+            
+            // Clear state completely (user chose to quit)
             quickTaskMap.remove(app)
             clearPersistedState(app, context)
+            
+            // Close SystemSurface and launch home
             emitFinishSystemSurface(context)
             
-            Log.i(TAG, "[QT][STATE] app=$app POST_CHOICE → IDLE")
+            Log.i(TAG, "[QT][STATE] app=$app POST_CHOICE → IDLE (quit)")
         }
 
         /**
@@ -524,23 +648,35 @@ class ForegroundDetectionService : AccessibilityService() {
 
             // Native tracks foreground independently (Phase 4.2 Decision 3)
             val isForeground = isAppForeground(app)
+            Log.e("QT_DEV", "🔥 QUICK TASK EXPIRED for $app foreground=$isForeground quota=$cachedQuickTaskQuota")
 
             if (isForeground) {
-                // App is foreground → show POST_CHOICE
-                entry.state = QuickTaskState.POST_CHOICE
-                entry.expiresAt = null
-                entry.postChoiceShown = false  // Reset guard for new POST_CHOICE
-                
-                // Need context for persistence - get from service instance
-                // This will be called from service context
+                // Foreground expiry - check quota before deciding next state
                 val context = AppMonitorService.getReactContext()?.applicationContext
-                if (context != null) {
-                    persistState(entry, context)
-                    emitShowPostQuickTaskChoice(app, context)
+                if (context == null) {
+                    return
                 }
                 
-                Log.i(TAG, "[QT][TIMER] EXPIRE app=$app foreground=true")
-                Log.i(TAG, "[QT][STATE] app=$app ACTIVE → POST_CHOICE")
+                if (cachedQuickTaskQuota > 0) {
+                    // Have quota → enter POST_CHOICE
+                    entry.state = QuickTaskState.POST_CHOICE
+                    entry.expiresAt = null
+                    entry.postChoiceShown = true  // Mark as shown immediately (one-shot)
+                    persistState(entry, context)
+                    Log.e("QT_DEV", "🔥 POST_CHOICE SHOWN for $app")
+                    emitShowPostQuickTaskChoice(app, context)
+                    
+                    Log.i(TAG, "[QT][TIMER] EXPIRE app=$app foreground=true quota=$cachedQuickTaskQuota")
+                    Log.i(TAG, "[QT][STATE] app=$app ACTIVE → POST_CHOICE")
+                } else {
+                    // No quota → start intervention immediately
+                    quickTaskMap.remove(app)
+                    clearPersistedState(app, context)
+                    emitNoQuickTaskAvailable(app, context)
+                    
+                    Log.i(TAG, "[QT][TIMER] EXPIRE app=$app foreground=true quota=0")
+                    Log.i(TAG, "[QT][STATE] app=$app ACTIVE → INTERVENTION (no quota)")
+                }
             } else {
                 // App is background → silent cleanup
                 quickTaskMap.remove(app)
@@ -601,6 +737,11 @@ class ForegroundDetectionService : AccessibilityService() {
          * Emit: Finish SystemSurface
          */
         private fun emitFinishSystemSurface(context: android.content.Context) {
+            if (!systemSurfaceActive) {
+                Log.d(TAG, "[QT][SURFACE] Skipping finish - surface not active")
+                return
+            }
+            Log.i("SystemSurfaceInvariant", "FINISH requested — native command")
             emitQuickTaskCommand("FINISH_SYSTEM_SURFACE", "", context)
         }
 
@@ -652,21 +793,28 @@ class ForegroundDetectionService : AccessibilityService() {
         }
         
         // ============================================================================
-        // PHASE 4.2: Entry Decision (SKELETON FUNCTION)
+        // PHASE 4.1: Entry Decision (ENTRY LOGIC - suppression allowed)
         // ============================================================================
         
         /**
-         * Entry decision for monitored app foreground
-         * SKELETON FUNCTION - Phase 4.1 + 4.2 compatible
+         * Entry decision handler (Phase 4.1)
          * 
-         * Important:
-         * - No JS state consulted
-         * - No lastDecisionApp
-         * - No suppression
-         * - Every foreground entry is a decision
+         * BOUNDARY RULE: This is the ONLY function that may check skipNextEntryDecision.
+         * Expiry logic must NEVER call this or check suppression flags.
          */
-        @JvmStatic
-        fun onMonitoredAppForeground(app: String, context: android.content.Context) {
+        private fun handleMonitoredAppEntry(
+            app: String, 
+            context: android.content.Context, 
+            source: EntrySource
+        ) {
+            // ONLY apply suppression to foreground-triggered events (Phase 4.1 only)
+            // Manual POST_CONTINUE re-entry MUST bypass this guard.
+            if (source == EntrySource.FOREGROUND && skipNextEntryDecision[app] == true) {
+                skipNextEntryDecision[app] = false
+                Log.i(TAG, "[QT][ENTRY] app=$app suppressed once (foreground resume guard)")
+                return
+            }
+            
             val entry = quickTaskMap[app]
             val hasTimer = entry?.state == QuickTaskState.ACTIVE
 
@@ -675,28 +823,35 @@ class ForegroundDetectionService : AccessibilityService() {
                     // ACTIVE phase persists, no entry dialog
                     return
                 }
+                QuickTaskState.DECISION -> {
+                    // DECISION already in progress
+                    Log.i(TAG, "[QT][ENTRY] app=$app already in DECISION, skipping")
+                    return
+                }
                 QuickTaskState.POST_CHOICE -> {
                     // POST_CHOICE one-shot: only emit UI once per expiration
                     if (!entry.postChoiceShown) {
-                        entry.postChoiceShown = true  // Mark as shown
-                        persistState(entry, context)   // Persist the flag
+                        entry.postChoiceShown = true
+                        persistState(entry, context)
                         emitShowPostQuickTaskChoice(app, context)
                     }
                     return
                 }
                 else -> {
-                    // IDLE or DECISION or null → make entry decision
-                    if (cachedQuickTaskQuota > 0) {
-                        quickTaskMap[app] = QuickTaskEntry(app, QuickTaskState.DECISION)
-                        persistState(quickTaskMap[app]!!, context)
-                        emitShowQuickTaskDialog(app, context)
-                        Log.i(TAG, "[QT][ENTRY] app=$app quota=$cachedQuickTaskQuota hasTimer=$hasTimer → DECISION=SHOW_QUICK_TASK")
-                    } else {
-                        emitNoQuickTaskAvailable(app, context)
-                        Log.i(TAG, "[QT][ENTRY] app=$app quota=0 hasTimer=$hasTimer → DECISION=NO_QUICK_TASK")
-                    }
+                    // IDLE or null → make entry decision
+                    Log.i(TAG, "[QT][ENTRY] app=$app triggering entry decision (source=$source)")
+                    runDirectDecision(app)
                 }
             }
+        }
+
+        /**
+         * Public entry point for monitored app foreground
+         * Thin wrapper that delegates to handleMonitoredAppEntry
+         */
+        @JvmStatic
+        fun onMonitoredAppForeground(app: String, context: android.content.Context) {
+            handleMonitoredAppEntry(app, context, EntrySource.FOREGROUND)
         }
     }
 
