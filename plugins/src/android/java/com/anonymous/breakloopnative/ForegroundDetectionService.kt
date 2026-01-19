@@ -169,18 +169,30 @@ class ForegroundDetectionService : AccessibilityService() {
         /**
          * SystemSurface state tracking (Phase 4.2 Lifecycle Gate)
          */
-        private var systemSurfaceActive = false
         private var pendingDecisionApp: String? = null
-
+        
+        /**
+         * Underlying app (Phase 4.2 Effective Foreground)
+         * 
+         * Tracks which app was active BEFORE SystemSurface opened.
+         * Used to determine effective foreground during SystemSurface lifecycle.
+         * 
+         * This prevents false "user left app" classifications when:
+         * - SystemSurface temporarily becomes foreground
+         * - finish() hasn't restored foreground ownership yet
+         * - Android foreground detection has transient gaps
+         */
+        private var underlyingApp: String? = null
+        
         @JvmStatic
         fun onSystemSurfaceOpened() {
-            systemSurfaceActive = true
+            isSystemSurfaceActive = true
             Log.d(TAG, "[QT][SURFACE] Surface ACTIVE")
         }
 
         @JvmStatic
         fun onSystemSurfaceDestroyed() {
-            systemSurfaceActive = false
+            isSystemSurfaceActive = false
             Log.e("QT_DEV", "🔥 SYSTEM_SURFACE DESTROYED")
             
             val app = pendingDecisionApp ?: return
@@ -191,7 +203,21 @@ class ForegroundDetectionService : AccessibilityService() {
         }
         
         /**
-         * Last detected foreground app (for expiration checks)
+         * Get effective foreground app (Phase 4.2 Effective Foreground)
+         * 
+         * Returns the app that is semantically "foreground" from the user's perspective,
+         * ignoring SystemSurface lifecycle transitions.
+         * 
+         * During SystemSurface lifecycle: returns underlyingApp
+         * Otherwise: returns currentForegroundApp
+         */
+        private fun getEffectiveForegroundApp(): String? {
+            return if (isSystemSurfaceActive) {
+                underlyingApp  // During SystemSurface, underlying app is still "foreground"
+            } else {
+                currentForegroundApp
+            }
+        }
         
         /**
          * Last detected foreground app (for expiration checks)
@@ -227,6 +253,17 @@ class ForegroundDetectionService : AccessibilityService() {
          */
         @Volatile
         private var systemSurfaceActiveTimestamp: Long = 0
+        
+        /**
+         * Flag to prevent duplicate initial foreground evaluation
+         * 
+         * Set to true after first evaluation in onServiceConnected().
+         * Prevents re-triggering if accessibility change event immediately follows.
+         * 
+         * LAYER 1 of duplicate prevention (see implementation_plan.md)
+         */
+        @Volatile
+        private var initialForegroundEvaluated: Boolean = false
         
         /**
          * Wake suppression timestamps per app
@@ -542,7 +579,7 @@ class ForegroundDetectionService : AccessibilityService() {
 
         private fun runDirectDecision(app: String) {
             // CRITICAL GUARD: Only run if no surface is active
-            if (systemSurfaceActive) {
+            if (isSystemSurfaceActive) {
                 // Determine which Session Intent would have been rendered
                 val intent = if (cachedQuickTaskQuota > 0) "SHOW_QUICK_TASK_DIALOG" else "START_INTERVENTION_FLOW"
                 
@@ -646,9 +683,12 @@ class ForegroundDetectionService : AccessibilityService() {
                 return
             }
 
-            // Native tracks foreground independently (Phase 4.2 Decision 3)
-            val isForeground = isAppForeground(app)
-            Log.e("QT_DEV", "🔥 QUICK TASK EXPIRED for $app foreground=$isForeground quota=$cachedQuickTaskQuota")
+
+            // Use effective foreground (Phase 4.2 Effective Foreground Fix)
+            // Prevents false "user left app" during SystemSurface lifecycle transitions
+            val effectiveForeground = getEffectiveForegroundApp()
+            val isForeground = effectiveForeground == app
+            Log.e("QT_DEV", "🔥 QUICK TASK EXPIRED for $app effective=$effectiveForeground isForeground=$isForeground quota=$cachedQuickTaskQuota")
 
             if (isForeground) {
                 // Foreground expiry - check quota before deciding next state
@@ -706,6 +746,9 @@ class ForegroundDetectionService : AccessibilityService() {
         @JvmStatic
         fun updateCurrentForegroundApp(app: String?) {
             currentForegroundApp = app
+            if (app != null) {
+                Log.i(TAG, "[FG_DETECT] Foreground detected: $app (source=ACCESSIBILITY)")
+            }
         }
         
         // ============================================================================
@@ -737,7 +780,7 @@ class ForegroundDetectionService : AccessibilityService() {
          * Emit: Finish SystemSurface
          */
         private fun emitFinishSystemSurface(context: android.content.Context) {
-            if (!systemSurfaceActive) {
+            if (!isSystemSurfaceActive) {
                 Log.d(TAG, "[QT][SURFACE] Skipping finish - surface not active")
                 return
             }
@@ -851,10 +894,41 @@ class ForegroundDetectionService : AccessibilityService() {
          */
         @JvmStatic
         fun onMonitoredAppForeground(app: String, context: android.content.Context) {
+            // Track underlying app before any SystemSurface opens (Phase 4.2 Effective Foreground)
+            underlyingApp = app
             handleMonitoredAppEntry(app, context, EntrySource.FOREGROUND)
         }
     }
 
+    /**
+     * Check if package is infrastructure (Phase 4.2 Effective Foreground)
+     * 
+     * Infrastructure packages should NOT clear underlyingApp because they represent:
+     * - BreakLoop's own app
+     * - Android system UI (notification shade, quick settings)
+     * - System navigation/gestures
+     * - Transient OS overlays
+     * 
+     * These do NOT represent user intent to leave the Quick Task app.
+     */
+    private fun isInfrastructurePackage(packageName: String?): Boolean {
+        if (packageName.isNullOrEmpty()) return true
+        
+        return when {
+            // BreakLoop's own app package
+            packageName == "com.anonymous.breakloopnative" -> true
+            // Android system navigation/gesture package
+            packageName == "android" -> true
+            // Android system UI (notification shade, quick settings, status bar)
+            packageName == "com.android.systemui" -> true
+            // Launcher apps (brief flashes during navigation)
+            packageName.contains("launcher") -> true
+            packageName == "com.android.launcher" -> true
+            packageName.contains(".launcher.") -> true
+            else -> false
+        }
+    }
+    
     /**
      * Last detected foreground package name
      * Used to avoid duplicate logging of the same app
@@ -922,11 +996,90 @@ class ForegroundDetectionService : AccessibilityService() {
     }
     
     /**
+     * Perform one-time initial foreground evaluation
+     * 
+     * Called from onServiceConnected() after a short delay.
+     * Checks if a monitored app is already foreground and triggers entry decision.
+     * 
+     * GUARD: Uses initialForegroundEvaluated flag (Layer 1) to prevent duplicates.
+     * Layer 2: lastDecisionApp comparison in handleMonitoredAppEntry() prevents
+     * duplicate decisions if accessibility event immediately follows.
+     */
+    private fun performInitialForegroundEvaluation() {
+        // Guard: Only run once per service connection (Layer 1)
+        if (initialForegroundEvaluated) {
+            Log.d(TAG, "[QT][INIT] Initial evaluation already performed, skipping")
+            return
+        }
+        initialForegroundEvaluated = true
+        
+        // Get current foreground app using UsageStatsManager
+        val currentApp = getCurrentForegroundAppFromUsageStats()
+        if (currentApp == null) {
+            Log.d(TAG, "[QT][INIT] No foreground app detected")
+            return
+        }
+        
+        // Skip if same as last decision app (already handled by change event)
+        // This is an additional guard; Layer 2 in handleMonitoredAppEntry also guards
+        if (currentApp == lastDecisionApp) {
+            Log.d(TAG, "[QT][INIT] Current app $currentApp already handled, skipping")
+            return
+        }
+        
+        // Check if it's a monitored app
+        if (dynamicMonitoredApps.contains(currentApp)) {
+            Log.e("QT_DEV", "🔥 INITIAL FOREGROUND EVALUATION for $currentApp")
+            Log.i(TAG, "[QT][INIT] Initial foreground evaluation for $currentApp")
+            
+            // Update tracking state
+            updateCurrentForegroundApp(currentApp)
+            
+            // Trigger entry decision
+            onMonitoredAppForeground(currentApp, applicationContext)
+        } else {
+            Log.d(TAG, "[QT][INIT] Current app $currentApp is not monitored")
+        }
+    }
+    
+    /**
+     * Get current foreground app using UsageStatsManager
+     * 
+     * Used for initial foreground evaluation when AccessibilityService
+     * hasn't received any events yet.
+     * 
+     * @return Package name of current foreground app, or null if unavailable
+     */
+    @android.annotation.SuppressLint("WrongConstant")
+    private fun getCurrentForegroundAppFromUsageStats(): String? {
+        try {
+            val usageStatsManager = getSystemService("usagestats") as? android.app.usage.UsageStatsManager
+                ?: return null
+            
+            val now = System.currentTimeMillis()
+            val stats = usageStatsManager.queryUsageStats(
+                android.app.usage.UsageStatsManager.INTERVAL_DAILY,
+                now - 60000,  // Last minute
+                now
+            )
+            
+            if (stats.isNullOrEmpty()) return null
+            
+            // Find the app with most recent lastTimeUsed
+            return stats.maxByOrNull { it.lastTimeUsed }?.packageName
+        } catch (e: Exception) {
+            Log.w(TAG, "[QT][INIT] Failed to get foreground app from UsageStats: ${e.message}")
+            return null
+        }
+    }
+    
+    /**
      * Called when service is created
      * Defensive timer check start as backup
      */
     override fun onCreate() {
         super.onCreate()
+        Log.e(TAG, "[FG_DETECT] onCreate() called - AccessibilityService starting")
         
         // Defensive timer check start (backup initialization point)
         startTimerCheckIfNeeded()
@@ -938,6 +1091,7 @@ class ForegroundDetectionService : AccessibilityService() {
      */
     override fun onServiceConnected() {
         super.onServiceConnected()
+        Log.e(TAG, "[FG_DETECT] onServiceConnected() called - AccessibilityService connected")
         
         isServiceConnected = true
         
@@ -973,6 +1127,14 @@ class ForegroundDetectionService : AccessibilityService() {
         
         // Start periodic timer expiration checks (primary initialization point)
         startTimerCheckIfNeeded()
+        
+        // PHASE 4.x: Initial foreground evaluation (one-time)
+        // AccessibilityService only emits CHANGE events, not initial state
+        // If monitored app is already foreground when service starts, we must evaluate once
+        initialForegroundEvaluated = false
+        handler.postDelayed({
+            performInitialForegroundEvaluation()
+        }, 500) // Small delay to ensure React Native bridge is ready
     }
 
     /**
@@ -1039,6 +1201,15 @@ class ForegroundDetectionService : AccessibilityService() {
         
         // PHASE 4.2: Update foreground app for timer expiration checks
         updateCurrentForegroundApp(packageName)
+        
+        // Phase 4.2 Effective Foreground: Clear underlyingApp on intentional app switch
+        // Only clear when user foregrounds a DIFFERENT REAL APP (not infrastructure)
+        if (!isSystemSurfaceActive &&
+            !isInfrastructurePackage(packageName) &&
+            packageName != underlyingApp) {
+            underlyingApp = null
+            Log.d(TAG, "[QT][EFFECTIVE] User switched to different app, cleared underlyingApp")
+        }
         
         // Emit event to JavaScript for ALL apps (including launchers)
         // This allows JavaScript to track exits and cancel incomplete interventions

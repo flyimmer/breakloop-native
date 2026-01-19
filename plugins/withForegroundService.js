@@ -56,6 +56,7 @@ function getSourcePaths(projectRoot) {
     systemBrainService: path.join(javaPath, 'SystemBrainService.kt'),
     appDiscoveryModule: path.join(javaPath, 'AppDiscoveryModule.kt'),
     appDiscoveryPackage: path.join(javaPath, 'AppDiscoveryPackage.kt'),
+    nativeBuildCanary: path.join(javaPath, 'NativeBuildCanary.kt'),
     accessibilityXml: path.join(pluginSrcPath, 'res', 'xml', 'accessibility_service.xml'),
     stringsXml: path.join(pluginSrcPath, 'res', 'values', 'strings.xml'),
     stylesXml: path.join(pluginSrcPath, 'res', 'values', 'styles.xml'),
@@ -77,6 +78,7 @@ function getDestinationPaths(projectRoot) {
     systemBrainService: path.join(javaPath, 'SystemBrainService.kt'),
     appDiscoveryModule: path.join(javaPath, 'AppDiscoveryModule.kt'),
     appDiscoveryPackage: path.join(javaPath, 'AppDiscoveryPackage.kt'),
+    nativeBuildCanary: path.join(javaPath, 'NativeBuildCanary.kt'),
     accessibilityXml: path.join(androidMainPath, 'res', 'xml', 'accessibility_service.xml'),
   };
 }
@@ -87,13 +89,13 @@ function getDestinationPaths(projectRoot) {
 function copyKotlinFiles(projectRoot) {
   const sourcePaths = getSourcePaths(projectRoot);
   const destPaths = getDestinationPaths(projectRoot);
-  
+
   // Ensure destination directory exists
   const destDir = path.dirname(destPaths.foregroundService);
   if (!fs.existsSync(destDir)) {
     fs.mkdirSync(destDir, { recursive: true });
   }
-  
+
   // Copy ForegroundDetectionService.kt
   if (fs.existsSync(sourcePaths.foregroundService)) {
     fs.copyFileSync(sourcePaths.foregroundService, destPaths.foregroundService);
@@ -101,8 +103,8 @@ function copyKotlinFiles(projectRoot) {
   } else {
     throw new Error(`[${PLUGIN_NAME}] Source file not found: ${sourcePaths.foregroundService}`);
   }
-  
-  
+
+
   // Copy AppMonitorModule.kt (Phase F3.5)
   if (fs.existsSync(sourcePaths.appMonitorModule)) {
     fs.copyFileSync(sourcePaths.appMonitorModule, destPaths.appMonitorModule);
@@ -110,7 +112,7 @@ function copyKotlinFiles(projectRoot) {
   } else {
     throw new Error(`[${PLUGIN_NAME}] Source file not found: ${sourcePaths.appMonitorModule}`);
   }
-  
+
   // Copy AppMonitorPackage.kt
   if (fs.existsSync(sourcePaths.appMonitorPackage)) {
     fs.copyFileSync(sourcePaths.appMonitorPackage, destPaths.appMonitorPackage);
@@ -118,7 +120,7 @@ function copyKotlinFiles(projectRoot) {
   } else {
     console.warn(`[${PLUGIN_NAME}] AppMonitorPackage.kt not found, skipping (optional)`);
   }
-  
+
   // Copy AppMonitorService.kt
   if (fs.existsSync(sourcePaths.appMonitorService)) {
     fs.copyFileSync(sourcePaths.appMonitorService, destPaths.appMonitorService);
@@ -126,7 +128,7 @@ function copyKotlinFiles(projectRoot) {
   } else {
     console.warn(`[${PLUGIN_NAME}] AppMonitorService.kt not found, skipping (optional)`);
   }
-  
+
   // Copy SystemSurfaceActivity.kt
   if (fs.existsSync(sourcePaths.systemSurfaceActivity)) {
     fs.copyFileSync(sourcePaths.systemSurfaceActivity, destPaths.systemSurfaceActivity);
@@ -134,7 +136,7 @@ function copyKotlinFiles(projectRoot) {
   } else {
     console.warn(`[${PLUGIN_NAME}] SystemSurfaceActivity.kt not found, skipping (optional)`);
   }
-  
+
   // Copy SystemBrainService.kt
   if (fs.existsSync(sourcePaths.systemBrainService)) {
     fs.copyFileSync(sourcePaths.systemBrainService, destPaths.systemBrainService);
@@ -142,7 +144,7 @@ function copyKotlinFiles(projectRoot) {
   } else {
     console.warn(`[${PLUGIN_NAME}] SystemBrainService.kt not found, skipping (optional)`);
   }
-  
+
   // Copy AppDiscoveryModule.kt
   if (fs.existsSync(sourcePaths.appDiscoveryModule)) {
     fs.copyFileSync(sourcePaths.appDiscoveryModule, destPaths.appDiscoveryModule);
@@ -150,13 +152,21 @@ function copyKotlinFiles(projectRoot) {
   } else {
     console.warn(`[${PLUGIN_NAME}] AppDiscoveryModule.kt not found, skipping (optional)`);
   }
-  
+
   // Copy AppDiscoveryPackage.kt
   if (fs.existsSync(sourcePaths.appDiscoveryPackage)) {
     fs.copyFileSync(sourcePaths.appDiscoveryPackage, destPaths.appDiscoveryPackage);
     console.log(`[${PLUGIN_NAME}] Copied AppDiscoveryPackage.kt`);
   } else {
     console.warn(`[${PLUGIN_NAME}] AppDiscoveryPackage.kt not found, skipping (optional)`);
+  }
+
+  // Copy NativeBuildCanary.kt
+  if (fs.existsSync(sourcePaths.nativeBuildCanary)) {
+    fs.copyFileSync(sourcePaths.nativeBuildCanary, destPaths.nativeBuildCanary);
+    console.log(`[${PLUGIN_NAME}] Copied NativeBuildCanary.kt`);
+  } else {
+    console.warn(`[${PLUGIN_NAME}] NativeBuildCanary.kt not found, skipping (optional)`);
   }
 }
 
@@ -176,20 +186,20 @@ function registerAppMonitorPackage(projectRoot) {
     'breakloopnative',
     'MainApplication.kt'
   );
-  
+
   if (!fs.existsSync(mainApplicationPath)) {
     console.warn(`[${PLUGIN_NAME}] MainApplication.kt not found, skipping package registration`);
     return;
   }
-  
+
   let content = fs.readFileSync(mainApplicationPath, 'utf-8');
-  
+
   let modified = false;
-  
+
   // Register AppMonitorPackage
   if (!content.includes('add(AppMonitorPackage())')) {
     const applyBlockPattern = /(PackageList\(this\)\.packages\.apply\s*\{[\s\S]*?)(            \})/;
-    
+
     if (applyBlockPattern.test(content)) {
       content = content.replace(
         applyBlockPattern,
@@ -203,11 +213,11 @@ function registerAppMonitorPackage(projectRoot) {
   } else {
     console.log(`[${PLUGIN_NAME}] AppMonitorPackage already registered in MainApplication.kt`);
   }
-  
+
   // Register AppDiscoveryPackage
   if (!content.includes('add(AppDiscoveryPackage())')) {
     const applyBlockPattern = /(PackageList\(this\)\.packages\.apply\s*\{[\s\S]*?)(            \})/;
-    
+
     if (applyBlockPattern.test(content)) {
       content = content.replace(
         applyBlockPattern,
@@ -221,7 +231,7 @@ function registerAppMonitorPackage(projectRoot) {
   } else {
     console.log(`[${PLUGIN_NAME}] AppDiscoveryPackage already registered in MainApplication.kt`);
   }
-  
+
   if (modified) {
     fs.writeFileSync(mainApplicationPath, content);
   }
@@ -233,13 +243,13 @@ function registerAppMonitorPackage(projectRoot) {
 function copyAccessibilityXml(projectRoot) {
   const { accessibilityXml: sourcePath } = getSourcePaths(projectRoot);
   const { accessibilityXml: destPath } = getDestinationPaths(projectRoot);
-  
+
   // Ensure destination directory exists
   const destDir = path.dirname(destPath);
   if (!fs.existsSync(destDir)) {
     fs.mkdirSync(destDir, { recursive: true });
   }
-  
+
   // Copy file
   if (fs.existsSync(sourcePath)) {
     fs.copyFileSync(sourcePath, destPath);
@@ -256,20 +266,20 @@ function withAndroidManifestModifications(config) {
   return withAndroidManifest(config, async (config) => {
     const { modResults } = config;
     const { manifest } = modResults;
-    
+
     // Ensure manifest exists
     if (!manifest) {
       throw new Error('[withForegroundService] AndroidManifest.xml not found');
     }
-    
+
     // Add <queries> block for launcher intent discovery (Android 11+ package visibility)
     // This allows us to discover ALL user-launchable apps without QUERY_ALL_PACKAGES
     if (!manifest.queries) {
       manifest.queries = [];
     }
-    
+
     const queries = Array.isArray(manifest.queries) ? manifest.queries : [manifest.queries];
-    
+
     // Check if launcher intent query already exists
     const hasLauncherQuery = queries.some((query) => {
       if (!query.intent) return false;
@@ -282,7 +292,7 @@ function withAndroidManifestModifications(config) {
         return hasMainAction && hasLauncherCategory;
       });
     });
-    
+
     if (!hasLauncherQuery) {
       queries.push({
         intent: [
@@ -307,21 +317,21 @@ function withAndroidManifestModifications(config) {
       manifest.queries = queries;
       console.log(`[${PLUGIN_NAME}] Added <queries> block for launcher intent discovery (Android 11+ package visibility)`);
     }
-    
+
     // Add required permissions
     if (!manifest['uses-permission']) {
       manifest['uses-permission'] = [];
     }
-    
+
     const permissions = Array.isArray(manifest['uses-permission'])
       ? manifest['uses-permission']
       : [manifest['uses-permission']];
-    
+
     // Add BIND_ACCESSIBILITY_SERVICE permission
     const hasAccessibilityPermission = permissions.some(
       (perm) => perm.$['android:name'] === 'android.permission.BIND_ACCESSIBILITY_SERVICE'
     );
-    
+
     if (!hasAccessibilityPermission) {
       permissions.push({
         $: {
@@ -331,12 +341,12 @@ function withAndroidManifestModifications(config) {
       });
       console.log(`[${PLUGIN_NAME}] Added BIND_ACCESSIBILITY_SERVICE permission`);
     }
-    
+
     // Add WAKE_LOCK permission (required for HeadlessTaskService)
     const hasWakeLockPermission = permissions.some(
       (perm) => perm.$['android:name'] === 'android.permission.WAKE_LOCK'
     );
-    
+
     if (!hasWakeLockPermission) {
       permissions.push({
         $: {
@@ -345,12 +355,12 @@ function withAndroidManifestModifications(config) {
       });
       console.log(`[${PLUGIN_NAME}] Added WAKE_LOCK permission`);
     }
-    
+
     // Add PACKAGE_USAGE_STATS permission (for UsageStats discovery)
     const hasUsageStatsPermission = permissions.some(
       (perm) => perm.$['android:name'] === 'android.permission.PACKAGE_USAGE_STATS'
     );
-    
+
     if (!hasUsageStatsPermission) {
       permissions.push({
         $: {
@@ -360,27 +370,27 @@ function withAndroidManifestModifications(config) {
       });
       console.log(`[${PLUGIN_NAME}] Added PACKAGE_USAGE_STATS permission`);
     }
-    
+
     manifest['uses-permission'] = permissions;
-    
+
     // Add AccessibilityService and InterventionActivity to application
     if (!manifest.application) {
       throw new Error('[withForegroundService] <application> tag not found in AndroidManifest.xml');
     }
-    
+
     const application = Array.isArray(manifest.application) ? manifest.application[0] : manifest.application;
-    
+
     // Register ForegroundDetectionService
     if (!application.service) {
       application.service = [];
     }
-    
+
     const services = Array.isArray(application.service) ? application.service : [application.service];
-    
+
     const hasService = services.some(
       (service) => service.$['android:name'] === '.ForegroundDetectionService'
     );
-    
+
     if (!hasService) {
       services.push({
         $: {
@@ -411,12 +421,12 @@ function withAndroidManifestModifications(config) {
       });
       console.log(`[${PLUGIN_NAME}] Registered ForegroundDetectionService in AndroidManifest.xml`);
     }
-    
+
     // Register SystemBrainService (HeadlessTaskService for System Brain JS)
     const hasSystemBrainService = services.some(
       (service) => service.$['android:name'] === '.SystemBrainService'
     );
-    
+
     if (!hasSystemBrainService) {
       services.push({
         $: {
@@ -426,20 +436,20 @@ function withAndroidManifestModifications(config) {
       });
       console.log(`[${PLUGIN_NAME}] Registered SystemBrainService in AndroidManifest.xml`);
     }
-    
+
     application.service = services;
-    
+
     // Register SystemSurfaceActivity
     if (!application.activity) {
       application.activity = [];
     }
-    
+
     const activities = Array.isArray(application.activity) ? application.activity : [application.activity];
-    
+
     const hasSystemSurfaceActivity = activities.some(
       (activity) => activity.$['android:name'] === '.SystemSurfaceActivity'
     );
-    
+
     if (!hasSystemSurfaceActivity) {
       activities.push({
         $: {
@@ -457,7 +467,7 @@ function withAndroidManifestModifications(config) {
       application.activity = activities;
       console.log(`[${PLUGIN_NAME}] Registered SystemSurfaceActivity in AndroidManifest.xml`);
     }
-    
+
     return config;
   });
 }
@@ -468,22 +478,22 @@ function withAndroidManifestModifications(config) {
 function withStringsXmlModifications(config) {
   return withStringsXml(config, async (config) => {
     const { modResults } = config;
-    
+
     // Read source strings.xml
     const { stringsXml: sourcePath } = getSourcePaths(config.modRequest.projectRoot);
-    
+
     if (!fs.existsSync(sourcePath)) {
       throw new Error(`[${PLUGIN_NAME}] Source strings.xml not found: ${sourcePath}`);
     }
-    
+
     // Parse source XML
     const sourceContent = fs.readFileSync(sourcePath, 'utf-8');
     const sourceMatch = sourceContent.match(/<string name="accessibility_service_description">(.*?)<\/string>/);
-    
+
     if (!sourceMatch) {
       throw new Error('[withForegroundService] Could not find accessibility_service_description in source strings.xml');
     }
-    
+
     // Add or update the string in modResults
     if (!modResults.resources) {
       modResults.resources = {};
@@ -491,23 +501,23 @@ function withStringsXmlModifications(config) {
     if (!modResults.resources.string) {
       modResults.resources.string = [];
     }
-    
+
     const strings = Array.isArray(modResults.resources.string)
       ? modResults.resources.string
       : [modResults.resources.string];
-    
+
     // Check if string already exists
     const existingIndex = strings.findIndex(
       (str) => str.$.name === 'accessibility_service_description'
     );
-    
+
     const newString = {
       $: {
         name: 'accessibility_service_description',
       },
       _: sourceMatch[1],
     };
-    
+
     if (existingIndex >= 0) {
       strings[existingIndex] = newString;
       console.log(`[${PLUGIN_NAME}] Updated accessibility_service_description in strings.xml`);
@@ -515,9 +525,9 @@ function withStringsXmlModifications(config) {
       strings.push(newString);
       console.log(`[${PLUGIN_NAME}] Added accessibility_service_description to strings.xml`);
     }
-    
+
     modResults.resources.string = strings;
-    
+
     return config;
   });
 }
@@ -532,21 +542,21 @@ function withStylesXmlModifications(config) {
       const projectRoot = config.modRequest.projectRoot;
       const sourceStylesPath = getSourcePaths(projectRoot).stylesXml;
       const destStylesPath = path.join(projectRoot, 'android', 'app', 'src', 'main', 'res', 'values', 'styles.xml');
-      
+
       if (!fs.existsSync(sourceStylesPath)) {
         console.warn(`[${PLUGIN_NAME}] Source styles.xml not found, skipping Theme.Intervention merge`);
         return config;
       }
-      
+
       // Read source Theme.Intervention
       const sourceContent = fs.readFileSync(sourceStylesPath, 'utf-8');
       const themeMatch = sourceContent.match(/<style name="Theme\.Intervention"[^>]*>([\s\S]*?)<\/style>/);
-      
+
       if (!themeMatch) {
         console.warn(`[${PLUGIN_NAME}] Theme.Intervention not found in source styles.xml`);
         return config;
       }
-      
+
       // Read destination styles.xml
       if (!fs.existsSync(destStylesPath)) {
         console.warn(`[${PLUGIN_NAME}] Destination styles.xml not found, creating new file`);
@@ -554,23 +564,23 @@ function withStylesXmlModifications(config) {
         console.log(`[${PLUGIN_NAME}] Created styles.xml with Theme.Intervention`);
         return config;
       }
-      
+
       // Check if Theme.Intervention already exists
       const destContent = fs.readFileSync(destStylesPath, 'utf-8');
       if (destContent.includes('name="Theme.Intervention"')) {
         console.log(`[${PLUGIN_NAME}] Theme.Intervention already exists in styles.xml`);
         return config;
       }
-      
+
       // Append Theme.Intervention before closing </resources>
       const updatedContent = destContent.replace(
         '</resources>',
         `  ${themeMatch[0]}\n</resources>`
       );
-      
+
       fs.writeFileSync(destStylesPath, updatedContent);
       console.log(`[${PLUGIN_NAME}] Added Theme.Intervention to styles.xml`);
-      
+
       return config;
     },
   ]);
@@ -586,27 +596,27 @@ const withForegroundService = (config) => {
     'android',
     async (config) => {
       const projectRoot = config.modRequest.projectRoot;
-      
+
       // Copy files
       copyKotlinFiles(projectRoot);
       copyAccessibilityXml(projectRoot);
-      
+
       // Register AppMonitorPackage in MainApplication.kt
       registerAppMonitorPackage(projectRoot);
-      
+
       return config;
     },
   ]);
-  
+
   // Step 2: Modify AndroidManifest.xml (permission + service + activity)
   config = withAndroidManifestModifications(config);
-  
+
   // Step 3: Merge strings.xml
   config = withStringsXmlModifications(config);
-  
+
   // Step 4: Merge styles.xml (Phase F3.5)
   config = withStylesXmlModifications(config);
-  
+
   return config;
 };
 

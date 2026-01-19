@@ -525,7 +525,15 @@ export async function handleQuickTaskCommand(event: {
 
     case 'FINISH_SYSTEM_SURFACE':
       // Native says close SystemSurface
-      // SystemSurface will finish via session end
+      // Call native to finish the Activity (triggers onDestroy lifecycle)
+      try {
+        const { NativeModules, Platform } = require('react-native');
+        if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
+          NativeModules.AppMonitorModule.finishSystemSurfaceActivity();
+        }
+      } catch (e) {
+        // Silent failure
+      }
       break;
 
     case 'NO_QUICK_TASK_AVAILABLE':

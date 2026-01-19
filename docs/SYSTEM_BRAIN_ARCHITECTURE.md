@@ -36,6 +36,36 @@ System Brain JS is **event-driven**, NOT continuously running:
 - ❌ "System Brain has a persistent event loop"
 - ❌ "System Brain maintains state in memory"
 
+### Relationship with OS Trigger Brain (AUTHORITATIVE)
+
+**Source:** `spec/Relationship Between System Brain And Os Trigger Brain.docx`
+
+**System Brain hosts OS Trigger Brain. They are NOT peers.**
+
+**System Brain is:**
+- Long-lived JavaScript runtime (headless)
+- Receives events from Native (foreground changes, timer expiration, commands)
+- Owns semantic coordination (except where Native is the authority)
+- **Hosts OS Trigger Brain as a pure decision module**
+- Persists semantic state (when JS is the owner)
+- Headless-capable, survives Activity restarts, not tied to UI lifecycle
+
+**OS Trigger Brain is:**
+- A pure decision function
+- **Running INSIDE System Brain**
+- Stateless beyond what System Brain provides
+- Decides what should happen, not how it is shown
+- Evaluates conditions (t_intention, t_quickTask, n_quickTask, foreground/background)
+
+**OS Trigger Brain must:**
+- ✅ Run inside System Brain only
+- ❌ Never open UI
+- ❌ Never depend on Activity state
+- ❌ Never run inside SystemSurface
+
+**Key Principle:**
+> System Brain must never depend on SystemSurface timing. OS Trigger Brain must never run inside SystemSurface.
+
 ### Responsibilities
 
 - Receive MECHANICAL events from native (timer expired, foreground changed)

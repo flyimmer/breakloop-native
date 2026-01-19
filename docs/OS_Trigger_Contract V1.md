@@ -1,7 +1,12 @@
 # OS Trigger Contract V1
 
-**Status:** ✅ DEFINITION  
-**Version:** V1 (without `t_appSwitchInterval`)
+**Status:** ✅ AUTHORITATIVE  
+**Version:** V1 (without `t_appSwitchInterval`)  
+**Last Updated:** January 19, 2026
+
+**Changelog:**
+- **18.01.2026**: Updated Quick Task rules with explicit POST_CHOICE behavior and expiration scenarios
+- **Source:** `spec/Intervention_OS_Contract_V1.docx`
 
 ---
 
@@ -90,28 +95,83 @@ These states indicate the user has made meaningful progress:
 
 ## Quick Task System
 
+**Source:** `spec/Intervention_OS_Contract_V1.docx` (Updated 18.01.2026)
+
 ### Definitions
 
-- **`t_quickTask`**: Duration of the emergency allowance
-- **`n_quickTask`**: Number of Quick Tasks allowed within the rolling window (e.g., 15 minutes)
+- **`t_quickTask`**: Duration of the emergency allowance (per-app timer)
+- **`n_quickTask`**: Number of Quick Tasks allowed within the rolling window (e.g., 15 minutes) (global usage count)
+- **`t_intention`**: Timer set by user during intervention for how long they want to use the app (per-app timer)
 
-### Rules
+### Core Rules
 
 1. **Quick Task temporarily suppresses all intervention triggers.**
-2. **During `t_quickTask`:**
-   - User may freely switch apps and return to monitored apps
-   - No intervention process shall start
-3. **Quick Task does NOT create or extend `t_intention`.**
-4. **When `t_quickTask` expires:**
-   - `t_intention` is reset to 0
-   - System shows the screen "QuickTaskExpiredScreen"
-   - User will press the button and leave to the home screen of the cellphone
-5. **After Quick Task expiry:**
-   - The next opening of a monitored app triggers:
-     - the intervention process, OR
-     - the Quick Task dialog (if `n_quickTask` allows)
-6. **No timer state from before the Quick Task is resumed or reused.**
-7. **`n_quickTask` is counted globally across all monitored apps within the window.**
+   - During `t_quickTask`, user may freely switch apps and return to monitored apps
+   - No intervention process shall start during `t_quickTask`
+
+2. **When Quick Task started:**
+   - `t_intention` for this app is reset to 0
+   - Quick Task does NOT create or extend `t_intention`
+
+3. **When `t_quickTask` expires:**
+
+   #### Case 1: t_quickTask expires while user is still on the app
+   
+   **If `n_quickTask > 0`:**
+   - `QuickTaskExpiredScreen` appears
+   - User sees: "Your quick task is finished. What would you like to do next?"
+   - Native transitions: `ACTIVE → POST_CHOICE`
+   - Native emits: `SHOW_POST_QUICK_TASK_CHOICE`
+   - User options:
+     - **Continue**: User can continue using app
+     - **Quit**: Launches to cellphone home screen
+   
+   **If `n_quickTask == 0`:**
+   - Intervention flow starts immediately
+
+   #### Case 2: t_quickTask expires while user is NOT on the app
+   
+   - Native transitions: `ACTIVE → IDLE`
+   - Native clears Quick Task state
+   - No intervention triggered immediately
+   - When user later opens the app:
+     - Normal entry logic applies (Phase 4.1)
+     - If `n_quickTask > 0` → Quick Task dialog
+     - If `n_quickTask == 0` → Intervention
+
+4. **No timer state from before Quick Task is resumed or reused.**
+   - Quick Task is a clean slate
+   - Previous intervention state is not restored
+
+5. **`n_quickTask` is counted globally across all monitored apps.**
+   - Using Quick Task on Instagram consumes quota for TikTok too
+   - Shared quota within rolling window
+
+### POST_CHOICE State (Critical)
+
+**What it represents:**
+- Quick Task expired while app was foreground
+- User must make explicit choice: Continue or Quit
+
+**Rules:**
+- ✅ POST_CHOICE is a semantic state (owned by Native)
+- ✅ POST_CHOICE UI is shown once per expiration
+- ✅ POST_CHOICE must be persisted across restarts
+- ✅ POST_CHOICE must never be re-emitted without user intent
+
+**Allowed resolutions:**
+- `POST_CONTINUE` - User chose to continue using app
+- `POST_QUIT` - User chose to quit app
+
+**Forbidden behaviors:**
+- ❌ Re-emitting POST_CHOICE on app reopen
+- ❌ Clearing POST_CHOICE on foreground change
+- ❌ Treating POST_CHOICE like an intervention
+
+### Intervention Restart Logic
+
+- When `t_intention` is over and user is still using the monitored app, intervention should start again
+- Every time intervention flow starts or restarts, the `t_intention` for this app shall be deleted
 
 ---
 
@@ -195,8 +255,21 @@ START INTERVENTION FLOW
 
 ## Related Documentation
 
+### Architecture Documents
+- `CLAUDE.md` - Architecture Invariants (AUTHORITATIVE - Phase 4.2+)
+- `ARCHITECTURE_QUICK_REFERENCE.md` - Quick decision trees and cheat sheets
+- `SYSTEM_BRAIN_ARCHITECTURE.md` - System Brain and OS Trigger Brain relationship
+- `SYSTEM_SURFACE_ARCHITECTURE.md` - System Surface architecture and invariants
+- `NATIVE_JAVASCRIPT_BOUNDARY.md` - Native-JS boundary contract
+- `System_Session_Definition.md` - System session definitions
+
+### Implementation Documents
 - `Trigger_logic_priority.md` - Decision tree implementation details
 - `OS_TRIGGER_LOGIC_REFACTOR_SUMMARY.md` - Implementation changes
 - `OS_TRIGGER_LOGIC_TEST_SCENARIOS.md` - Comprehensive test scenarios
-- `NATIVE_JAVASCRIPT_BOUNDARY.md` - Native-JS boundary contract
-- `System_Session_Definition.md` - System session definitions
+
+### Specification Documents (Source of Truth)
+- `spec/Intervention_OS_Contract_V1.docx` - OS trigger contract specification (Updated 18.01.2026)
+- `spec/Architecture Invariants.docx` - Non-negotiable architectural rules
+- `spec/Relationship Between System Brain And Os Trigger Brain.docx` - System Brain architecture
+- `spec/Session And Timer Relationship (clarified).docx` - Session vs semantic state

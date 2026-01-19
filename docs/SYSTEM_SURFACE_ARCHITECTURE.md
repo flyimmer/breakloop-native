@@ -6,6 +6,189 @@
 
 ---
 
+## Architectural Invariants (AUTHORITATIVE - Phase 4.2+)
+
+**Status:** These invariants are non-negotiable. Any change that violates these invariants is considered a bug, not a design alternative.
+
+**Source:** `spec/Architecture Invariants.docx`, `spec/Relationship Between System Brain And Os Trigger Brain.docx`, `spec/Session And Timer Relationship (clarified).docx`
+
+### 1. Session Is a Projection, Not State
+
+A Session is an ephemeral projection of semantic state onto UI.
+
+Formally:
+```typescript
+Session = null | QUICK_TASK(app) | POST_CHOICE(app) | INTERVENTION(app)
+```
+
+**Rules:**
+- ✅ Only one Session may exist at a time
+- ✅ Session is derived from semantic state + foreground app
+- ✅ Session lifecycle must NEVER mutate semantic state
+- ✅ Session termination must NOT change semantic state
+- ❌ If Session lifecycle influences semantics, the architecture is invalid
+
+**Mental Model:**
+> Session answers: "What system UI (if any) should be shown right now for the current foreground app?"
+
+Session is a **view**, not the truth.
+
+**Semantic State (Source of Truth):**
+Long-lived facts about the world, owned by native, independent of UI.
+
+Per-app:
+- `t_intention[app]` - Intention timer
+- `t_quickTask[app]` - Quick Task active timer
+- `alternativeActivityRunning[app]` - Alternative activity state
+- `quickTaskState[app]` ∈ {IDLE, DECISION, ACTIVE, POST_CHOICE}
+
+Global:
+- `n_quickTask` - Quick Task usage count
+
+Properties:
+- Survives app switches
+- Survives UI teardown
+- Mutated only by timers or explicit user intent
+
+### 2. Core Authority Split (Foundational)
+
+**Native is the single source of truth for all semantic state.**
+
+Semantic state includes:
+- Quick Task state per app (IDLE, DECISION, ACTIVE, POST_CHOICE)
+- Timers (t_quickTask, t_intention)
+- Quota (n_quickTask)
+- Foreground/background truth at expiration
+- Alternative activity running state
+
+**Rules:**
+- ✅ Native owns all semantic state
+- ✅ Native owns all timers and expiration logic
+- ✅ Native decides whether Quick Task or Intervention is allowed
+- ❌ JS must NEVER create, modify, infer, or repair semantic state
+- ❌ JS must NEVER run timers or expiration logic
+- ❌ JS must NEVER decide whether Quick Task or Intervention is allowed
+
+**If JS attempts to decide semantics, authority is split and the architecture is broken.**
+
+**JavaScript owns UI rendering and UI lifecycle only.**
+
+JS responsibilities:
+- ✅ Render UI for a given Session
+- ✅ Collect explicit user intent (Accept, Decline, Continue, Quit)
+- ✅ Manage SystemSurface lifecycle (open / close)
+- ✅ Gate UI rendering until SystemSurface is ready
+- ❌ JS responsibilities do NOT include semantic decisions
+
+### 3. UI Gating Responsibility (Critical Clarification)
+
+JS owns UI sequencing and gating, but NOT semantics.
+
+**Explanation:**
+- Android Activity lifecycle is asynchronous and non-deterministic
+- `finish()` does not imply immediate destruction
+- Rendering decisions cannot rely on timing assumptions
+
+**Therefore:**
+- ✅ Semantic state machine may emit intentions to show UI
+- ✅ JS may queue or delay rendering until SystemSurface is ready
+- ✅ JS may gate rendering until no other SystemSurface is active
+- ❌ This does NOT grant JS semantic authority
+
+**JS decides WHEN UI can be rendered, not WHAT should happen.**
+
+### 4. System Brain and OS Trigger Brain Relationship
+
+**System Brain hosts OS Trigger Brain. They are NOT peers.**
+
+System Brain is:
+- Long-lived JavaScript runtime (headless)
+- Receives events from Native (foreground changes, timer expiration, commands)
+- Owns semantic coordination (except where Native is the authority)
+- Hosts OS Trigger Brain as a pure decision module
+- Persists semantic state (when JS is the owner)
+- Headless-capable, survives Activity restarts, not tied to UI lifecycle
+
+OS Trigger Brain is:
+- A pure decision function
+- Running INSIDE System Brain
+- Stateless beyond what System Brain provides
+- Decides what should happen, not how it is shown
+- Evaluates conditions (t_intention, t_quickTask, n_quickTask, foreground/background)
+
+**OS Trigger Brain must:**
+- ✅ Run inside System Brain only
+- ❌ Never open UI
+- ❌ Never depend on Activity state
+- ❌ Never run inside SystemSurface
+
+### 5. SystemSurface (UI Renderer Only)
+
+SystemSurface is a renderer, not a decision maker.
+
+**Responsibilities:**
+- ✅ Render UI for the current Session Intent
+- ✅ Manage Activity lifecycle
+- ✅ Collect explicit user intents
+- ✅ Close itself when instructed
+
+**SystemSurface must NEVER:**
+- ❌ Decide semantics
+- ❌ Start timers
+- ❌ Infer Quick Task state
+- ❌ Re-run OS Trigger Brain
+
+**If SystemSurface influences semantics, the architecture is broken.**
+
+### 6. POST_CHOICE Invariants (Strict)
+
+POST_CHOICE represents: Quick Task expired while app was foreground.
+
+**Rules:**
+- ✅ POST_CHOICE is a semantic state (owned by Native)
+- ✅ POST_CHOICE UI is shown once per expiration
+- ✅ POST_CHOICE must be persisted across restarts
+- ✅ POST_CHOICE must never be re-emitted without user intent
+
+**Allowed resolutions:**
+- `POST_CONTINUE` - User chose to continue using app
+- `POST_QUIT` - User chose to quit app
+
+**Forbidden behaviors:**
+- ❌ Re-emitting POST_CHOICE on app reopen
+- ❌ Clearing POST_CHOICE on foreground change
+- ❌ Treating POST_CHOICE like an intervention
+
+### 7. Common Anti-Patterns (Explicitly Forbidden)
+
+These patterns caused previous instability and are FORBIDDEN:
+
+- ❌ Running OS Trigger Brain inside SystemSurface
+- ❌ Letting Activity lifecycle decide semantics
+- ❌ Re-running decision logic because UI closed
+- ❌ Treating Session as semantic state
+- ❌ SystemSurface creating or modifying timers
+- ❌ Native code choosing Quick Task vs Intervention
+
+### 8. Final Rule (Lock This)
+
+> **Semantics decide what is allowed. UI decides when it can be shown. These responsibilities must never be inverted.**
+
+This rule is the foundation of Phase 4.2 and beyond.
+
+**Responsibility Matrix:**
+
+| Responsibility | Native | JS |
+|----------------|--------|-----|
+| Semantic truth (what is allowed) | ✅ | ❌ |
+| Timers / quota / expiration | ✅ | ❌ |
+| Decision correctness | ✅ | ❌ |
+| When UI can be rendered | ❌ | ✅ |
+| Surface lifecycle gating | ❌ | ✅ |
+| Queuing decisions until UI ready | ❌ | ✅ |
+
+---
+
 ## Part 1: Conceptual Clarification
 
 ### System Surface Activity (Conceptual)

@@ -180,6 +180,200 @@ This project includes comprehensive design documentation that serves as the sour
 
 ## High-Level Architecture
 
+### Architecture Invariants (AUTHORITATIVE - Phase 4.2+)
+
+**Status:** These invariants are non-negotiable. Any change that violates these invariants is considered a bug, not a design alternative.
+
+**Source:** `spec/Architecture Invariants.docx`, `spec/Relationship Between System Brain And Os Trigger Brain.docx`, `spec/Session And Timer Relationship (clarified).docx`
+
+#### 1. Core Authority Split (Foundational)
+
+**1.1 Semantic Authority**
+
+Native is the single source of truth for all semantic state related to Quick Task and interventions.
+
+Semantic state includes:
+- Quick Task state per app (IDLE, DECISION, ACTIVE, POST_CHOICE)
+- Timers (t_quickTask, t_intention)
+- Quota (n_quickTask)
+- Foreground/background truth at expiration
+- Alternative activity running state
+
+**Rules:**
+- ✅ Native owns all semantic state
+- ✅ Native owns all timers and expiration logic
+- ✅ Native decides whether Quick Task or Intervention is allowed
+- ❌ JS must NEVER create, modify, infer, or repair semantic state
+- ❌ JS must NEVER run timers or expiration logic
+- ❌ JS must NEVER decide whether Quick Task or Intervention is allowed
+
+**If JS attempts to decide semantics, authority is split and the architecture is broken.**
+
+**1.2 UI Authority**
+
+JavaScript owns UI rendering and UI lifecycle only.
+
+JS responsibilities:
+- ✅ Render UI for a given Session
+- ✅ Collect explicit user intent (Accept, Decline, Continue, Quit)
+- ✅ Manage SystemSurface lifecycle (open / close)
+- ✅ Gate UI rendering until SystemSurface is ready
+- ❌ JS responsibilities do NOT include semantic decisions
+
+#### 2. Session Is a Projection, Not State
+
+A Session is an ephemeral projection of semantic state onto UI.
+
+Formally:
+```typescript
+Session = null | QUICK_TASK(app) | POST_CHOICE(app) | INTERVENTION(app)
+```
+
+**Rules:**
+- ✅ Only one Session may exist at a time
+- ✅ Session is derived from semantic state + foreground app
+- ✅ Session lifecycle must NEVER mutate semantic state
+- ✅ Session termination must NOT change semantic state
+- ❌ If Session lifecycle influences semantics, the architecture is invalid
+
+**Mental Model:**
+> Session answers: "What system UI (if any) should be shown right now for the current foreground app?"
+
+Session is a **view**, not the truth.
+
+#### 3. UI Gating Responsibility (Critical Clarification)
+
+JS owns UI sequencing and gating, but NOT semantics.
+
+**Explanation:**
+- Android Activity lifecycle is asynchronous and non-deterministic
+- `finish()` does not imply immediate destruction
+- Rendering decisions cannot rely on timing assumptions
+
+**Therefore:**
+- ✅ Semantic state machine may emit intentions to show UI
+- ✅ JS may queue or delay rendering until SystemSurface is ready
+- ✅ JS may gate rendering until no other SystemSurface is active
+- ❌ This does NOT grant JS semantic authority
+
+**JS decides WHEN UI can be rendered, not WHAT should happen.**
+
+#### 4. System Brain and OS Trigger Brain Relationship
+
+**System Brain hosts OS Trigger Brain. They are NOT peers.**
+
+System Brain is:
+- Long-lived JavaScript runtime (headless)
+- Receives events from Native (foreground changes, timer expiration, commands)
+- Owns semantic coordination (except where Native is the authority)
+- Hosts OS Trigger Brain as a pure decision module
+- Persists semantic state (when JS is the owner)
+- Headless-capable, survives Activity restarts, not tied to UI lifecycle
+
+OS Trigger Brain is:
+- A pure decision function
+- Running INSIDE System Brain
+- Stateless beyond what System Brain provides
+- Decides what should happen, not how it is shown
+- Evaluates conditions (t_intention, t_quickTask, n_quickTask, foreground/background)
+
+**OS Trigger Brain must:**
+- ✅ Run inside System Brain only
+- ❌ Never open UI
+- ❌ Never depend on Activity state
+- ❌ Never run inside SystemSurface
+
+#### 5. Session Intent (Boundary Object)
+
+A Session Intent is the output of semantic decisions.
+
+Examples:
+- `SHOW_QUICK_TASK_DIALOG(app)`
+- `NO_QUICK_TASK_AVAILABLE(app)`
+- `SHOW_POST_QUICK_TASK_CHOICE(app)`
+- `START_INTERVENTION(app)`
+
+**Rules:**
+- ✅ Session Intent describes what UI should be shown
+- ✅ It does not guarantee immediate rendering
+- ✅ It may be queued until UI is ready
+- ❌ Session Intent is NOT the same as Session (Session is the active UI projection)
+
+#### 6. SystemSurface (UI Renderer Only)
+
+SystemSurface is a renderer, not a decision maker.
+
+**Responsibilities:**
+- ✅ Render UI for the current Session Intent
+- ✅ Manage Activity lifecycle
+- ✅ Collect explicit user intents
+- ✅ Close itself when instructed
+
+**SystemSurface must NEVER:**
+- ❌ Decide semantics
+- ❌ Start timers
+- ❌ Infer Quick Task state
+- ❌ Re-run OS Trigger Brain
+
+**If SystemSurface influences semantics, the architecture is broken.**
+
+#### 7. POST_CHOICE Invariants (Strict)
+
+POST_CHOICE represents: Quick Task expired while app was foreground.
+
+**Rules:**
+- ✅ POST_CHOICE is a semantic state (owned by Native)
+- ✅ POST_CHOICE UI is shown once per expiration
+- ✅ POST_CHOICE must be persisted across restarts
+- ✅ POST_CHOICE must never be re-emitted without user intent
+
+**Allowed resolutions:**
+- `POST_CONTINUE` - User chose to continue using app
+- `POST_QUIT` - User chose to quit app
+
+**Forbidden behaviors:**
+- ❌ Re-emitting POST_CHOICE on app reopen
+- ❌ Clearing POST_CHOICE on foreground change
+- ❌ Treating POST_CHOICE like an intervention
+
+#### 8. What JS Must Never Do
+
+JS must NEVER:
+- ❌ Run or inspect timers
+- ❌ Decrement quota
+- ❌ Infer expiration
+- ❌ Re-emit semantic decisions
+- ❌ Repair or guess semantic state
+- ❌ Decide whether Quick Task or Intervention should start
+
+#### 9. Common Anti-Patterns (Explicitly Forbidden)
+
+These patterns caused previous instability and are FORBIDDEN:
+
+- ❌ Running OS Trigger Brain inside SystemSurface
+- ❌ Letting Activity lifecycle decide semantics
+- ❌ Re-running decision logic because UI closed
+- ❌ Treating Session as semantic state
+- ❌ SystemSurface creating or modifying timers
+- ❌ Native code choosing Quick Task vs Intervention
+
+#### 10. Final Rule (Lock This)
+
+> **Semantics decide what is allowed. UI decides when it can be shown. These responsibilities must never be inverted.**
+
+This rule is the foundation of Phase 4.2 and beyond.
+
+**Responsibility Matrix:**
+
+| Responsibility | Native | JS |
+|----------------|--------|-----|
+| Semantic truth (what is allowed) | ✅ | ❌ |
+| Timers / quota / expiration | ✅ | ❌ |
+| Decision correctness | ✅ | ❌ |
+| When UI can be rendered | ❌ | ✅ |
+| Surface lifecycle gating | ❌ | ✅ |
+| Queuing decisions until UI ready | ❌ | ✅ |
+
 ### System Surface Architecture (Critical)
 
 **IMPORTANT:** BreakLoop uses a three-runtime architecture with System Brain JS as the semantic decision-maker.
@@ -331,6 +525,96 @@ This order is **AUTHORITATIVE** and must never change:
 - Each individual monitored app/website has its own timers/parameters
 - **Exception:** `n_quickTask` is global across all monitored apps
 - Every time a monitored app enters foreground, OS trigger logic evaluates whether intervention should start
+
+#### Quick Task Rules (Detailed Specification)
+
+**Source:** `spec/Intervention_OS_Contract_V1.docx` (Updated 18.01.2026)
+
+**Definitions:**
+- `t_quickTask`: Duration of the emergency allowance (per-app timer)
+- `n_quickTask`: Number of Quick Tasks allowed within rolling window (global usage count, e.g., 15 minutes)
+- `t_intention`: Timer set by user during intervention for how long they want to use the app (per-app timer)
+
+**Core Rules:**
+
+1. **Quick Task temporarily suppresses all intervention triggers**
+   - During `t_quickTask`, user may freely switch apps and return to monitored apps
+   - No intervention process shall start during `t_quickTask`
+
+2. **When Quick Task started:**
+   - `t_intention` for this app is reset to 0
+   - Quick Task does NOT create or extend `t_intention`
+
+3. **When t_quickTask expires:**
+
+   **Case 1: t_quickTask expires while user is still on the app**
+   - If `n_quickTask > 0`:
+     - `QuickTaskExpiredScreen` appears
+     - User sees: "Your quick task is finished. What would you like to do next?"
+     - Native transitions: `ACTIVE → POST_CHOICE`
+     - Native emits: `SHOW_POST_QUICK_TASK_CHOICE`
+     - User options:
+       - **Continue**: User can continue using app
+       - **Quit**: Launches to cellphone home screen
+   - If `n_quickTask == 0`:
+     - Intervention flow starts
+
+   **Case 2: t_quickTask expires while user is NOT on the app**
+   - Native transitions: `ACTIVE → IDLE`
+   - Native clears Quick Task state
+   - No intervention triggered immediately
+   - When user later opens the app:
+     - Normal entry logic applies (Phase 4.1)
+     - If `n_quickTask > 0` → Quick Task dialog
+     - If `n_quickTask == 0` → Intervention
+
+4. **No timer state from before Quick Task is resumed or reused**
+   - Quick Task is a clean slate
+   - Previous intervention state is not restored
+
+5. **n_quickTask is counted globally across all monitored apps**
+   - Using Quick Task on Instagram consumes quota for TikTok too
+   - Shared quota within rolling window
+
+#### Incomplete Intervention Cancellation
+
+**When user switches away from intervention, cancel ONLY if it's incomplete:**
+
+**Incomplete states (cancel intervention):**
+- `breathing` - User hasn't finished breathing
+- `root-cause` - User hasn't selected causes
+- `alternatives` - User hasn't chosen alternative
+- `action` - User hasn't started activity
+- `reflection` - User hasn't finished reflection
+
+**Complete/Preserved states (do NOT cancel):**
+- `action_timer` - User is doing alternative activity → preserve
+- `timer` - User set `t_intention` → this transitions to idle AND launches the app, so user can use it normally → preserve
+- `idle` - No intervention → nothing to cancel
+
+**Key insight:**
+> When user sets `t_intention`, the intervention completes and transitions to idle, then the app launches normally. The `t_intention` timer is now active and will suppress future interventions until it expires.
+
+#### Logic Flow: t_intention, t_quickTask, n_quickTask
+
+**On monitored app foreground entry:**
+
+1. Check `t_intention` for this app:
+   - If `t_intention != 0`: **No Quick Task dialog, no intervention**
+   - If `t_intention == 0`: Go to step 2
+
+2. Check `n_quickTask`:
+   - If `n_quickTask != 0`: Go to step 3
+   - If `n_quickTask == 0`: **No Quick Task dialog**, start intervention
+
+3. Check `t_quickTask`:
+   - If `t_quickTask != 0`: **No Quick Task dialog, no intervention**
+   - If `t_quickTask == 0` or has no value: **Start Quick Task dialog**
+
+**Intervention Restart Logic:**
+
+- When `t_intention` is over and user is still using the monitored app, intervention should start again
+- Every time intervention flow starts or restarts, the `t_intention` for this app shall be deleted
 
 See `docs/OS_Trigger_Contract V1.md` for complete trigger rules and timer logic.
 
@@ -1644,7 +1928,6 @@ Recent commit themes:
 - `docs/SYSTEM_BRAIN_ARCHITECTURE.md` - System Brain JS event-driven runtime architecture (Phase 2 explicit wake reasons)
 - `docs/PHASE2_ARCHITECTURE_UPDATE.md` - Phase 2 architecture summary (explicit wake reasons, pre-decision)
 - `docs/PHASE2_DOCUMENTATION_COMPLETE.md` - **NEW** Phase 2 documentation integration summary (all 7 critical components)
-- `docs/NATIVE_JAVASCRIPT_BOUNDARY.md` - **Critical** architectural boundary rules (must follow for all native/JS integration)
 - `docs/OS_Trigger_Contract V1.md` - Intervention trigger rules, timer logic, monitored apps
 - `docs/System_Session_Definition.md` - System session definitions and lifecycle
 - `docs/system_surface_bootstrap.md` - Authoritative cold-start bootstrap lifecycle
@@ -1672,7 +1955,12 @@ Recent commit themes:
 2. **SystemSurface Lifecycle Contract (Authoritative).md** - **CRITICAL** - Read lifecycle invariants and state transition rules
 3. **SYSTEM_BRAIN_ARCHITECTURE.md** - Understand System Brain JS event-driven runtime
 4. **PHASE2_ARCHITECTURE_UPDATE.md** - Phase 2 explicit wake reasons summary (NEW)
-5. **NATIVE_JAVASCRIPT_BOUNDARY.md** - Understand the boundary contract
 6. **OS_Trigger_Contract V1.md** - Learn trigger rules and timer logic
 7. **KOTLIN_FILE_SYNC.md** - Follow Kotlin editing workflow
 8. **CLAUDE.md** - Reference for implementation details
+9. spec\Intervention_OS_Contract_V1.docx
+10. spec\Relationship Between System Brain And Os Trigger Brain.docx
+11. spec\Session And Timer Relationship (clarified).docx
+12. spec\Architecture Invariants.docx
+
+
