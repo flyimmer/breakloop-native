@@ -150,8 +150,10 @@ class ForegroundDetectionService : AccessibilityService() {
          * Identifies the trigger for entry logic
          */
         private enum class EntrySource {
-            FOREGROUND,      // Automatic app switch/resume
-            POST_CONTINUE    // Manual re-entry from POST_CHOICE button
+            INITIAL_BOOTSTRAP,      // First app after service starts - bypasses suppression only
+            FOREGROUND_CHANGE,      // Normal app switch/resume
+            POST_CONTINUE,          // Manual re-entry from POST_CHOICE button
+            SYSTEM_SURFACE_RETURN   // SystemSurface lifecycle return - may be suppressed
         }
         
         /**
@@ -257,13 +259,14 @@ class ForegroundDetectionService : AccessibilityService() {
         /**
          * Flag to prevent duplicate initial foreground evaluation
          * 
-         * Set to true after first evaluation in onServiceConnected().
-         * Prevents re-triggering if accessibility change event immediately follows.
+         * Set to true after first real app is detected via AccessibilityService.
+         * AccessibilityService does NOT emit events for apps already foreground
+         * when the service connects, so we treat the first event as the initial state.
          * 
-         * LAYER 1 of duplicate prevention (see implementation_plan.md)
+         * LAYER 1 of duplicate prevention
          */
         @Volatile
-        private var initialForegroundEvaluated: Boolean = false
+        private var initialForegroundHandled: Boolean = false
         
         /**
          * Wake suppression timestamps per app
@@ -850,14 +853,32 @@ class ForegroundDetectionService : AccessibilityService() {
             context: android.content.Context, 
             source: EntrySource
         ) {
-            // ONLY apply suppression to foreground-triggered events (Phase 4.1 only)
-            // Manual POST_CONTINUE re-entry MUST bypass this guard.
-            if (source == EntrySource.FOREGROUND && skipNextEntryDecision[app] == true) {
+            // Suppression applies ONLY to SYSTEM_SURFACE_RETURN
+            if (source == EntrySource.SYSTEM_SURFACE_RETURN && skipNextEntryDecision[app] == true) {
                 skipNextEntryDecision[app] = false
-                Log.i(TAG, "[QT][ENTRY] app=$app suppressed once (foreground resume guard)")
+                Log.i(TAG, "[QT][ENTRY] app=$app suppressed (SYSTEM_SURFACE_RETURN guard)")
                 return
             }
             
+            // INITIAL_BOOTSTRAP: Conservative stale-state reconciliation
+            if (source == EntrySource.INITIAL_BOOTSTRAP) {
+                val entry = quickTaskMap[app]
+                if (entry != null) {
+                    val isStale = when (entry.state) {
+                        QuickTaskState.ACTIVE -> !hasValidQuickTaskTimer(app)
+                        QuickTaskState.DECISION -> !isSystemSurfaceActive
+                        QuickTaskState.POST_CHOICE -> !isSystemSurfaceActive
+                        else -> false
+                    }
+                    
+                    if (isStale) {
+                        quickTaskMap.remove(app)
+                        Log.e("QT_DEV", "🔥 INITIAL_BOOTSTRAP: Cleared STALE state for $app (was ${entry.state})")
+                    }
+                }
+            }
+            
+            // Normal entry decision logic
             val entry = quickTaskMap[app]
             val hasTimer = entry?.state == QuickTaskState.ACTIVE
 
@@ -882,6 +903,7 @@ class ForegroundDetectionService : AccessibilityService() {
                 }
                 else -> {
                     // IDLE or null → make entry decision
+                    Log.e("QT_DEV", "🔥 ENTRY DECISION EXECUTING for $app (source=$source)")
                     Log.i(TAG, "[QT][ENTRY] app=$app triggering entry decision (source=$source)")
                     runDirectDecision(app)
                 }
@@ -896,7 +918,7 @@ class ForegroundDetectionService : AccessibilityService() {
         fun onMonitoredAppForeground(app: String, context: android.content.Context) {
             // Track underlying app before any SystemSurface opens (Phase 4.2 Effective Foreground)
             underlyingApp = app
-            handleMonitoredAppEntry(app, context, EntrySource.FOREGROUND)
+            handleMonitoredAppEntry(app, context, EntrySource.FOREGROUND_CHANGE)
         }
     }
 
@@ -921,6 +943,12 @@ class ForegroundDetectionService : AccessibilityService() {
             packageName == "android" -> true
             // Android system UI (notification shade, quick settings, status bar)
             packageName == "com.android.systemui" -> true
+            // Google Quick Search Box (often flashes during home/app switches)
+            packageName == "com.google.android.googlequicksearchbox" -> true
+            // Google app (assistant, search widget)
+            packageName == "com.google.android.apps.nexuslauncher" -> true
+            // Pixel launcher
+            packageName == "com.google.android.apps.googleassistant" -> true
             // Launcher apps (brief flashes during navigation)
             packageName.contains("launcher") -> true
             packageName == "com.android.launcher" -> true
@@ -996,84 +1024,6 @@ class ForegroundDetectionService : AccessibilityService() {
     }
     
     /**
-     * Perform one-time initial foreground evaluation
-     * 
-     * Called from onServiceConnected() after a short delay.
-     * Checks if a monitored app is already foreground and triggers entry decision.
-     * 
-     * GUARD: Uses initialForegroundEvaluated flag (Layer 1) to prevent duplicates.
-     * Layer 2: lastDecisionApp comparison in handleMonitoredAppEntry() prevents
-     * duplicate decisions if accessibility event immediately follows.
-     */
-    private fun performInitialForegroundEvaluation() {
-        // Guard: Only run once per service connection (Layer 1)
-        if (initialForegroundEvaluated) {
-            Log.d(TAG, "[QT][INIT] Initial evaluation already performed, skipping")
-            return
-        }
-        initialForegroundEvaluated = true
-        
-        // Get current foreground app using UsageStatsManager
-        val currentApp = getCurrentForegroundAppFromUsageStats()
-        if (currentApp == null) {
-            Log.d(TAG, "[QT][INIT] No foreground app detected")
-            return
-        }
-        
-        // Skip if same as last decision app (already handled by change event)
-        // This is an additional guard; Layer 2 in handleMonitoredAppEntry also guards
-        if (currentApp == lastDecisionApp) {
-            Log.d(TAG, "[QT][INIT] Current app $currentApp already handled, skipping")
-            return
-        }
-        
-        // Check if it's a monitored app
-        if (dynamicMonitoredApps.contains(currentApp)) {
-            Log.e("QT_DEV", "🔥 INITIAL FOREGROUND EVALUATION for $currentApp")
-            Log.i(TAG, "[QT][INIT] Initial foreground evaluation for $currentApp")
-            
-            // Update tracking state
-            updateCurrentForegroundApp(currentApp)
-            
-            // Trigger entry decision
-            onMonitoredAppForeground(currentApp, applicationContext)
-        } else {
-            Log.d(TAG, "[QT][INIT] Current app $currentApp is not monitored")
-        }
-    }
-    
-    /**
-     * Get current foreground app using UsageStatsManager
-     * 
-     * Used for initial foreground evaluation when AccessibilityService
-     * hasn't received any events yet.
-     * 
-     * @return Package name of current foreground app, or null if unavailable
-     */
-    @android.annotation.SuppressLint("WrongConstant")
-    private fun getCurrentForegroundAppFromUsageStats(): String? {
-        try {
-            val usageStatsManager = getSystemService("usagestats") as? android.app.usage.UsageStatsManager
-                ?: return null
-            
-            val now = System.currentTimeMillis()
-            val stats = usageStatsManager.queryUsageStats(
-                android.app.usage.UsageStatsManager.INTERVAL_DAILY,
-                now - 60000,  // Last minute
-                now
-            )
-            
-            if (stats.isNullOrEmpty()) return null
-            
-            // Find the app with most recent lastTimeUsed
-            return stats.maxByOrNull { it.lastTimeUsed }?.packageName
-        } catch (e: Exception) {
-            Log.w(TAG, "[QT][INIT] Failed to get foreground app from UsageStats: ${e.message}")
-            return null
-        }
-    }
-    
-    /**
      * Called when service is created
      * Defensive timer check start as backup
      */
@@ -1094,6 +1044,9 @@ class ForegroundDetectionService : AccessibilityService() {
         Log.e(TAG, "[FG_DETECT] onServiceConnected() called - AccessibilityService connected")
         
         isServiceConnected = true
+        
+        // CANARY LOG: Confirm latest native code is running
+        Log.e("QT_DEV", "🔥 NATIVE_BUILD_CANARY: ${NativeBuildCanary.BUILD_ID}")
         
         // PHASE 4.2: Restore Quick Task state from disk (crash recovery)
         // CRITICAL: This must be called early in service lifecycle
@@ -1127,14 +1080,6 @@ class ForegroundDetectionService : AccessibilityService() {
         
         // Start periodic timer expiration checks (primary initialization point)
         startTimerCheckIfNeeded()
-        
-        // PHASE 4.x: Initial foreground evaluation (one-time)
-        // AccessibilityService only emits CHANGE events, not initial state
-        // If monitored app is already foreground when service starts, we must evaluate once
-        initialForegroundEvaluated = false
-        handler.postDelayed({
-            performInitialForegroundEvaluation()
-        }, 500) // Small delay to ensure React Native bridge is ready
     }
 
     /**
@@ -1209,6 +1154,31 @@ class ForegroundDetectionService : AccessibilityService() {
             packageName != underlyingApp) {
             underlyingApp = null
             Log.d(TAG, "[QT][EFFECTIVE] User switched to different app, cleared underlyingApp")
+        }
+        
+        // ========================================================================
+        // INITIAL FOREGROUND BOOTSTRAP
+        // ========================================================================
+        // AccessibilityService does NOT emit an event for apps already foreground
+        // when the service connects. Treat the first real app event as initial state.
+        if (!initialForegroundHandled && !isInfrastructurePackage(packageName)) {
+            initialForegroundHandled = true
+            
+            Log.e("QT_DEV", "🔥 INITIAL FOREGROUND DETECTED via Accessibility: $packageName")
+            Log.i(TAG, "[QT][INIT] Initial foreground detected: $packageName")
+            Log.e("QT_DEV", "🔥 dynamicMonitoredApps=${dynamicMonitoredApps.joinToString(",")}")
+            Log.e("QT_DEV", "🔥 isMonitored=${dynamicMonitoredApps.contains(packageName)}")
+            
+            // If this first app is monitored, run entry decision with INITIAL_BOOTSTRAP source
+            // This bypasses suppression guards but executes normal decision logic
+            if (dynamicMonitoredApps.contains(packageName)) {
+                Log.e("QT_DEV", "🔥 INITIAL → calling handleMonitoredAppEntry(INITIAL_BOOTSTRAP)")
+                Log.i(TAG, "[QT][INIT] First app is monitored, running entry decision")
+                handleMonitoredAppEntry(packageName, applicationContext, EntrySource.INITIAL_BOOTSTRAP)
+            }
+            
+            // Continue to normal foreground change handling below
+            // (emitting events, checking monitored status, etc.)
         }
         
         // Emit event to JavaScript for ALL apps (including launchers)
