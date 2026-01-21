@@ -153,7 +153,8 @@ class ForegroundDetectionService : AccessibilityService() {
             INITIAL_BOOTSTRAP,      // First app after service starts - bypasses suppression only
             FOREGROUND_CHANGE,      // Normal app switch/resume
             POST_CONTINUE,          // Manual re-entry from POST_CHOICE button
-            SYSTEM_SURFACE_RETURN   // SystemSurface lifecycle return - may be suppressed
+            SYSTEM_SURFACE_RETURN,  // SystemSurface lifecycle return - may be suppressed
+            REENTER_FROM_BACKGROUND // Foreground gain after backgrounding
         }
         
         /**
@@ -229,14 +230,25 @@ class ForegroundDetectionService : AccessibilityService() {
         private var currentForegroundApp: String? = null
         
         /**
-         * Track last app we made an entry decision for
-         * 
-         * PHASE 4.1: Edge-triggered entry decisions
-         * 
-         * Prevents duplicate decisions on same app entry
-         * Reset when SystemSurface finishes
+         * Track if any monitored app was backgrounded since the last entry decision.
+         * Set to true on a real app task switch.
+         * Reset to false after a successful monitored entry evaluation.
          */
-        private var lastDecisionApp: String? = null
+        private var appWasBackgrounded: Boolean = true
+        
+        /**
+         * Track the last monitored app that was foregrounded.
+         * Used for re-entry detection after backgrounding.
+         * Updated only when a monitored app is foregrounded.
+         */
+        private var lastMonitoredApp: String? = null
+        
+        /**
+         * One-shot suppression flag for re-entry after POST_QUIT.
+         * Prevents immediate re-entry evaluation when quitting to Home.
+         * Cleared on the next real background transition.
+         */
+        private var suppressNextReentry: Boolean = false
         
         /**
          * Track if SystemSurface is currently active
@@ -412,7 +424,6 @@ class ForegroundDetectionService : AccessibilityService() {
                 systemSurfaceActiveTimestamp = System.currentTimeMillis()
             } else {
                 systemSurfaceActiveTimestamp = 0
-                lastDecisionApp = null  // Reset on surface close
             }
         }
         
@@ -636,6 +647,11 @@ class ForegroundDetectionService : AccessibilityService() {
             quickTaskMap.remove(app)
             clearPersistedState(app, context)
             
+            // REQUIRED: Mark as semantic background exit and suppress immediate re-entry
+            appWasBackgrounded = true
+            suppressNextReentry = true
+            Log.d(TAG, "[QT][STATE] POST_QUIT → appWasBackgrounded = true, suppressNextReentry = true")
+            
             // Close SystemSurface and launch home
             emitFinishSystemSurface(context)
             
@@ -853,6 +869,12 @@ class ForegroundDetectionService : AccessibilityService() {
             context: android.content.Context, 
             source: EntrySource
         ) {
+            // Reset background flag on any monitored entry evaluation (Critical Reset)
+            appWasBackgrounded = false
+            
+            // Track underlying app before any SystemSurface opens (Phase 4.2 Effective Foreground)
+            underlyingApp = app
+            
             // Suppression applies ONLY to SYSTEM_SURFACE_RETURN
             if (source == EntrySource.SYSTEM_SURFACE_RETURN && skipNextEntryDecision[app] == true) {
                 skipNextEntryDecision[app] = false
@@ -910,16 +932,17 @@ class ForegroundDetectionService : AccessibilityService() {
             }
         }
 
-        /**
-         * Public entry point for monitored app foreground
-         * Thin wrapper that delegates to handleMonitoredAppEntry
-         */
-        @JvmStatic
-        fun onMonitoredAppForeground(app: String, context: android.content.Context) {
-            // Track underlying app before any SystemSurface opens (Phase 4.2 Effective Foreground)
-            underlyingApp = app
-            handleMonitoredAppEntry(app, context, EntrySource.FOREGROUND_CHANGE)
-        }
+    }
+
+    /**
+     * Determine if a transition represents a \"Real App Switch\"
+     * Excludes same-app updates, internal activities, and overlays.
+     */
+    private fun isRealAppSwitch(newPackage: String?, previousPackage: String?): Boolean {
+        if (newPackage.isNullOrEmpty()) return true
+        if (newPackage == previousPackage) return false
+        if (isInfrastructurePackage(newPackage)) return false
+        return true
     }
 
     /**
@@ -1157,45 +1180,69 @@ class ForegroundDetectionService : AccessibilityService() {
         }
         
         // ========================================================================
-        // INITIAL FOREGROUND BOOTSTRAP
+        // ENTRY AND BACKGROUND STATE LOGIC
         // ========================================================================
-        // AccessibilityService does NOT emit an event for apps already foreground
-        // when the service connects. Treat the first real app event as initial state.
+        
+        // Step 1: Detect if this is a real app task switch (before entry handling)
+        val didBackground = isRealAppSwitch(packageName, lastPackageName)
+        val isMonitored = dynamicMonitoredApps.contains(packageName)
+        
+        // Clear suppression on real background switch (before evaluating re-entry)
+        if (didBackground) {
+            suppressNextReentry = false
+        }
+        
+        // Step 2: Decide entry using PREVIOUS state
+        // REENTER applies only when returning to the SAME monitored app after backgrounding
+        val isReentry = appWasBackgrounded && packageName == lastMonitoredApp
+        // SWITCH applies whenever the package changes (regardless of background status)
+        val isSwitch = packageName != lastPackageName
+        
+        // Step 3: Mutually exclusive entry triggers
+        if (isMonitored && !isSystemSurfaceActive) {
+            when {
+                isReentry && !suppressNextReentry -> {
+                    Log.i(TAG, "[QT][ENTRY] REENTER detected for $packageName")
+                    handleMonitoredAppEntry(packageName, applicationContext, EntrySource.REENTER_FROM_BACKGROUND)
+                }
+                isSwitch -> {
+                    Log.i(TAG, "[QT][ENTRY] SWITCH detected for $packageName (from $lastPackageName)")
+                    handleMonitoredAppEntry(packageName, applicationContext, EntrySource.FOREGROUND_CHANGE)
+                }
+            }
+        }
+        
+        // Step 4: Update background flag ONLY if no monitored entry occurred
+        if (didBackground && !isMonitored) {
+            appWasBackgrounded = true
+            Log.d(TAG, "[QT][STATE] appWasBackgrounded set to true (switch from $lastPackageName to $packageName)")
+        }
+        
+        // Step 5: Update lastMonitoredApp only for monitored apps
+        if (isMonitored) {
+            lastMonitoredApp = packageName
+        }
+        
+        // Step 6: Always update lastPackageName at end
+        lastPackageName = packageName
+        
+        // ========================================================================
+        // INITIAL FOREGROUND BOOTSTRAP (one-shot guard)
+        // ========================================================================
         if (!initialForegroundHandled && !isInfrastructurePackage(packageName)) {
             initialForegroundHandled = true
             
             Log.e("QT_DEV", "🔥 INITIAL FOREGROUND DETECTED via Accessibility: $packageName")
-            Log.i(TAG, "[QT][INIT] Initial foreground detected: $packageName")
-            Log.e("QT_DEV", "🔥 dynamicMonitoredApps=${dynamicMonitoredApps.joinToString(",")}")
-            Log.e("QT_DEV", "🔥 isMonitored=${dynamicMonitoredApps.contains(packageName)}")
             
-            // If this first app is monitored, run entry decision with INITIAL_BOOTSTRAP source
-            // This bypasses suppression guards but executes normal decision logic
-            if (dynamicMonitoredApps.contains(packageName)) {
+            if (isMonitored) {
                 Log.e("QT_DEV", "🔥 INITIAL → calling handleMonitoredAppEntry(INITIAL_BOOTSTRAP)")
-                Log.i(TAG, "[QT][INIT] First app is monitored, running entry decision")
                 handleMonitoredAppEntry(packageName, applicationContext, EntrySource.INITIAL_BOOTSTRAP)
             }
-            
-            // Continue to normal foreground change handling below
-            // (emitting events, checking monitored status, etc.)
         }
         
-        // Emit event to JavaScript for ALL apps (including launchers)
-        // This allows JavaScript to track exits and cancel incomplete interventions
+        // Emit events to JS
         emitForegroundAppChangedEvent(packageName)
-        
-        // Emit FOREGROUND_CHANGED to System Brain (for lastMeaningfulApp tracking)
-        // This MUST happen for ALL apps BEFORE launching SystemSurface
-        // so that System Brain knows the current foreground app when making decisions
         emitSystemEvent("FOREGROUND_CHANGED", packageName, System.currentTimeMillis())
-        
-        // Check if this is a monitored app (for launching intervention)
-        // Use dynamicMonitoredApps (synced from JavaScript) instead of hardcoded MONITORED_APPS
-        if (dynamicMonitoredApps.contains(packageName)) {
-            // PHASE 4.2: Call skeleton entry decision function
-            onMonitoredAppForeground(packageName, applicationContext)
-        }
     }
     
     /**

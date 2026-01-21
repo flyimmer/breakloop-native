@@ -1,10 +1,16 @@
-import * as ImagePicker from 'expo-image-picker';
+import { useIntervention } from '@/src/contexts/InterventionProvider';
+import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/native-modules/AppMonitorModule';
+import { getInterventionDurationSec, getIsPremiumCustomer, getQuickTaskDurationMs, getQuickTaskUsesPerWindow, setInterventionPreferences, setQuickTaskConfig, setMonitoredApps as updateOsConfigMonitoredApps } from '@/src/os/osConfig';
+import { completeInterventionDEV } from '@/src/os/osTriggerBrain';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import * as ImagePicker from 'expo-image-picker';
 import { Camera, Eye, LogOut, Shield, Sliders, Smartphone, User, Zap } from 'lucide-react-native';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
+  AppState,
   Image,
   NativeModules,
   Platform,
@@ -16,12 +22,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/native-modules/AppMonitorModule';
-import { useIntervention } from '@/src/contexts/InterventionProvider';
-import { completeInterventionDEV } from '@/src/os/osTriggerBrain';
-import { setMonitoredApps as updateOsConfigMonitoredApps, setQuickTaskConfig, getQuickTaskDurationMs, getQuickTaskUsesPerWindow, getIsPremiumCustomer, setInterventionPreferences, getInterventionDurationSec } from '@/src/os/osConfig';
 import { MainAppStackParamList } from '../../../roots/MainAppRoot';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
@@ -35,7 +36,7 @@ export let editAppsCallback: ((apps: string[], websites: string[]) => void) | nu
 const SettingsScreen = () => {
   // Navigation
   const navigation = useNavigation<NavigationProp>();
-  
+
   // Intervention context (for debug button)
   const { dispatchIntervention } = useIntervention();
 
@@ -52,7 +53,7 @@ const SettingsScreen = () => {
     interests: 'swim',
     primaryPhoto: null, // Set to null to show placeholder icon
   });
-  
+
   // Authentication state (separate concern, affects Account section only)
   const [isLoggedIn, setIsLoggedIn] = useState(true);
   const [userAccount, setUserAccount] = useState({
@@ -84,25 +85,25 @@ const SettingsScreen = () => {
   // We'll display app names by looking them up from the installed apps list
   const [monitoredApps, setMonitoredApps] = useState<string[]>([]);
   const [monitoredWebsites, setMonitoredWebsites] = useState<string[]>([]);
-  
+
   // Cache of installed apps for display name lookup
   const [installedAppsCache, setInstalledAppsCache] = useState<InstalledApp[]>([]);
 
   // Storage key for monitored apps
   const MONITORED_APPS_STORAGE_KEY = 'monitored_apps_v1';
-  
+
   // Quick Task settings state
   const [quickTaskDuration, setQuickTaskDuration] = useState<number>(3 * 60 * 1000); // Default: 3 minutes in ms
   const [quickTaskUsesPerWindow, setQuickTaskUsesPerWindow] = useState<number>(1); // Default: 1 use
   const [isPremium, setIsPremium] = useState<boolean>(false); // Default: free
-  
+
   // Intervention preferences state
   const [interventionDuration, setInterventionDuration] = useState<number>(5); // Default: 5 seconds
-  
+
   // Accessibility service status
   const [isAccessibilityEnabled, setIsAccessibilityEnabled] = useState<boolean>(false);
   const [isCheckingAccessibility, setIsCheckingAccessibility] = useState<boolean>(false);
-  
+
   // Storage key for Quick Task settings
   const QUICK_TASK_SETTINGS_STORAGE_KEY = 'quick_task_settings_v1';
   // Storage key for Intervention preferences
@@ -122,6 +123,20 @@ const SettingsScreen = () => {
       checkAccessibilityStatus();
     }, [])
   );
+
+  // Monitor AppState to check accessibility status when returning from device settings
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') {
+        console.log('[SettingsScreen] App came to foreground, checking accessibility status...');
+        checkAccessibilityStatus();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
 
   // Check if accessibility service is enabled
   const checkAccessibilityStatus = async () => {
@@ -242,7 +257,7 @@ const SettingsScreen = () => {
       // Update osConfig immediately - applies to next Quick Task check
       setQuickTaskConfig(durationMs, usesPerWindow, isPremium);
       console.log('[SettingsScreen] ✅ Successfully saved Quick Task settings (applied immediately)');
-      
+
       // PHASE 4.1 FIX: Sync quota to Native after settings change
       // Native needs updated quota cache for entry decisions
       try {
@@ -388,7 +403,7 @@ const SettingsScreen = () => {
   const handleAddPhoto = async () => {
     // Request permission to access media library
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    
+
     if (permissionResult.granted === false) {
       Alert.alert('Permission Required', 'Permission to access camera roll is required!');
       return;
@@ -1026,8 +1041,8 @@ const SettingsScreen = () => {
                 <View style={[styles.preferenceRow, styles.preferenceRowLast]}>
                   <Text style={styles.preferenceLabel}>Uses per 15 minutes</Text>
                   <Text style={styles.preferenceValue}>
-                    {quickTaskUsesPerWindow === 0 
-                      ? 'No' 
+                    {quickTaskUsesPerWindow === 0
+                      ? 'No'
                       : quickTaskUsesPerWindow}
                   </Text>
                 </View>
@@ -1056,10 +1071,10 @@ const SettingsScreen = () => {
             <View style={styles.accessibilityStatusRow}>
               <View style={[styles.statusIndicator, isAccessibilityEnabled ? styles.statusIndicatorEnabled : styles.statusIndicatorDisabled]} />
               <Text style={styles.accessibilityStatusText}>
-                {isCheckingAccessibility 
-                  ? 'Checking status...' 
-                  : isAccessibilityEnabled 
-                    ? 'Accessibility service is enabled' 
+                {isCheckingAccessibility
+                  ? 'Checking status...'
+                  : isAccessibilityEnabled
+                    ? 'Accessibility service is enabled'
                     : 'Accessibility service is disabled'}
               </Text>
             </View>
@@ -1075,14 +1090,14 @@ const SettingsScreen = () => {
                 console.log('[SettingsScreen] AppMonitorModule available:', !!AppMonitorModule);
                 console.log('[SettingsScreen] AppMonitorModuleType available:', !!AppMonitorModuleType);
                 console.log('[SettingsScreen] NativeModules.AppMonitorModule available:', !!NativeModules.AppMonitorModule);
-                
+
                 // Try local AppMonitorModule first (has platform check)
                 const moduleToUse = AppMonitorModule || AppMonitorModuleType;
-                
+
                 if (!moduleToUse) {
                   console.error('[SettingsScreen] No native module available');
                   Alert.alert(
-                    'Error', 
+                    'Error',
                     'Native module not available. This feature requires Android and the native module to be properly linked.\n\nPlease:\n1. Make sure you are on Android\n2. Rebuild the app: npm run android\n3. Restart the app'
                   );
                   return;
@@ -1097,7 +1112,7 @@ const SettingsScreen = () => {
                   console.error('[SettingsScreen] Failed to open accessibility settings:', error);
                   const errorMessage = error instanceof Error ? error.message : String(error);
                   Alert.alert(
-                    'Error', 
+                    'Error',
                     `Failed to open Accessibility settings: ${errorMessage}\n\nPlease go to Settings > Accessibility manually.`
                   );
                 }
@@ -1109,7 +1124,7 @@ const SettingsScreen = () => {
               </Text>
             </TouchableOpacity>
             <Text style={styles.accessibilityHint}>
-              {isAccessibilityEnabled 
+              {isAccessibilityEnabled
                 ? 'Service is active. Tap above to open settings if you need to disable it.'
                 : 'Required for interventions to work. Enable it once and it should persist across app updates.'}
             </Text>
@@ -1167,7 +1182,7 @@ const SettingsScreen = () => {
         {/* Version */}
         <View style={styles.versionContainer}>
           <Text style={styles.versionText}>v17.6 (BreakLoop Privacy)</Text>
-    </View>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );

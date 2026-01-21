@@ -40,7 +40,8 @@
           }
         }
       ],
-      "./plugins/withForegroundService.js"
+      "./plugins/withForegroundService.js",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true,
