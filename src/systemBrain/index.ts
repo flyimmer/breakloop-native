@@ -24,9 +24,9 @@
  */
 
 import { AppRegistry, DeviceEventEmitter } from 'react-native';
-import { handleSystemEvent, handleQuickTaskDecision, handleQuickTaskCommand, handleQuotaUpdate } from './eventHandler';
+import { clearSystemSurfaceActive, syncQuotaToNative } from './decisionEngine';
+import { handleQuickTaskCommand, handleQuotaUpdate, handleSystemEvent } from './eventHandler';
 import { loadTimerState } from './stateManager';
-import { syncQuotaToNative, clearSystemSurfaceActive } from './decisionEngine';
 
 /**
  * Initialize System Brain on app startup
@@ -39,18 +39,18 @@ import { syncQuotaToNative, clearSystemSurfaceActive } from './decisionEngine';
 async function initializeSystemBrain() {
   try {
     console.log('[System Brain] Initializing...');
-    
+
     // CRITICAL: Clear any stuck lifecycle flags from previous sessions
     // This ensures isSystemSurfaceActive resets to false on app startup
     clearSystemSurfaceActive();
     console.log('[System Brain] Lifecycle flags cleared');
-    
+
     // Load current state
     const state = await loadTimerState();
-    
+
     // Sync quota to Native
     await syncQuotaToNative(state);
-    
+
     console.log('[System Brain] ✅ Initialization complete');
   } catch (error) {
     console.error('[System Brain] ❌ Initialization failed:', error);
@@ -84,22 +84,6 @@ AppRegistry.registerHeadlessTask('SystemEvent', () => async (taskData) => {
   }
 });
 
-/**
- * Register Quick Task decision event listener
- * 
- * PHASE 4.1: Entry decision authority
- * 
- * Native emits QUICK_TASK_DECISION events via DeviceEventEmitter
- * when it makes an entry decision for a monitored app.
- * 
- * This is separate from HeadlessTask because it's a UI-level event
- * that needs to launch SystemSurface immediately.
- */
-DeviceEventEmitter.addListener('QUICK_TASK_DECISION', (event) => {
-  handleQuickTaskDecision(event).catch((error) => {
-    console.error('[System Brain] ❌ Error handling Quick Task decision:', error);
-  });
-});
 
 /**
  * Register Quick Task command listener

@@ -12,134 +12,44 @@ BreakLoop uses THREE distinct JavaScript runtimes, each with specific responsibi
 
 ### Definition
 
-System Brain JS is an **event-driven, headless JavaScript runtime** that runs as a React Native Headless JS task.
+System Brain JS is an **event-driven, headless JavaScript runtime** that serves as the **Semantic Interpretation Layer**.
 
 ### Lifecycle (CRITICAL)
 
 System Brain JS is **event-driven**, NOT continuously running:
 
-- Invoked by native when mechanical events occur
+- Invoked by native when **mechanical commands** or events occur
 - Recomputes state deterministically on each invocation
 - Does NOT rely on continuous execution
 - Does NOT maintain in-memory state between invocations
 - Must load/save state from persistent storage on each event
 
-**Correct Understanding:**
-- Native emits event → System Brain wakes up
-- System Brain loads state from storage
-- System Brain processes event and decides action
-- System Brain saves state to storage
-- System Brain completes (may go dormant)
+### Relationship with Native (V2 Architecture)
 
-**Incorrect Understanding:**
-- ❌ "System Brain runs continuously in the background"
-- ❌ "System Brain has a persistent event loop"
-- ❌ "System Brain maintains state in memory"
+**Native is the Mechanical Authority.**
+- Native owns the **State Machine** (IDLE → DECISION → ACTIVE).
+- Native owns **Timers** (`t_quickTask`, `t_intention`).
+- Native decides **Entry Logic** (Commanding `SHOW_QUICK_TASK` vs `SHOW_INTERVENTION`).
 
-### Relationship with OS Trigger Brain (AUTHORITATIVE)
-
-**Source:** `spec/Relationship Between System Brain And Os Trigger Brain.docx`
-
-**System Brain hosts OS Trigger Brain. They are NOT peers.**
-
-**System Brain is:**
-- Long-lived JavaScript runtime (headless)
-- Receives events from Native (foreground changes, timer expiration, commands)
-- Owns semantic coordination (except where Native is the authority)
-- **Hosts OS Trigger Brain as a pure decision module**
-- Persists semantic state (when JS is the owner)
-- Headless-capable, survives Activity restarts, not tied to UI lifecycle
-
-**OS Trigger Brain is:**
-- A pure decision function
-- **Running INSIDE System Brain**
-- Stateless beyond what System Brain provides
-- Decides what should happen, not how it is shown
-- Evaluates conditions (t_intention, t_quickTask, n_quickTask, foreground/background)
-
-**OS Trigger Brain must:**
-- ✅ Run inside System Brain only
-- ❌ Never open UI
-- ❌ Never depend on Activity state
-- ❌ Never run inside SystemSurface
-
-**Key Principle:**
-> System Brain must never depend on SystemSurface timing. OS Trigger Brain must never run inside SystemSurface.
+**System Brain is the Semantic & UI Authority.**
+- Receives **Commands** from Native (e.g., `SHOW_QUICK_TASK_DIALOG`).
+- Decides **Intervention Content** (which breathing exercise? which reflection?).
+- Decides **UI Gating** (is another surface active? should we queue this?).
+- Manages **SystemSurface Lifecycle**.
 
 ### Responsibilities
 
-- Receive MECHANICAL events from native (timer expired, foreground changed)
-- Classify semantic meaning (Quick Task vs Intention vs other)
-- **Evaluate OS Trigger Brain priority chain** (Phase 2)
-- **Pre-decide UI flow** before launching SystemSurface (Phase 2)
-- Launch SystemSurface with **explicit wake reason** (`SHOW_QUICK_TASK_DIALOG` or `START_INTERVENTION_FLOW`)
-- Maintain semantic state (t_quickTask, t_intention)
-- Persist/restore state on each invocation
+- **Receive Native Commands**: Handle `SHOW_QUICK_TASK_DIALOG`, `SHOW_POST_QUICK_TASK_CHOICE`.
+- **Intervention Logic**: If Native says `SHOW_INTERVENTION`, System Brain decides *which* intervention flow to run.
+- **UI Gating**: Ensure only one SystemSurface session exists at a time.
+- **Persist Semantic Data**: Store user preferences or intervention progress (not mechanical state).
+- **Launch SystemSurface**: Call `launchSystemSurface` with the appropriate session type.
 
 ### Forbidden
 
-- UI rendering
-- React components
-- Depending on SystemSurface or MainApp contexts
-- Assuming continuous execution
-- Maintaining state in memory between events
-
-## Native Layer
-
-### Definition
-
-Native layer handles OS integration and emits MECHANICAL events only.
-
-### Responsibilities
-
-- Detect foreground app changes
-- Detect timer expirations
-- Emit mechanical events: "timer expired for app X", "foreground is app X"
-- Launch SystemSurfaceActivity when requested by System Brain
-
-### Forbidden
-
-- Semantic classification (Quick Task vs Intention)
-- Deciding whether to intervene
-- Labeling events with semantic meaning
-
-## SystemSurface JS
-
-### Definition
-
-Ephemeral JavaScript runtime for intervention UI.
-
-### Responsibilities
-
-- Render intervention screens
-- Render Quick Task dialog
-- Handle user interactions
-- Report decisions to System Brain
-
-### Forbidden
-
-- Semantic timer logic
-- Deciding whether to intervene
-- Maintaining persistent state
-- Using setTimeout for semantic timers
-
-## MainApp JS
-
-### Definition
-
-User-initiated JavaScript runtime for app features.
-
-### Responsibilities
-
-- Settings UI
-- Community features
-- Statistics display
-
-### Forbidden
-
-- System-level intervention logic
-- Timer expiration handling
-- Foreground app monitoring
+- **Timers**: System Brain must NEVER run timers or infer expiration.
+- **State Machine**: System Brain must NEVER clear or change Quick Task state (Native does that).
+- **Quota**: System Brain must NEVER check `n_quickTask` to decide eligibility (Native does that).
 
 ## Communication Flow (Phase 2 - Explicit Pre-Decision)
 

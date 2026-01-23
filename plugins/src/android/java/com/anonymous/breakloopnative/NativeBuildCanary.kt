@@ -23,5 +23,5 @@ package com.anonymous.breakloopnative
  */
 object NativeBuildCanary {
     // ⚠️ CHANGE THIS STRING ON EVERY KOTLIN EDIT ⚠️
-    const val BUILD_ID = "FG_DETECT_2026_01_21_007"
+    const val BUILD_ID = "QT_FINAL_008"
 }

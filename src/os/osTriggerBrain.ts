@@ -19,13 +19,8 @@
  * - Easier to maintain launcher list in JS than in multiple native platforms
  */
 
-import { 
-  isMonitoredApp, 
-  getInterventionDurationSec, 
-  getMonitoredAppsList,
-  getQuickTaskDurationMs,
-  getQuickTaskUsesPerWindow,
-  getQuickTaskWindowMs
+import {
+  isMonitoredApp
 } from './osConfig';
 
 // ============================================================================
@@ -260,7 +255,7 @@ export function dispatchQuickTaskExpired(packageName: string): void {
     console.error('[OS Trigger Brain] Cannot dispatch SHOW_EXPIRED - dispatcher not connected');
     return;
   }
-  
+
   interventionDispatcher({
     type: 'SHOW_EXPIRED',
     app: packageName,
@@ -288,7 +283,7 @@ export function handleForegroundAppChange(
   // ============================================================================
   // Step 1: Record raw exit (for all apps, including launchers)
   // ============================================================================
-  
+
   if (lastForegroundApp !== null && lastForegroundApp !== packageName) {
     lastExitTimestamps.set(lastForegroundApp, timestamp);
   }
@@ -296,52 +291,52 @@ export function handleForegroundAppChange(
   // ============================================================================
   // Step 2: Semantic launcher filtering
   // ============================================================================
-  
+
   const isLauncherEvent = isLauncher(packageName);
-  
+
   if (isLauncherEvent) {
     // Record launcher event time for transition detection
     lastLauncherEventTime = timestamp;
-    
+
     // Launcher detected - don't treat as meaningful app
-    
+
     // Update raw tracking (for exit inference) but NOT meaningful app tracking
     lastForegroundApp = packageName;
-    
+
     // Do NOT update lastMeaningfulApp
     // Do NOT update lastMeaningfulExitTimestamps
     // Do NOT run intervention logic
     return;
   }
-  
+
   // ============================================================================
   // Step 3: Launcher transition detection
   // ============================================================================
-  
+
   // Check if launcher was a transition (not a real home screen visit)
   const timeSinceLauncher = timestamp - lastLauncherEventTime;
   const isLauncherTransition = lastLauncherEventTime > 0 && timeSinceLauncher < LAUNCHER_TRANSITION_THRESHOLD_MS;
-  
+
   if (isLauncherTransition) {
     // Launcher was a transition, not a destination
   }
-  
+
   // Reset launcher time
   lastLauncherEventTime = 0;
-  
+
   // ============================================================================
   // Step 4: Handle meaningful app entry
   // ============================================================================
-  
+
   // Track the new meaningful app entering foreground
 
   // ============================================================================
   // Step 5: Monitored app intervention logic
   // ============================================================================
-  
+
   // Check if this is a monitored app
   const isMonitored = isMonitoredApp(packageName);
-  
+
   if (!isMonitored) {
     // Not a monitored app - skip intervention logic
     // Update tracking but don't trigger intervention
@@ -351,7 +346,7 @@ export function handleForegroundAppChange(
     }
     return;
   }
-  
+
   if (isMonitored) {
 
     // ============================================================================
@@ -364,7 +359,7 @@ export function handleForegroundAppChange(
     // ============================================================================
     const intentionTimer = intentionTimers.get(packageName);
     const intentionJustExpired = intentionTimer && timestamp > intentionTimer.expiresAt;
-    
+
     if (intentionJustExpired) {
       // Delete the expired timer
       intentionTimers.delete(packageName);
@@ -388,7 +383,7 @@ export function handleForegroundAppChange(
     // System Brain handles all trigger logic evaluation.
     // This file (osTriggerBrain.ts) is no longer used in SystemSurface context.
     // SystemSurface only consumes wake reasons from System Brain.
-    
+
     // Update tracking
     lastForegroundApp = packageName;
     lastMeaningfulApp = packageName;
@@ -479,24 +474,10 @@ function hasValidIntentionTimer(packageName: string, timestamp: number): boolean
  * @param currentTimestamp - Current timestamp
  */
 export function setQuickTaskTimer(packageName: string, durationMs: number, currentTimestamp: number): void {
-  const expiresAt = currentTimestamp + durationMs;
-  const durationMin = Math.round(durationMs / (60 * 1000));
-  
-  // ✅ Step 3: Ephemeral storage REMOVED
-  // Timer now stored ONLY in:
-  // 1. Native layer (for mechanical expiration)
-  // 2. System Brain persisted state (via TIMER_SET event)
-  
-  // Store timer in native layer - native will emit TIMER_SET and TIMER_EXPIRED events
-  // System Brain will persist timer and handle expiration
-  try {
-    const { NativeModules, Platform } = require('react-native');
-    if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
-      NativeModules.AppMonitorModule.storeQuickTaskTimer(packageName, expiresAt);
-    }
-  } catch (e) {
-    console.warn('[OS Trigger Brain] Failed to store Quick Task timer in native layer:', e);
-  }
+  // DEPRECATED: Ephemeral storage removed
+  // Timer is now managed exclusively by Native via QT_ACCEPT intent
+  // This function is no longer needed
+  // console.warn('[OS Trigger Brain] setQuickTaskTimer is deprecated - Native manages timers');
 }
 
 /**
@@ -556,21 +537,21 @@ export function checkForegroundIntentionExpiration(currentTimestamp: number): vo
   // Check ALL monitored apps with active intention timers
   // IMPORTANT: Only trigger intervention for the CURRENT foreground app
   // For background apps, just delete the expired timer - intervention will trigger on next entry
-  
+
   for (const [packageName, timer] of intentionTimers.entries()) {
     if (!isMonitoredApp(packageName)) {
       continue;
     }
-    
+
     if (currentTimestamp > timer.expiresAt) {
       // CRITICAL FIX: Only trigger intervention if this is the CURRENT foreground app
       // For background apps, just delete the timer - intervention will trigger on next entry
       const isForeground = packageName === lastMeaningfulApp;
-      
+
       if (isForeground) {
         // Clear the expired timer
         intentionTimers.delete(packageName);
-        
+
         // Phase 2: evaluateTriggerLogic() removed
         // System Brain handles all trigger logic evaluation.
       } else {
@@ -579,7 +560,7 @@ export function checkForegroundIntentionExpiration(currentTimestamp: number): vo
         // 1. No intention timer exists (expired)
         // 2. Will trigger new intervention at that time
         intentionTimers.delete(packageName);
-        
+
         // DO NOT trigger intervention - wait for user to return to this app
       }
     }

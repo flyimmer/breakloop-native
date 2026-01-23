@@ -16,19 +16,19 @@ const STATE_KEY = 'system_brain_state_v1';
  * Timer state structure (semantic state owned by System Brain).
  */
 export interface TimerState {
-  quickTaskTimers: Record<string, { expiresAt: number }>;
+  quickTaskTimers: Record<string, { expiresAt: number }>; // DEPRECATED - Native authoritative
   intentionTimers: Record<string, { expiresAt: number }>;
-  quickTaskUsageHistory: number[];  // PERSISTED - critical for kill-safety
-  quickTaskPhaseByApp: Record<string, 'DECISION' | 'ACTIVE'>;  // Explicit Quick Task phase per app
+  quickTaskUsageHistory: number[];  // DEPRECATED - Native authoritative
+  quickTaskPhaseByApp: Record<string, 'DECISION' | 'ACTIVE'>;  // DEPRECATED - Native authoritative
   lastMeaningfulApp: string | null;
-  currentForegroundApp?: string | null;  // Current foreground app (for time-of-truth capture)
-  isHeadlessTaskProcessing: boolean;  // Track if we're in headless task context
-  expiredQuickTasks: Record<string, {
+  currentForegroundApp?: string | null;
+  isHeadlessTaskProcessing: boolean;
+  expiredQuickTasks: Record<string, { // DEPRECATED - Native authoritative
     expiredAt: number;
-    expiredWhileForeground: boolean;  // Track WHERE user was at expiration time
-    foregroundAppAtExpiration?: string | null;  // Captured foreground app at TIMER_EXPIRED time
-  }>;  // Apps where Quick Task permission has ended, awaiting user interaction
-  lastSemanticChangeTs?: number;  // Monotonic timestamp for UI reactivity
+    expiredWhileForeground: boolean;
+    foregroundAppAtExpiration?: string | null;
+  }>;
+  lastSemanticChangeTs?: number;
 }
 
 /**
@@ -41,11 +41,11 @@ export async function loadTimerState(): Promise<TimerState> {
     const json = await AsyncStorage.getItem(STATE_KEY);
     if (json) {
       const state = JSON.parse(json);
-      
+
       // Migrate expiredQuickTasks from old array format to new Record format
       const rawExpired = state.expiredQuickTasks || state.pendingQuickTaskIntervention || [];
       let expiredQuickTasks: Record<string, { expiredAt: number; expiredWhileForeground: boolean }> = {};
-      
+
       if (Array.isArray(rawExpired)) {
         // Old format: assume all expired while foreground (conservative approach)
         console.log('[System Brain] Migrating expiredQuickTasks from array to Record format');
@@ -59,13 +59,13 @@ export async function loadTimerState(): Promise<TimerState> {
         // New format: already a Record
         expiredQuickTasks = rawExpired;
       }
-      
+
       // ⚠️ CONSERVATIVE MIGRATION: Only infer ACTIVE from active timers. Never infer DECISION.
       let quickTaskPhaseByApp: Record<string, 'DECISION' | 'ACTIVE'> = {};
-      
+
       if (!state.quickTaskPhaseByApp) {
         // Migration: Initialize quickTaskPhaseByApp if missing
-        
+
         // CONSERVATIVE MIGRATION: Only infer ACTIVE from active (non-expired) timers
         // We can safely infer ACTIVE because:
         // 1. Timer exists → user clicked "Quick Task" button (completed DECISION → ACTIVE)
@@ -76,10 +76,10 @@ export async function loadTimerState(): Promise<TimerState> {
         // - Dialog might have been dismissed
         // - User might have switched apps
         const currentTimestamp = Date.now();
-        
+
         for (const app in state.quickTaskTimers) {
           const timer = state.quickTaskTimers[app];
-          
+
           // Only infer ACTIVE if timer exists AND is not expired
           if (timer && currentTimestamp < timer.expiresAt) {
             quickTaskPhaseByApp[app] = 'ACTIVE';
@@ -94,14 +94,14 @@ export async function loadTimerState(): Promise<TimerState> {
             });
           }
         }
-        
+
         // NOTE: If no timers exist, quickTaskPhaseByApp remains empty {}
         // This is correct - no phase means no Quick Task active
       } else {
         // Phase state already exists - use it
         quickTaskPhaseByApp = state.quickTaskPhaseByApp;
       }
-      
+
       const baseState: TimerState = {
         quickTaskTimers: state.quickTaskTimers || {},
         intentionTimers: state.intentionTimers || {},
@@ -112,21 +112,21 @@ export async function loadTimerState(): Promise<TimerState> {
         isHeadlessTaskProcessing: false,  // Always false when loading from storage
         expiredQuickTasks,  // Migrated format
       };
-      
+
       // Migration: Delete any persisted blockingState from old code
       if (state.blockingState) {
         console.log('[System Brain] Migrating: removing persisted blockingState (lifecycle flag should never persist)');
       }
-      
+
       // Merge with in-memory overrides (ensures deleted flags stay deleted)
       const mergedState = mergeWithInMemoryCache(baseState);
-      
+
       return mergedState;
     }
   } catch (e) {
     console.warn('[System Brain] Failed to load state:', e);
   }
-  
+
   // Return default state if load fails
   console.log('[System Brain] Using default state (no saved state found)');
   return {
@@ -345,17 +345,17 @@ export function markSystemInitiatedForegroundChange(): void {
 export function isSystemInitiatedForegroundChange(): boolean {
   const now = Date.now();
   const isSystemInitiated = now < systemInitiatedForegroundUntil;
-  
+
   if (isSystemInitiated) {
     console.log('[SystemBrain] Foreground change is system-initiated (within window)');
   }
-  
+
   // Auto-clear if expired
   if (now >= systemInitiatedForegroundUntil && systemInitiatedForegroundUntil > 0) {
     systemInitiatedForegroundUntil = 0;
     console.log('[SystemBrain] System-initiated window expired');
   }
-  
+
   return isSystemInitiated;
 }
 
@@ -376,7 +376,7 @@ export function mergeWithInMemoryCache(persistedState: TimerState): TimerState {
     // No in-memory mutations - return persisted state as-is
     return persistedState;
   }
-  
+
   // Dev assertion for debugging
   if (__DEV__ && inMemoryStateCache && !persistedState.expiredQuickTasks) {
     console.warn(
@@ -384,10 +384,10 @@ export function mergeWithInMemoryCache(persistedState: TimerState): TimerState {
       inMemoryStateCache.expiredQuickTasks
     );
   }
-  
+
   // Merge expiredQuickTasks: in-memory deletions override persistence
   const mergedExpiredQuickTasks = { ...persistedState.expiredQuickTasks };
-  
+
   // For each app in persisted state, check if it was deleted in memory
   for (const app in persistedState.expiredQuickTasks) {
     if (!inMemoryStateCache.expiredQuickTasks[app]) {
@@ -396,18 +396,18 @@ export function mergeWithInMemoryCache(persistedState: TimerState): TimerState {
       console.log('[SystemBrain] Merge: Deleted stale expiredQuickTask flag:', app);
     }
   }
-  
+
   // Add any new flags from memory (shouldn't happen, but be defensive)
   for (const app in inMemoryStateCache.expiredQuickTasks) {
     if (!mergedExpiredQuickTasks[app]) {
       mergedExpiredQuickTasks[app] = inMemoryStateCache.expiredQuickTasks[app];
     }
   }
-  
+
   const mergedState = {
     ...persistedState,
     expiredQuickTasks: mergedExpiredQuickTasks,
   };
-  
+
   return mergedState;
 }

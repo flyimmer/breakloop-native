@@ -8,7 +8,7 @@
 import { DeviceEventEmitter } from 'react-native';
 import { isMonitoredApp } from '../os/osConfig';
 import { launchSystemSurface } from './nativeBridge';
-import { isSystemInitiatedForegroundChange, loadTimerState, saveTimerState, setInMemoryStateCache, setNextSessionOverride, TimerState } from './stateManager';
+import { isSystemInitiatedForegroundChange, loadTimerState, saveTimerState, setInMemoryStateCache, TimerState } from './stateManager';
 
 /**
  * Record a Quick Task usage GLOBALLY.
@@ -48,17 +48,17 @@ export async function handleSystemEvent(event: {
   timerType?: 'QUICK_TASK' | 'INTENTION'; // For TIMER_SET events (explicit type)
 }): Promise<void> {
   const { type, packageName, timestamp } = event;
-  
+
   // Load semantic state (event-driven, must restore state each time)
   const state = await loadTimerState();
-  
+
   // Update in-memory cache for UI coordination
   setInMemoryStateCache(state);
-  
+
   // Mark that we're processing in headless task context
   // This prevents BreakLoop package from corrupting lastMeaningfulApp
   state.isHeadlessTaskProcessing = true;
-  
+
   try {
     if (type === 'TIMER_EXPIRED') {
       await handleTimerExpiration(packageName, timestamp, state);
@@ -72,7 +72,7 @@ export async function handleSystemEvent(event: {
   } finally {
     // Clear flag before saving (state should never persist with this flag true)
     state.isHeadlessTaskProcessing = false;
-    
+
     // Save updated semantic state
     await saveTimerState(state);
   }
@@ -98,89 +98,38 @@ async function handleTimerExpiration(
   // SEMANTIC CLASSIFICATION: What kind of timer expired?
   const quickTaskTimer = state.quickTaskTimers[packageName];
   const intentionTimer = state.intentionTimers[packageName];
-  
+
   let timerType: 'QUICK_TASK' | 'INTENTION' | 'UNKNOWN' = 'UNKNOWN';
-  
+
   // Check intention timer first (higher priority in expiration handling)
   if (intentionTimer && timestamp >= intentionTimer.expiresAt) {
     timerType = 'INTENTION';
     // Remove per-app suppressor
     delete state.intentionTimers[packageName];
   } else if (quickTaskTimer && timestamp >= quickTaskTimer.expiresAt) {
-    timerType = 'QUICK_TASK';
+    // QUICK TASK EXPIRATION: IGNORED IN JS (Native handles this)
+    console.log('[QT][SB] Ignoring Quick Task expiration event - Native is authoritative');
     
-    // ⚠️ CRITICAL: Valid expiration only if phase is ACTIVE
-    // Phase check prevents handling stale timers from dialog phase
-    const phase = state.quickTaskPhaseByApp[packageName];
-    if (phase !== 'ACTIVE') {
-      // Stale timer - ignore expiration
-      // Always delete timer (even if phase was wrong)
-      delete state.quickTaskTimers[packageName];
-      timerType = 'UNKNOWN'; // Mark as unknown so we skip further processing
-    } else {
-      // Valid expiration of active Quick Task usage (Phase B)
-      // Timer exists AND phase is ACTIVE → legitimate expiration
-      delete state.quickTaskTimers[packageName];
-    }
+    // Clean up our local state state anyway to keep it clean
+    delete state.quickTaskTimers[packageName];
+    timerType = 'UNKNOWN'; // Skip processing
   }
-  
+
   if (timerType === 'UNKNOWN') {
     return;
   }
-  
+
   // TIME-OF-TRUTH CAPTURE: Read foreground app at TIMER_EXPIRED time
   // This is the single source of truth - NEVER re-evaluate this later
   const foregroundAtExpiration = state.currentForegroundApp || state.lastMeaningfulApp;
-  
+
   if (foregroundAtExpiration === packageName) {
     // User was on the app at expiration time
-    
+
     if (timerType === 'QUICK_TASK') {
-      // QUICK TASK EXPIRATION: Revoke permission, await user interaction
-      
-      // CRITICAL: Capture phase BEFORE clearing (needed for POST_QUICK_TASK_CHOICE guard)
-      const phaseBeforeExpiration = state.quickTaskPhaseByApp[packageName];
-      
-      // Clear phase (transition ACTIVE → null)
-      delete state.quickTaskPhaseByApp[packageName];
-      
-      // Capture immutable fact: user was in this app when timer expired
-      const expiredWhileForeground = foregroundAtExpiration === packageName;
-      
-      if (expiredWhileForeground) {
-        // CRITICAL: Only set POST_QUICK_TASK_CHOICE if Quick Task was ACTIVE
-        // This prevents premature transitions on app entry or during DECISION phase
-        if (phaseBeforeExpiration === 'ACTIVE') {
-          // Set session override for UI to observe
-          setNextSessionOverride(packageName, 'POST_QUICK_TASK_CHOICE');
-          state.lastSemanticChangeTs = Date.now();
-          
-          // Persist immutable fact with captured foreground app
-          state.expiredQuickTasks[packageName] = {
-            expiredAt: timestamp,
-            expiredWhileForeground: true,
-            foregroundAppAtExpiration: foregroundAtExpiration,
-          };
-        } else {
-          // Still record expiration, but without POST_QUICK_TASK_CHOICE
-          state.expiredQuickTasks[packageName] = {
-            expiredAt: timestamp,
-            expiredWhileForeground: true,
-            foregroundAppAtExpiration: foregroundAtExpiration,
-          };
-        }
-      } else {
-        // Background expiration - just clear phase, no blocking
-        state.expiredQuickTasks[packageName] = {
-          expiredAt: timestamp,
-          expiredWhileForeground: false,
-          foregroundAppAtExpiration: foregroundAtExpiration,
-        };
-      }
-      
-      // ❌ DO NOT call launchSystemSurface() here
-      // ❌ DO NOT emit events
-      // ✅ Wait for USER_INTERACTION_FOREGROUND event
+      // QUICK TASK EXPIRATION: IGNORED IN JS (Native handles this)
+      console.log('[QT][SB] Ignoring Quick Task expiration event - Native is authoritative');
+      return;
     }
     // INTENTION TIMER EXPIRATION: Mark expired, decision made at UI-safe boundary
     // ❌ DO NOT call launchSystemSurface() here
@@ -216,7 +165,7 @@ async function handleUserInteraction(
   if (!isMonitoredApp(packageName)) {
     return;
   }
-  
+
   // ============================================================================
   // PHASE 4.1: State tracking only - Native makes entry decisions
   // ============================================================================
@@ -224,7 +173,7 @@ async function handleUserInteraction(
   // ❌ DO NOT evaluate Quick Task availability
   // ❌ DO NOT launch SystemSurface from this handler
   // ✅ Native emits QUICK_TASK_DECISION events separately
-  
+
   // Future: Add non-entry-decision logic here if needed
 }
 
@@ -253,24 +202,14 @@ async function handleTimerSet(
 ): Promise<void> {
   // ✅ Explicit type classification (no duration inference)
   if (timerType === 'QUICK_TASK') {
-    // Clear any expired Quick Task flag for this app
-    // User explicitly requested Quick Task, so any previous expiration is irrelevant
-    if (state.expiredQuickTasks[packageName]) {
-      delete state.expiredQuickTasks[packageName];
-    }
-    
-    // Store Quick Task timer (mechanical operation)
-    state.quickTaskTimers[packageName] = { expiresAt };
-    
-    // ❌ REMOVED: recordQuickTaskUsage() - quota now decremented at DECISION→ACTIVE transition
-    // Quota is consumed when user clicks "Quick Task" button (in transitionQuickTaskToActive),
-    // not when timer is stored in native
+    // QUICK TASK TIMER: IGNORED IN JS (Native handles this)
+    console.log('[QT][SB] Ignoring Quick Task timer set event - Native is authoritative');
   } else if (timerType === 'INTENTION') {
     // Clear any expired Quick Task flag - user chose to set intention
     if (state.expiredQuickTasks[packageName]) {
       delete state.expiredQuickTasks[packageName];
     }
-    
+
     // Store per-app intention timer (NO usage tracking)
     state.intentionTimers[packageName] = { expiresAt };
   }
@@ -299,11 +238,11 @@ function isSystemInfrastructureApp(
   context?: { isHeadlessTaskProcessing?: boolean }
 ): boolean {
   if (!packageName) return true;
-  
+
   // System UI overlays (always infrastructure)
   if (packageName === 'com.android.systemui') return true;
   if (packageName === 'android') return true;
-  
+
   // BreakLoop is infrastructure ONLY during headless task processing
   // This prevents RN headless task side-effects from corrupting lastMeaningfulApp
   // When user opens Main App/Settings, this should return false
@@ -313,7 +252,7 @@ function isSystemInfrastructureApp(
   ) {
     return true;
   }
-  
+
   return false;
 }
 
@@ -330,22 +269,22 @@ async function handleForegroundChange(
   // Check if this foreground change is system-initiated (within time window)
   // This allows multiple duplicate events to all see the marker
   const isSystemInitiated = isSystemInitiatedForegroundChange();
-  
+
   // Check if current foreground app is infrastructure
   // Infrastructure apps (BreakLoop overlay, system UI) don't represent user navigation
   const isInfrastructureApp = isSystemInfrastructureApp(packageName, {
     isHeadlessTaskProcessing: state.isHeadlessTaskProcessing
   });
-  
+
   // CRITICAL: Update currentForegroundApp FIRST (for time-of-truth capture)
   // This must happen BEFORE any other logic or decision evaluation
   const previousApp = state.lastMeaningfulApp;
-  
+
   if (!isSystemInfrastructureApp(packageName, { isHeadlessTaskProcessing: state.isHeadlessTaskProcessing })) {
     // Update BOTH currentForegroundApp and lastMeaningfulApp
     state.currentForegroundApp = packageName;
     state.lastMeaningfulApp = packageName;
-    
+
     // Emit UNDERLYING_APP_CHANGED event to SystemSurface if app changed
     if (previousApp !== packageName) {
       DeviceEventEmitter.emit('UNDERLYING_APP_CHANGED', {
@@ -353,7 +292,7 @@ async function handleForegroundChange(
       });
     }
   }
-  
+
   // SEMANTIC INVALIDATION: Clear expired Quick Task flags for apps user is not currently in
   // IMPORTANT: Preserve flags when:
   // 1. Foreground change is system-initiated (blocking screen backgrounding)
@@ -370,29 +309,29 @@ async function handleForegroundChange(
       delete state.expiredQuickTasks[app];
     }
   }
-  
+
   // 🔒 GUARD: only monitored apps are eligible for OS Trigger Brain evaluation
   const monitored = isMonitoredApp(packageName);
-  
+
   if (!monitored) {
     return;
   }
-  
+
   // Duplicate launch guard REMOVED - isSystemSurfaceActive is the ONLY gate
   // The decision engine's lifecycle guard prevents multiple launches
-  
+
   // NEW: Clean up stale intention timer for this app BEFORE evaluation
   // Prevents false-positive interventions from old timers
   const existingIntentionTimer = state.intentionTimers[packageName];
   if (existingIntentionTimer) {
     const expiredMs = timestamp - existingIntentionTimer.expiresAt;
     const STALE_THRESHOLD_MS = 60 * 1000; // 1 minute
-    
+
     if (expiredMs > STALE_THRESHOLD_MS) {
       delete state.intentionTimers[packageName];
     }
   }
-  
+
   // NEW: Clear background-expired Quick Task flag BEFORE OS Trigger Brain
   // CRITICAL: This function ONLY clears background-expired flags, never launches intervention
   // Intervention enforcement happens ONLY in handleUserInteraction() to prevent duplicate launches
@@ -404,9 +343,9 @@ async function handleForegroundChange(
   // NOTE: If expired.expiredWhileForeground === true, the flag remains.
   // Intervention will be enforced on the next USER_INTERACTION_FOREGROUND event.
   // This prevents duplicate launches from FOREGROUND_CHANGED + USER_INTERACTION_FOREGROUND.
-  
+
   // No blocking state guard needed - session-based blocking is handled by SystemSurface
-  
+
   // ============================================================================
   // PHASE 4.1: FOREGROUND_CHANGED no longer triggers Quick Task entry decisions
   // ============================================================================
@@ -417,7 +356,7 @@ async function handleForegroundChange(
   // 
   // DEPRECATED: Decision engine call for monitored apps
   // Native makes entry decisions, JS reacts to QUICK_TASK_DECISION events
-  
+
   // ❌ DO NOT call decideSystemSurfaceAction() for monitored apps
   // ❌ DO NOT launch SystemSurface from this handler
   // ✅ Native emits QUICK_TASK_DECISION events separately
@@ -436,66 +375,6 @@ async function handleForegroundChange(
  * - Quota availability
  * - SystemSurface lifecycle
  * 
- * JS only checks t_intention for NO_QUICK_TASK_AVAILABLE case.
- * 
- * @param event - Quick Task decision event from Native
- */
-export async function handleQuickTaskDecision(event: {
-  packageName: string;
-  decision: 'SHOW_QUICK_TASK_DIALOG' | 'NO_QUICK_TASK_AVAILABLE';
-  timestamp: number;
-}): Promise<void> {
-  const { packageName, decision, timestamp } = event;
-  
-  // Load state
-  const state = await loadTimerState();
-  setInMemoryStateCache(state);
-  
-  if (decision === 'SHOW_QUICK_TASK_DIALOG') {
-    // ✅ UNCONDITIONAL: Native authorized Quick Task dialog
-    
-    // Set phase = DECISION
-    state.quickTaskPhaseByApp[packageName] = 'DECISION';
-    await saveTimerState(state);
-    
-    // Notify Native that SystemSurface is launching
-    try {
-      const { NativeModules, Platform } = require('react-native');
-      if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
-        await NativeModules.AppMonitorModule.setSystemSurfaceActive(true);
-      }
-    } catch (e) {
-      // Silent failure - lifecycle coordination is best-effort
-    }
-    
-    // Launch SystemSurface with Quick Task dialog (UNCONDITIONAL)
-    await launchSystemSurface(packageName, 'SHOW_QUICK_TASK_DIALOG');
-    
-  } else if (decision === 'NO_QUICK_TASK_AVAILABLE') {
-    // Native says Quick Task not available
-    // ONLY check t_intention (minimal suppression check)
-    
-    const intentionTimer = state.intentionTimers[packageName];
-    if (intentionTimer && timestamp < intentionTimer.expiresAt) {
-      return; // Suppress everything
-    }
-    
-    // No t_intention - start Intervention immediately
-    
-    // Notify Native that SystemSurface is launching
-    try {
-      const { NativeModules, Platform } = require('react-native');
-      if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
-        await NativeModules.AppMonitorModule.setSystemSurfaceActive(true);
-      }
-    } catch (e) {
-      // Silent failure - lifecycle coordination is best-effort
-    }
-    
-    await launchSystemSurface(packageName, 'START_INTERVENTION_FLOW');
-  }
-}
-
 /**
  * Handle Quick Task commands from Native
  * PHASE 4.2: JS obeys Native commands, never decides
@@ -561,6 +440,13 @@ export async function handleQuotaUpdate(event: {
   timestamp: number;
 }): Promise<void> {
   // Quota is now native-authoritative (Phase 4.2)
-  // JS no longer stores quota in state - it's display-only
-  // This function is kept for potential future display updates
+  // JS no longer tracks quota for decision making
+  try {
+    const { NativeModules, Platform } = require('react-native');
+    if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
+       // Optional: Could update a local UI store here if needed
+    }
+  } catch (e) {
+      // Silent failure
+  }
 }

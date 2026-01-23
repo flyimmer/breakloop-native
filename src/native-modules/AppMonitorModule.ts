@@ -132,22 +132,23 @@ interface IAppMonitorModule {
   setMonitoredApps(packageNames: string[]): Promise<{ success: boolean; count: number }>;
 
   /**
-   * Store Quick Task timer in native layer
-   * 
-   * When called, the native ForegroundDetectionService will NOT launch InterventionActivity
-   * for this app until the timer expires.
-   * 
-   * @param packageName - Package name of the app (e.g., "com.instagram.android")
-   * @param expiresAt - Timestamp when timer expires (milliseconds since epoch)
+   * User intents for Quick Task state transitions (Phase 4.2)
+   * These methods notify Native of user decisions, triggering state machine changes.
    */
-  storeQuickTaskTimer(packageName: string, expiresAt: number): void;
+  quickTaskAccept(packageName: string, durationMs: number): Promise<boolean>;
+  quickTaskDecline(packageName: string): Promise<boolean>;
+  quickTaskPostContinue(packageName: string): Promise<boolean>;
+  quickTaskPostQuit(packageName: string): Promise<boolean>;
 
   /**
-   * Clear Quick Task timer from native layer
-   * 
-   * @param packageName - Package name of the app
+   * Notify native that SystemSurface is active or inactive (Phase 4.1)
    */
-  clearQuickTaskTimer(packageName: string): void;
+  setSystemSurfaceActive(active: boolean): Promise<boolean>;
+
+  /**
+   * Update Quick Task quota cache in Native (Phase 4.1)
+   */
+  updateQuickTaskQuota(quota: number): Promise<boolean>;
 
   /**
    * Finish InterventionActivity and return to the monitored app

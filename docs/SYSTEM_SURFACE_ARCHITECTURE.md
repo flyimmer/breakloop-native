@@ -1,16 +1,16 @@
 # BreakLoop OS-Level UI Architecture
 
-**Version:** 2.0  
-**Date:** January 5, 2026  
-**Status:** AUTHORITATIVE - This document defines the canonical architecture
+**Version:** 3.0 (V2 Native Authority)
+**Date:** January 23, 2026
+**Status:** AUTHORITATIVE
 
 ---
 
-## Architectural Invariants (AUTHORITATIVE - Phase 4.2+)
+## Architectural Invariants (AUTHORITATIVE - v2)
 
-**Status:** These invariants are non-negotiable. Any change that violates these invariants is considered a bug, not a design alternative.
+**Status:** These invariants are non-negotiable. Any change that violates these invariants is considered a bug.
 
-**Source:** `spec/Architecture Invariants.docx`, `spec/Relationship Between System Brain And Os Trigger Brain.docx`, `spec/Session And Timer Relationship (clarified).docx`
+**Source:** `spec/BreakLoop Architecture Invariants v2.docx`, `spec/BreakLoop Architecture v2.docx`
 
 ### 1. Session Is a Projection, Not State
 
@@ -517,179 +517,57 @@ This section defines the **final, stable architecture** after Phase 2 completion
 
 ## Part 2: Native–JavaScript Boundary
 
-### Core Principle (Non-Negotiable)
+### Wake Reason Contract (Command-Driven - V2)
 
-**Native code decides WHEN to wake the app.**  
-**JavaScript decides WHAT the user sees and WHY.**
-
-- **Native = mechanics**
-- **JavaScript = semantics**
-
-### Three JavaScript Runtimes
-
-BreakLoop uses THREE distinct JavaScript runtimes:
-
-1. **System Brain JS** - Event-driven, headless, semantic logic (NEW)
-2. **SystemSurface JS** - Ephemeral, UI-only, intervention screens
-3. **MainApp JS** - User-initiated, settings and community
-
-### System Brain JS (Event-Driven Semantic Runtime)
-
-**Definition:**
-System Brain JS is an **event-driven, headless JavaScript runtime** that runs as a React Native Headless JS task.
-
-**Lifecycle (CRITICAL):**
-- Invoked by native when mechanical events occur
-- Recomputes state deterministically on each invocation
-- Does NOT rely on continuous execution
-- Does NOT maintain in-memory state between invocations
-- Must load/save state from persistent storage on each event
-
-**Responsibilities:**
-- Receive MECHANICAL events from native (timer expired, foreground changed)
-- Classify semantic meaning (Quick Task vs Intention vs other)
-- Evaluate OS Trigger Brain logic
-- Decide when to launch SystemSurface
-- Maintain semantic state (t_quickTask, t_intention)
-- Persist/restore state on each invocation
-
-**Forbidden:**
-- UI rendering
-- React components
-- Depending on SystemSurface or MainApp contexts
-- Assuming continuous execution
-- Maintaining state in memory between events
-
-### Native (Kotlin) — Allowed Responsibilities
-
-**Native Code MAY:**
-- Detect foreground app changes (AccessibilityService)
-- Detect timer expiration using persisted timestamps
-- Persist timestamps (SharedPreferences)
-- Emit MECHANICAL events: "timer expired for app X", "foreground is app X"
-- Launch SystemSurfaceActivity when requested by System Brain
-
-**Native Code MUST NOT:**
-- Decide Quick Task vs Intervention
-- Check `n_quickTask`
-- Check `t_intention` priority
-- Run OS Trigger priority chain
-- Decide which screen to show
-- Interpret user intent
-- Navigate inside flows
-- Label events with semantic meaning (no "QuickTaskExpired", "IntentionExpired")
-
-### JavaScript — Required Responsibilities
-
-**System Brain JS MUST:**
-- Own the Decision Engine (`decideSystemSurfaceAction()`)
-- Decision Engine is the ONLY place where launch decisions are made
-- Decision Engine unifies Quick Task expiration + OS Trigger Brain priority chain
-- Evaluate the full priority chain (via Decision Engine)
-- Classify timer type (Quick Task vs Intention)
-- Decide:
-  - Quick Task Flow
-  - Intervention Flow
-  - Suppression (do nothing)
-- Manage `t_intention` semantics
-- Manage Quick Task semantics
-- Reset timers on Quick Task expiry
-- Load/save state on each event invocation
-- **Call Decision Engine ONLY from UI-safe boundaries** (USER_INTERACTION, FOREGROUND_CHANGED)
-- **NEVER call Decision Engine from TIMER_EXPIRED** (background event, not UI-safe)
-
-**SystemSurface JS MUST:**
-- Render intervention screens
-- Handle user interactions
-- Report decisions to System Brain
-
-**SystemSurface JS MUST NOT:**
-- Use setTimeout for semantic timers
-- Decide whether to intervene
-- Maintain persistent state
-
-**MainApp JS MUST:**
-- Handle user-initiated features (settings, community)
-
-**MainApp JS MUST NOT:**
-- Handle system-level intervention logic
-- Handle timer expiration
-- Monitor foreground apps
-
-### Wake Reason Contract (Critical - Final Form)
-
-Every native launch of `SystemSurfaceActivity` MUST include a wake reason.
+Every launch of `SystemSurfaceActivity` MUST include a wake reason.
 
 **Core Principle:**
-> **Wake reasons are declarative instructions, not triggers for re-evaluation.**
+> **Wake reasons are Declarative Commands.**
 
-System Brain pre-decides the UI flow. SystemSurface consumes the wake reason and renders accordingly.
+System Surface consumes the command and renders accordingly.
 
 ---
 
-**Valid Wake Reasons (Phase 2 - Explicit Pre-Decision):**
+**Valid Wake Reasons (V2 - Native Commands):**
 
 1. **`SHOW_QUICK_TASK_DIALOG`**
-   - **Meaning**: System Brain evaluated priority chain → User is eligible for Quick Task
-   - **SystemSurface Action**: Dispatch `START_QUICK_TASK` session
-   - **UI**: Show Quick Task dialog
+   - **Source**: Native Command (`SHOW_QUICK_TASK_DIALOG`)
+   - **Meaning**: Native confirmed app is eligible for Quick Task (quota available, timer unset).
+   - **SystemSurface Action**: Dispatch `START_QUICK_TASK` session.
 
 2. **`START_INTERVENTION_FLOW`**
-   - **Meaning**: System Brain evaluated priority chain → Intervention must start
-   - **SystemSurface Action**: Dispatch `START_INTERVENTION` session
-   - **UI**: Show Intervention flow (breathing screen)
+   - **Source**: Native Command (`SHOW_INTERVENTION`) or System Brain internal logic (for complex flows).
+   - **Meaning**: Native determined intervention is required (or System Brain decided to intervene).
+   - **SystemSurface Action**: Dispatch `START_INTERVENTION` session.
 
-3. **`QUICK_TASK_EXPIRED_FOREGROUND`**
-   - **Meaning**: Quick Task timer expired while user stayed in app
-   - **SystemSurface Action**: Dispatch `START_INTERVENTION` session
-   - **UI**: Show QuickTaskExpiredScreen → Intervention
+3. **`SHOW_POST_QUICK_TASK_CHOICE`**
+   - **Source**: Native Command (`SHOW_POST_QUICK_TASK_CHOICE`)
+   - **Meaning**: Quick Task expired while foreground.
+   - **SystemSurface Action**: Dispatch `POST_CHOICE` session.
 
 4. **`DEV_DEBUG`**
-   - **Meaning**: Developer-triggered wake for testing
-   - **SystemSurface Action**: Depends on test scenario
-   - **UI**: Varies (testing only)
-
----
-
-**Deprecated Wake Reasons (Phase 1 - Transitional):**
-- ~~`MONITORED_APP_FOREGROUND`~~ - Ambiguous, replaced by explicit wake reasons above
-- ~~`INTENTION_EXPIRED_FOREGROUND`~~ - Now handled by System Brain event classification
+   - **Meaning**: Developer-triggered wake.
 
 ---
 
 **System Brain JS Requirements:**
-- Receive mechanical events from native: `"TIMER_EXPIRED"`, `"FOREGROUND_CHANGED"`
-- **Check `isMonitoredApp(packageName)`** before any evaluation (Monitored App Guard)
-- Classify semantic meaning (Quick Task vs Intention)
-- **Evaluate OS Trigger Brain priority chain**
-- **Pre-decide UI flow** (Quick Task OR Intervention)
-- Launch SystemSurface with **explicit wake reason**
+- Receive **commands** from native: `SHOW_QUICK_TASK_DIALOG`, `SHOW_POST_QUICK_TASK_CHOICE`.
+- **Relay** commands to SystemSurface (via `launchSystemSurface`).
+- **Gating**: Ensure only one SystemSurface is active.
 
 **SystemSurface JS Requirements:**
-- Read wake reason from Intent extras on startup
-- **Directly dispatch session based on wake reason** (no logic, no re-evaluation)
-- **NEVER** call `evaluateTriggerLogic()` (System Brain already decided)
-- **NEVER** re-evaluate OS Trigger Brain priority chain
-- **NEVER** read AsyncStorage semantic state
-- **NEVER** use setTimeout for semantic timers
+- Read wake reason on startup.
+- **Directly dispatch session** based on wake reason.
+- **NEVER** re-evaluate eligibility (Native already decided).
 
 ### Red Flags (Immediate Failure)
 
 If **ANY** of the following are true, **STOP and FIX**:
 
-- ❌ Kotlin code checks `n_quickTask`
-- ❌ Kotlin code chooses Quick Task vs Intervention
-- ❌ Kotlin code decides navigation or screens
-- ❌ Kotlin code labels events with semantic meaning
-- ❌ System Brain JS skips priority chain based on native assumptions
-- ❌ SystemSurface JS uses setTimeout for semantic timers
-- ❌ `QUICK_TASK_EXPIRED_FOREGROUND` triggers Quick Task dialog again
-- ❌ Main app UI appears in System Surface
-- ❌ Native logic duplicates JS logic
-- ❌ Semantic logic in SystemSurface or MainApp contexts
-- ❌ Decision Engine called from TIMER_EXPIRED (background event, not UI-safe)
-- ❌ `launchSystemSurface()` called directly without Decision Engine
-- ❌ Event handlers contain decision logic (they should only update state)
+- ❌ JS checks `n_quickTask` to decide eligibility.
+- ❌ JS decides whether to show Quick Task vs Intervention (Native decides).
+- ❌ SystemSurface runs timers.
+
 
 ### Verification Checklist
 

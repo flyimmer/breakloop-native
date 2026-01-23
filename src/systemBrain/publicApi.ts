@@ -16,7 +16,6 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { loadTimerState, saveTimerState, setInMemoryStateCache } from './stateManager';
 
 /**
  * DTO for Quick Task display information.
@@ -45,21 +44,21 @@ export async function getQuickTaskRemainingForDisplay(): Promise<QuickTaskDispla
     const configJson = await AsyncStorage.getItem('quick_task_settings_v1');
     let maxUses = 1; // Default
     const windowMs = 15 * 60 * 1000; // 15 minutes
-    
+
     if (configJson) {
       const config = JSON.parse(configJson);
       maxUses = config.usesPerWindow ?? 1;
     }
-    
+
     // Load System Brain state (internal format hidden from caller)
     const stateJson = await AsyncStorage.getItem('system_brain_state_v1');
     let usageHistory: number[] = [];
-    
+
     if (stateJson) {
       const state = JSON.parse(stateJson);
       usageHistory = state.quickTaskUsageHistory || [];
     }
-    
+
     // Calculate remaining uses
     const currentTimestamp = Date.now();
     const recentUsages = usageHistory.filter(
@@ -67,7 +66,7 @@ export async function getQuickTaskRemainingForDisplay(): Promise<QuickTaskDispla
     );
     const remaining = Math.max(0, maxUses - recentUsages.length);
     const windowMinutes = Math.round(windowMs / (60 * 1000));
-    
+
     // Return simple DTO (no internal details exposed)
     return {
       remaining,
@@ -106,10 +105,10 @@ export async function setLastIntervenedApp(packageName: string): Promise<void> {
     // Load System Brain state
     const stateJson = await AsyncStorage.getItem('system_brain_state_v1');
     const state = stateJson ? JSON.parse(stateJson) : {};
-    
+
     // Set the flag
     state.lastIntervenedApp = packageName;
-    
+
     // Save updated state IMMEDIATELY (blocking write)
     // System Brain will load this on next event
     await AsyncStorage.setItem('system_brain_state_v1', JSON.stringify(state));
@@ -118,55 +117,17 @@ export async function setLastIntervenedApp(packageName: string): Promise<void> {
   }
 }
 
-/**
- * Transition Quick Task from DECISION to ACTIVE phase.
- * This is the ONLY place where n_quickTask is decremented.
- * 
- * ⚠️ CRITICAL: Phase must be updated BEFORE any side effects.
- * This function must complete fully before calling code performs:
- * - Timer storage in native
- * - UI transitions
- * - Session ending
- * 
- * @param app - App package name
- * @param timestamp - Current timestamp
- */
+/*
+DISABLED: transitionQuickTaskToActive
+Native now owns phase transitions and quota decrements
+
 export async function transitionQuickTaskToActive(
   app: string,
   timestamp: number
 ): Promise<void> {
-  // STEP 1: Load state (authoritative source)
-  const state = await loadTimerState();
-  
-  // STEP 2: Verify we're in DECISION phase (validation)
-  if (state.quickTaskPhaseByApp[app] !== 'DECISION') {
-    console.warn('[QuickTask] Transition to ACTIVE from non-DECISION phase:', {
-      app,
-      currentPhase: state.quickTaskPhaseByApp[app],
-      note: 'This may indicate a race condition or stale state',
-    });
-  }
-  
-  // STEP 3: Set phase = ACTIVE (state mutation - FIRST)
-  state.quickTaskPhaseByApp[app] = 'ACTIVE';
-  
-  // STEP 4: Decrement global quota (record usage - SECOND, after phase set)
-  // Add to persisted usage history
-  state.quickTaskUsageHistory.push(timestamp);
-  
-  // STEP 5: Save state persistently (THIRD, before in-memory cache)
-  await saveTimerState(state);
-  
-  // STEP 6: Update in-memory cache (FOURTH, after persistence)
-  setInMemoryStateCache(state);
-  
-  // STEP 7: Sync quota to Native (PHASE 4.1)
-  // Native needs updated quota for next entry decision
-  const { syncQuotaToNative } = require('./decisionEngine');
-  await syncQuotaToNative(state);
-  
-  // Function returns - calling code may now safely perform side effects
+  // ...
 }
+*/
 
 // ============================================================================
 // PHASE 4.2: JS TIMER/PHASE LOGIC DISABLED
@@ -192,12 +153,12 @@ Native now manages phase transitions
 
 export async function clearQuickTaskPhase(app: string): Promise<void> {
   const state = await loadTimerState();
-  
+
   if (state.quickTaskPhaseByApp[app]) {
     delete state.quickTaskPhaseByApp[app];
     await saveTimerState(state);
     setInMemoryStateCache(state);
-    
+
     console.log('[QuickTask] Phase cleared:', app);
   } else {
     console.log('[QuickTask] No phase to clear for:', app);
@@ -227,7 +188,7 @@ export async function setQuickTaskPhase(
   state.quickTaskPhaseByApp[app] = phase;
   await saveTimerState(state);
   setInMemoryStateCache(state);
-  
+
   console.log('[QuickTask] Phase set:', { app, phase });
 }
 */

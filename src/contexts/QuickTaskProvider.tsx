@@ -10,7 +10,7 @@
  * - User can choose "Quick Task" (bypass) or "Continue" (start intervention)
  */
 
-import React, { createContext, useContext, useReducer, ReactNode } from 'react';
+import React, { createContext, ReactNode, useContext, useReducer } from 'react';
 
 /**
  * Quick Task state shape
@@ -77,25 +77,12 @@ function quickTaskReducer(state: QuickTaskState, action: QuickTaskAction): Quick
       };
 
     case 'ACTIVATE_QUICK_TASK':
-      // User chose Quick Task - hide the screen
-      // Actual Quick Task logic (timer, usage) handled by caller
-      return {
-        visible: false,
-        targetApp: null,
-        remaining: 0,
-        showExpired: false,
-        expiredApp: null,
-      };
-
     case 'DECLINE_QUICK_TASK':
-      // User chose to continue with intervention - hide the screen
-      // Intervention will be started by caller
+      // User intent dispatched to Native, clear local visibility
       return {
+        ...state,
         visible: false,
         targetApp: null,
-        remaining: 0,
-        showExpired: false,
-        expiredApp: null,
       };
 
     case 'SHOW_EXPIRED':
