@@ -21,38 +21,18 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.Promise
+import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.Arguments
+import com.anonymous.breakloopnative.SystemSurfaceManager
 import java.io.ByteArrayOutputStream
 import java.lang.ref.WeakReference
 
 class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
     
     companion object {
-        /**
-         * Static reference to SystemSurfaceActivity for reliable cancellation.
-         * Uses WeakReference to prevent memory leaks if activity is destroyed by Android.
-         */
-        private var systemSurfaceActivityRef: WeakReference<SystemSurfaceActivity>? = null
-        
-        /**
-         * Store a reference to SystemSurfaceActivity when it's created.
-         * Called from SystemSurfaceActivity.onCreate()
-         */
-        fun setSystemSurfaceActivity(activity: SystemSurfaceActivity) {
-            systemSurfaceActivityRef = WeakReference(activity)
-            android.util.Log.i("AppMonitorModule", "📌 SystemSurfaceActivity reference stored")
-        }
-        
-        /**
-         * Clear the reference when SystemSurfaceActivity is destroyed.
-         * Called from SystemSurfaceActivity.onDestroy()
-         */
-        fun clearSystemSurfaceActivity() {
-            systemSurfaceActivityRef = null
-            android.util.Log.i("AppMonitorModule", "🧹 SystemSurfaceActivity reference cleared")
-        }
+        // Activity reference management is now handled exclusively by SystemSurfaceManager
     }
     
     init {
@@ -555,9 +535,6 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             
             prefs.edit().putLong(key, expiresAtLong).apply()
             
-            // Also notify the ForegroundDetectionService
-            ForegroundDetectionService.setQuickTaskTimer(packageName, expiresAtLong)
-            
             val remainingSec = (expiresAtLong - System.currentTimeMillis()) / 1000
             android.util.Log.i("AppMonitorModule", "🚀 Stored Quick Task timer for $packageName (expires in ${remainingSec}s)")
             
@@ -636,9 +613,6 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             
             prefs.edit().remove(key).apply()
             
-            // Also notify the ForegroundDetectionService
-            ForegroundDetectionService.clearQuickTaskTimer(packageName)
-            
             android.util.Log.i("AppMonitorModule", "🧹 Cleared Quick Task timer for $packageName")
             
             // Resolve promise to signal success to JavaScript
@@ -690,20 +664,15 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
      */
     @ReactMethod
     fun finishSystemSurfaceActivity() {
-        try {
-            android.util.Log.i("AppMonitorModule", "🏁 Finishing SystemSurfaceActivity (no home launch)")
-            
-            // Finish SystemSurfaceActivity using stored reference
-            val activity = systemSurfaceActivityRef?.get()
-            if (activity != null && !activity.isFinishing) {
-                android.util.Log.i("AppMonitorModule", "🔄 Finishing SystemSurfaceActivity via static reference")
-                activity.finish()
-                android.util.Log.i("AppMonitorModule", "✅ SystemSurfaceActivity finished, monitored app will surface")
-            } else {
-                android.util.Log.w("AppMonitorModule", "⚠️ SystemSurfaceActivity reference is null or already finishing")
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("AppMonitorModule", "❌ Failed to finish SystemSurfaceActivity", e)
+        android.util.Log.i("AppMonitorModule", "🏁 Finishing SystemSurfaceActivity (JS_Request)")
+        
+        // Delegate to Manager
+        val success = SystemSurfaceManager.finish("JS_Request")
+        
+        if (success) {
+            android.util.Log.i("AppMonitorModule", "✅ SystemSurfaceActivity finish requested")
+        } else {
+            android.util.Log.w("AppMonitorModule", "⚠️ SystemSurfaceActivity finish ignored (not running/already finishing)")
         }
     }
 
@@ -721,16 +690,10 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     @ReactMethod
     fun cancelInterventionActivity() {
         try {
-            android.util.Log.i("AppMonitorModule", "🚫 Cancelling intervention activity")
+            android.util.Log.i("AppMonitorModule", "🚫 Cancelling intervention activity (JS_Cancel)")
             
-            // Finish SystemSurfaceActivity using stored reference
-            val activity = systemSurfaceActivityRef?.get()
-            if (activity != null && !activity.isFinishing) {
-                android.util.Log.i("AppMonitorModule", "🔄 Finishing SystemSurfaceActivity via static reference")
-                activity.finish()
-            } else {
-                android.util.Log.w("AppMonitorModule", "⚠️ SystemSurfaceActivity reference is null or already finishing")
-            }
+            // Delegate to Manager
+            SystemSurfaceManager.finish("JS_Cancel")
             
             // Launch home screen
             val homeIntent = Intent(Intent.ACTION_MAIN)
@@ -1014,6 +977,25 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "Failed to decline Quick Task", e)
             promise.reject("QUICK_TASK_DECLINE_ERROR", e.message, e)
+        }
+    }
+
+    /**
+     * User chose "Start Conscious Process"
+     * PHASE 4.2: Intent from JS -> Native resets state but keeps surface open
+     */
+    @ReactMethod
+    fun quickTaskSwitchToIntervention(app: String, promise: Promise) {
+        try {
+            android.util.Log.i("AppMonitorModule", "[QT][INTENT] SWITCH_TO_INTERVENTION app=$app")
+            
+            // Call skeleton function to reset native state machine
+            ForegroundDetectionService.onQuickTaskSwitchedToIntervention(app, reactApplicationContext)
+            
+            promise.resolve(true)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to switch quick task to intervention", e)
+            promise.reject("QUICK_TASK_SWITCH_ERROR", e.message, e)
         }
     }
 

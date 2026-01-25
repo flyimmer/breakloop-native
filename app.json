@@ -2,7 +2,7 @@
   "expo": {
     "name": "breakloop-native",
     "slug": "breakloop-native",
-    "version": "1.0.0",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "breakloopnative",
@@ -20,7 +20,8 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.breakloopnative"
+      "package": "com.anonymous.breakloopnative",
+      "versionCode": 5
     },
     "web": {
       "output": "static",

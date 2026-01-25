@@ -12,28 +12,28 @@
  * This prevents UI leakage between MainActivity and SystemSurfaceActivity.
  */
 
-import React, { useEffect, useState, useRef } from 'react';
-import { Platform, NativeModules, NativeEventEmitter } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { StatusBar } from 'expo-status-bar';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { InterventionProvider } from '@/src/contexts/InterventionProvider';
 import { RuntimeContextProvider, useRuntimeContext } from '@/src/contexts/RuntimeContextProvider';
 import { SystemSessionProvider, useSystemSession } from '@/src/contexts/SystemSessionProvider';
-import { InterventionProvider } from '@/src/contexts/InterventionProvider';
-import MainAppRoot from './roots/MainAppRoot';
-import SystemSurfaceRoot from './roots/SystemSurfaceRoot';
 import {
-  setMonitoredApps,
-  setQuickTaskConfig,
+  getIsPremiumCustomer,
   getQuickTaskDurationMs,
   getQuickTaskUsesPerWindow,
-  getIsPremiumCustomer,
+  setMonitoredApps,
+  setQuickTaskConfig,
 } from '@/src/os/osConfig';
-import { 
-  handleForegroundAppChange, 
+import {
+  handleForegroundAppChange,
   setSystemSessionDispatcher,
 } from '@/src/os/osTriggerBrain';
 import { appDiscoveryService } from '@/src/services/appDiscovery';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { StatusBar } from 'expo-status-bar';
+import React, { useEffect, useRef, useState } from 'react';
+import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import MainAppRoot from './roots/MainAppRoot';
+import SystemSurfaceRoot from './roots/SystemSurfaceRoot';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -43,9 +43,62 @@ const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorMod
  * This component is wrapped by all providers and determines which root to render.
  * Also connects OS Trigger Brain to SystemSession dispatcher (Rule 2).
  */
-function AppContent() {
+function AppContent({ monitoredAppsLoaded }: { monitoredAppsLoaded: boolean }) {
   const runtime = useRuntimeContext();
   const { dispatchSystemEvent } = useSystemSession();
+  const hasStartedMonitoringRef = useRef(false);
+
+  /**
+   * Android foreground app monitoring service startup
+   * 
+   * CRITICAL: Foreground monitoring must NEVER start in SYSTEM_SURFACE runtime.
+   * Duplicate monitoring causes Quick Task to reopen after POST_QUIT.
+   * 
+   * Rule: Only start monitoring in MAIN_APP context.
+   */
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !AppMonitorModule) {
+      return;
+    }
+
+    // Guard: Never start monitoring in SYSTEM_SURFACE
+    if (runtime === 'SYSTEM_SURFACE') {
+      if (__DEV__) {
+        console.log('[OS] (SYSTEM_SURFACE) Skipping foreground monitoring start - duplicate monitoring prevention');
+      }
+      return;
+    }
+
+    // Wait for monitored apps to load before starting monitoring
+    if (!monitoredAppsLoaded) {
+      if (__DEV__) {
+        console.log('[OS] Waiting for monitored apps to load before starting monitoring...');
+      }
+      return;
+    }
+
+    // Start monitoring service
+    if (hasStartedMonitoringRef.current) {
+      return;
+    }
+    hasStartedMonitoringRef.current = true;
+
+    AppMonitorModule.startMonitoring()
+      .then((result: any) => {
+        if (__DEV__ && result.success) {
+          console.log('[OS] Foreground app monitoring started (MAIN_APP context)');
+        } else if (__DEV__ && !result.success) {
+          // Reset ref so we can try again if user grants permissions later/config changes
+          hasStartedMonitoringRef.current = false;
+          console.warn('[OS] Monitoring service started but permission may be missing:', result.message);
+        }
+      })
+      .catch((error: any) => {
+        // Reset ref on error to allow retry on next effect run
+        hasStartedMonitoringRef.current = false;
+        console.error('[OS] Failed to start monitoring:', error);
+      });
+  }, [monitoredAppsLoaded, runtime]);
 
   /**
    * Connect OS Trigger Brain to SystemSession dispatcher (Rule 2)
@@ -134,7 +187,7 @@ function AppContent() {
  */
 const App = () => {
   const [monitoredAppsLoaded, setMonitoredAppsLoaded] = useState(false);
-  
+
   /**
    * Transient targetApp ref for finish-time navigation
    * This is NOT part of session state - only used when finishing SystemSurfaceActivity
@@ -185,10 +238,10 @@ const App = () => {
           const durationMs = settings.durationMs !== undefined ? settings.durationMs : getQuickTaskDurationMs();
           const usesPerWindow = settings.usesPerWindow !== undefined ? settings.usesPerWindow : getQuickTaskUsesPerWindow();
           const isPremium = settings.isPremium !== undefined ? settings.isPremium : getIsPremiumCustomer();
-          
+
           // Update osConfig with loaded settings
           setQuickTaskConfig(durationMs, usesPerWindow, isPremium);
-          
+
           if (__DEV__) {
             console.log('[App] ✅ Loaded Quick Task settings from storage:', {
               durationMs,
@@ -203,7 +256,7 @@ const App = () => {
           const usesPerWindow = getQuickTaskUsesPerWindow();
           const isPremium = getIsPremiumCustomer();
           setQuickTaskConfig(durationMs, usesPerWindow, isPremium);
-          
+
           if (__DEV__) {
             console.log('[App] ℹ️ No Quick Task settings in storage, using defaults:', {
               durationMs,
@@ -257,53 +310,12 @@ const App = () => {
     }
   }, []);
 
-  /**
-   * Android foreground app monitoring service startup
-   * 
-   * IMPORTANT: Wait for monitored apps to load before starting monitoring
-   * 
-   * NOTE: Event subscription is handled in AppContent component based on RuntimeContext.
-   * This ensures MainActivity never subscribes to system-level foreground change events.
-   */
-  useEffect(() => {
-    if (Platform.OS !== 'android' || !AppMonitorModule) {
-      if (__DEV__) {
-        console.log('[OS] App monitoring not available (not Android or module missing)');
-      }
-      return;
-    }
-
-    // Wait for monitored apps to load before starting monitoring
-    if (!monitoredAppsLoaded) {
-      if (__DEV__) {
-        console.log('[OS] Waiting for monitored apps to load before starting monitoring...');
-      }
-      return;
-    }
-
-    // Start monitoring service
-    AppMonitorModule.startMonitoring()
-      .then((result: any) => {
-        if (__DEV__ && result.success) {
-          console.log('[OS] Foreground app monitoring started');
-        } else if (__DEV__ && !result.success) {
-          console.warn('[OS] Monitoring service started but permission may be missing:', result.message);
-        }
-      })
-      .catch((error: any) => {
-        console.error('[OS] Failed to start monitoring:', error);
-      });
-
-    // Event subscription is now handled in AppContent based on RuntimeContext
-    // No cleanup needed here
-  }, [monitoredAppsLoaded]);
-
   return (
     <SafeAreaProvider>
       <RuntimeContextProvider>
         <SystemSessionProvider transientTargetAppRef={transientTargetAppRef}>
           <InterventionProvider>
-            <AppContent />
+            <AppContent monitoredAppsLoaded={monitoredAppsLoaded} />
             <StatusBar style="auto" />
           </InterventionProvider>
         </SystemSessionProvider>

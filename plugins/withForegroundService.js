@@ -57,6 +57,7 @@ function getSourcePaths(projectRoot) {
     appDiscoveryModule: path.join(javaPath, 'AppDiscoveryModule.kt'),
     appDiscoveryPackage: path.join(javaPath, 'AppDiscoveryPackage.kt'),
     nativeBuildCanary: path.join(javaPath, 'NativeBuildCanary.kt'),
+    systemSurfaceManager: path.join(javaPath, 'SystemSurfaceManager.kt'),
     accessibilityXml: path.join(pluginSrcPath, 'res', 'xml', 'accessibility_service.xml'),
     stringsXml: path.join(pluginSrcPath, 'res', 'values', 'strings.xml'),
     stylesXml: path.join(pluginSrcPath, 'res', 'values', 'styles.xml'),
@@ -79,6 +80,7 @@ function getDestinationPaths(projectRoot) {
     appDiscoveryModule: path.join(javaPath, 'AppDiscoveryModule.kt'),
     appDiscoveryPackage: path.join(javaPath, 'AppDiscoveryPackage.kt'),
     nativeBuildCanary: path.join(javaPath, 'NativeBuildCanary.kt'),
+    systemSurfaceManager: path.join(javaPath, 'SystemSurfaceManager.kt'),
     accessibilityXml: path.join(androidMainPath, 'res', 'xml', 'accessibility_service.xml'),
   };
 }
@@ -167,6 +169,14 @@ function copyKotlinFiles(projectRoot) {
     console.log(`[${PLUGIN_NAME}] Copied NativeBuildCanary.kt`);
   } else {
     console.warn(`[${PLUGIN_NAME}] NativeBuildCanary.kt not found, skipping (optional)`);
+  }
+
+  // Copy SystemSurfaceManager.kt
+  if (fs.existsSync(sourcePaths.systemSurfaceManager)) {
+    fs.copyFileSync(sourcePaths.systemSurfaceManager, destPaths.systemSurfaceManager);
+    console.log(`[${PLUGIN_NAME}] Copied SystemSurfaceManager.kt`);
+  } else {
+    console.warn(`[${PLUGIN_NAME}] SystemSurfaceManager.kt not found, skipping (optional)`);
   }
 }
 

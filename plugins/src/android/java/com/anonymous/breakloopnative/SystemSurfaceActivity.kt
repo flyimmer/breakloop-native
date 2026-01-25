@@ -6,11 +6,16 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import android.view.WindowManager
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
+import com.anonymous.breakloopnative.SystemSurfaceManager
+import com.anonymous.breakloopnative.BuildConfig
 import expo.modules.ReactActivityDelegateWrapper
 
 /**
@@ -120,81 +125,53 @@ class SystemSurfaceActivity : ReactActivity() {
         const val WAKE_REASON_QUICK_TASK_EXPIRED = "QUICK_TASK_EXPIRED_FOREGROUND"
     }
 
+    private var uiMounted = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        val triggeringApp = intent?.getStringExtra(EXTRA_TRIGGERING_APP)
+        val wakeReason = intent?.getStringExtra(EXTRA_WAKE_REASON)
+        Log.e("SS_BOOT", "onCreate wakeReason=$wakeReason app=$triggeringApp intent=$intent flags=${intent?.flags}")
+
         Log.i(TAG, "🎯 SystemSurfaceActivity created")
+        
+        // Register with Manager
+        SystemSurfaceManager.register(this)
         
         // Signal native service that surface is now active (Lifecycle Gate)
         ForegroundDetectionService.onSystemSurfaceOpened()
         
-        // Register this activity with AppMonitorModule for reliable cancellation
-        AppMonitorModule.setSystemSurfaceActivity(this)
-        
         // Log the triggering app if provided
-        intent?.getStringExtra(EXTRA_TRIGGERING_APP)?.let { triggeringApp ->
-            Log.i(TAG, "  └─ Triggered by: $triggeringApp")
+        triggeringApp?.let {
+            Log.i(TAG, "  └─ Triggered by: $it")
         }
         
         super.onCreate(savedInstanceState)
         
+        // UI Mounted - Right after super.onCreate where React root view is initialized
+        uiMounted = true
+        Log.e("SS_BOOT", "UI_MOUNTED reason=$wakeReason app=$triggeringApp")
+
+        // Boot timeout failsafe
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (!uiMounted) {
+                Log.e("SS_BOOT", "BOOT_TIMEOUT_FINISH (no UI mounted) reason=$wakeReason app=$triggeringApp")
+                finish()
+            }
+        }, 1200)
+        
         Log.d(TAG, "SystemSurfaceActivity initialized - React Native will load intervention UI")
     }
 
-    /**
-     * Handle new Intent when activity is already running (singleInstance mode)
-     * 
-     * When SystemSurfaceActivity is already running and AccessibilityService
-     * launches it again (e.g., user opens another monitored app), this method
-     * is called instead of onCreate().
-     * 
-     * We update the Intent and send an event to React Native to trigger
-     * a new intervention for the new app.
-     */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent) // Update Intent for subsequent getIntent() calls
+        setIntent(intent)
         
         val triggeringApp = intent.getStringExtra(EXTRA_TRIGGERING_APP)
         val wakeReason = intent.getStringExtra(EXTRA_WAKE_REASON)
-        
-        Log.i(TAG, "🔄 onNewIntent - Trigger: $triggeringApp, WakeReason: $wakeReason")
-        
-        // Send event to React Native with wake reason
-        // JavaScript will decide what to do based on wake reason
-        val reactContext = AppMonitorService.getReactContext()
-        if (reactContext != null && reactContext.hasActiveReactInstance()) {
-            try {
-                val params = com.facebook.react.bridge.Arguments.createMap().apply {
-                    putString("packageName", triggeringApp ?: "")
-                    putDouble("timestamp", System.currentTimeMillis().toDouble())
-                    putString("wakeReason", wakeReason ?: WAKE_REASON_MONITORED_APP)
-                }
-                
-                reactContext
-                    .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                    .emit("onNewInterventionTrigger", params)
-                
-                Log.i(TAG, "  └─ Sent onNewInterventionTrigger event with wakeReason=$wakeReason")
-            } catch (e: Exception) {
-                Log.e(TAG, "  └─ Failed to send event to React Native", e)
-            }
-        } else {
-            Log.w(TAG, "  └─ React context not available, cannot notify React Native")
-        }
+        Log.e("SS_BOOT", "onNewIntent wakeReason=$wakeReason app=$triggeringApp flags=${intent.flags}")
     }
 
-    /**
-     * Returns the name of the React Native component to render
-     * 
-     * IMPORTANT: This returns "main" - the same root component as MainActivity.
-     * However, the OS Trigger Brain will detect the intervention trigger and
-     * automatically navigate to the intervention flow instead of showing tabs.
-     * 
-     * JS is the single source of truth for navigation logic.
-     */
-    override fun getMainComponentName(): String {
-        Log.d(TAG, "Loading React Native root component: main")
-        return "main"
-    }
+    override fun getMainComponentName(): String = "main"
 
     override fun createReactActivityDelegate(): ReactActivityDelegate {
         return ReactActivityDelegateWrapper(
@@ -208,45 +185,22 @@ class SystemSurfaceActivity : ReactActivity() {
         )
     }
 
-    /**
-     * Handle back button behavior
-     * 
-     * For intervention flow, back button should:
-     * - Allow navigation within intervention screens (breathing -> root-cause, etc.)
-     * - Eventually exit intervention and return to previously opened app
-     * - NOT navigate to MainActivity or show main app UI
-     * 
-     * JS handles intervention screen navigation via intervention state machine.
-     * Native only handles the final exit when JS finishes the intervention.
-     */
-    override fun invokeDefaultOnBackPressed() {
-        Log.d(TAG, "Back button pressed in SystemSurfaceActivity")
-        
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.R) {
-            // On older Android versions, move task to background
-            if (!moveTaskToBack(false)) {
-                super.invokeDefaultOnBackPressed()
-            }
-            return
-        }
-        
-        // Use default back button implementation on Android S+
-        super.invokeDefaultOnBackPressed()
-    }
-
-    override fun finish() {
-        Log.i("SystemSurfaceInvariant", "FINISH native — overlay released")
-        super.finish()
-    }
-
     override fun onDestroy() {
         Log.i(TAG, "❌ SystemSurfaceActivity destroyed")
         
         // Signal native service that surface is now destroyed (Lifecycle Gate)
         ForegroundDetectionService.onSystemSurfaceDestroyed()
         
-        // Clear the reference in AppMonitorModule
-        AppMonitorModule.clearSystemSurfaceActivity()
+        // Unregister from Manager
+        SystemSurfaceManager.unregister(this)
+        
+        // Paranoid Cleanup (Guardrail C)
+        try {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            Log.i(TAG, "[SystemSurfaceActivity] onDestroy cleanup complete")
+        } catch (e: Exception) {
+            Log.w(TAG, "Cleanup warning: ${e.message}")
+        }
         
         super.onDestroy()
     }

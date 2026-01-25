@@ -1,274 +1,201 @@
-/**
- * PostQuickTaskChoiceScreen
- * 
- * Shown when Quick Task expires in foreground.
- * Replaces immediate intervention with explicit user choice.
- * 
- * Design Authority:
- * - design/ui/tokens.md (colors, typography, spacing, radius, elevation)
- * 
- * Architecture:
- * - NEVER auto-restarts Quick Task
- * - Suppresses OS Trigger Brain decisions until user chooses
- * - Pure UI + event dispatch (no business logic)
- */
-
-import React, { useState, useEffect } from 'react';
-import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
-import { getQuickTaskRemainingForDisplay, setQuickTaskPhase, clearQuickTaskPhase } from '@/src/systemBrain/publicApi';
-import { clearExpiredQuickTaskInMemory, clearBlockingState, setSystemSurfaceActive } from '@/src/systemBrain/stateManager';
-import { clearQuickTaskSuppression } from '@/src/systemBrain/decisionEngine';
+import { CheckCircle } from 'lucide-react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { BackHandler, NativeModules, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+// Design Tokens (Inline for safety, but matches project theme)
+const COLORS = {
+  background: '#0A0A0B',
+  surfaceSecondary: '#27272A',
+  primary: '#8B7AE8',
+  textPrimary: '#FAFAFA',
+  textSecondary: '#A1A1AA',
+  textMuted: '#71717A',
+};
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
 /**
  * PostQuickTaskChoiceScreen
  * 
- * Gravity: Pause Moment (Full-screen Interruption)
- * - Full-screen modal-style UI
- * - Centered content card
- * - Dark mode primary (low stimulation)
- * - User must explicitly choose next action
- * - No auto-decisions, no timers
+ * Refactored to follow "Ambient Hearth" design:
+ * - Closure, not Choice.
+ * - Primary action is to Quit/Close.
+ * - Secondary action is to Continue (with friction).
  */
 export default function PostQuickTaskChoiceScreen() {
-  const { session, dispatchSystemEvent, safeEndSession } = useSystemSession();
+  const { session, safeEndSession } = useSystemSession();
   const [isProcessing, setIsProcessing] = useState(false);
-  const [quickTaskRemaining, setQuickTaskRemaining] = useState<number>(0);
-  
-  // Get app from session
-  const targetApp = session?.kind === 'POST_QUICK_TASK_CHOICE' ? session.app : null;
+  const insets = useSafeAreaInsets();
 
-  // Load Quick Task remaining uses for decision logic
-  useEffect(() => {
-    async function loadRemaining() {
-      const info = await getQuickTaskRemainingForDisplay();
-      setQuickTaskRemaining(info.remaining);
-    }
-    loadRemaining();
-  }, []);
+  // Get app from session
+  const appName = session?.kind === 'POST_QUICK_TASK_CHOICE' ? session.app : 'Unknown';
+
+  // Format app name (e.g., "com.instagram.android" -> "Instagram")
+  const displayAppName = useMemo(() => {
+    if (!appName || appName === 'Unknown') return 'App';
+    const parts = appName.split('.');
+    const name = parts.length > 2 ? parts[parts.length - 2] : appName; // Handle com.x.y format
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  }, [appName]);
 
   // Disable Android hardware back button during choice
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
       // Treat back button as "Quit this app"
-      handleQuitApp();
+      handleQuit();
       return true;
     });
 
     return () => backHandler.remove();
-  }, []);
+  }, [appName]);
 
-  /**
-   * Handle "Quit this app" action
-   * 
-   * End session and launch home screen.
-   * No intervention, user explicitly chose to quit.
-   */
-  const handleQuitApp = async () => {
-    if (isProcessing || !targetApp) return;
-    
+  const handleQuit = async () => {
+    if (isProcessing || appName === 'Unknown') return;
     setIsProcessing(true);
-    
-    // PHASE 4.2: Send quit intent to Native
-    if (AppMonitorModule && targetApp) {
+
+    if (AppMonitorModule) {
       try {
-        // Native will:
-        // 1. Remove entry from quickTaskMap
-        // 2. Clear persisted state
-        // 3. Emit FINISH_SYSTEM_SURFACE command
-        await AppMonitorModule.quickTaskPostQuit(targetApp);
-        console.log(`[QT][INTENT] POST_QUIT app=${targetApp}`);
+        await AppMonitorModule.quickTaskPostQuit(appName);
+        console.log(`[QT][INTENT] POST_QUIT app=${appName}`);
       } catch (error) {
-        // Silent failure
+        console.error('[QT] Failed to post quit:', error);
       }
     }
-    
-    // Native handles the rest - JS just ends session
+
     safeEndSession(true);
   };
 
-  /**
-   * Handle "Continue using this app" action
-   * 
-   * Check n_quickTask and decide:
-   * - If quota > 0: Show Quick Task dialog again
-   * - If quota = 0: Start Intervention Flow immediately
-   */
-  const handleContinueUsingApp = async () => {
-    if (isProcessing || !session || !targetApp) return;
-    
+  const handleContinue = async () => {
+    if (isProcessing || appName === 'Unknown') return;
     setIsProcessing(true);
-    
-    // PHASE 4.2: Send continue intent to Native
-    if (AppMonitorModule && targetApp) {
+
+    if (AppMonitorModule) {
       try {
-        // Native will:
-        // 1. Remove entry from quickTaskMap
-        // 2. Clear persisted state
-        // 3. Check quota
-        // 4. If quota > 0: Create new DECISION entry, emit SHOW_QUICK_TASK_DIALOG
-        // 5. If quota = 0: Emit NO_QUICK_TASK_AVAILABLE (starts Intervention)
-        await AppMonitorModule.quickTaskPostContinue(targetApp);
-        console.log(`[QT][INTENT] POST_CONTINUE app=${targetApp}`);
+        await AppMonitorModule.quickTaskPostContinue(appName);
+        console.log(`[QT][INTENT] POST_CONTINUE app=${appName}`);
       } catch (error) {
-        // Silent failure
+        console.error('[QT] Failed to post continue:', error);
       }
     }
-    
-    // Native handles the rest - JS waits for commands
+
     setIsProcessing(false);
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
-      {/* Content - vertically centered */}
-      <View style={styles.contentContainer}>
-        {/* Centered card */}
-        <View style={styles.card}>
-          {/* Title */}
-          <Text style={styles.titleText}>Your Quick Task is finished</Text>
-          
-          {/* Description */}
-          <Text style={styles.descriptionText}>What would you like to do next?</Text>
-          
-          {/* Actions */}
-          <View style={styles.actionsSection}>
-            {/* PRIMARY ACTION: Continue using this app */}
-            <Pressable
-              onPress={handleContinueUsingApp}
-              disabled={isProcessing}
-              style={({ pressed }) => [
-                styles.primaryButton,
-                pressed && styles.primaryButtonPressed,
-                isProcessing && styles.buttonDisabled,
-              ]}
-            >
-              <Text style={styles.primaryButtonText}>Continue using this app</Text>
-            </Pressable>
+    <View style={[styles.container, { paddingBottom: insets.bottom + 20 }]}>
 
-            {/* SECONDARY ACTION: Quit this app */}
-            <Pressable
-              onPress={handleQuitApp}
-              disabled={isProcessing}
-              style={({ pressed }) => [
-                styles.secondaryButton,
-                pressed && styles.secondaryButtonPressed,
-                isProcessing && styles.buttonDisabled,
-              ]}
-            >
-              <Text style={styles.secondaryButtonText}>Quit this app</Text>
-            </Pressable>
-          </View>
+      {/* 1. Hero Section: Visual Confirmation of Completion */}
+      <View style={styles.contentContainer}>
+        <View style={styles.iconContainer}>
+          <CheckCircle size={48} color={COLORS.primary} strokeWidth={1.5} />
         </View>
+
+        <Text style={styles.title}>Quick Task Complete</Text>
+        <Text style={styles.subtitle}>
+          You've checked what you needed.{'\n'}Ready to return to life?
+        </Text>
       </View>
-    </SafeAreaView>
+
+      {/* 2. Action Section: Healthy Choice is Primary */}
+      <View style={styles.actionContainer}>
+
+        {/* Primary: QUIT (The "Good" Choice) */}
+        <TouchableOpacity
+          style={[styles.primaryButton, isProcessing && styles.buttonDisabled]}
+          onPress={handleQuit}
+          activeOpacity={0.8}
+          disabled={isProcessing}
+        >
+          <Text style={styles.primaryButtonText}>Close {displayAppName}</Text>
+        </TouchableOpacity>
+
+        {/* Secondary: CONTINUE (The "Friction" Choice) */}
+        <TouchableOpacity
+          style={[styles.secondaryButton, isProcessing && styles.buttonDisabled]}
+          onPress={handleContinue}
+          activeOpacity={0.6}
+          disabled={isProcessing}
+        >
+          <Text style={styles.secondaryButtonText}>I need more time (-1 quota)</Text>
+        </TouchableOpacity>
+
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0B', // tokens: background (dark mode)
+    backgroundColor: COLORS.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
   },
   contentContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 24, // space_24
-    paddingBottom: 40, // space_40
-  },
-  card: {
-    backgroundColor: '#18181B', // tokens: surface (dark mode)
-    borderRadius: 24, // tokens: radius_24 (modals, sheets)
-    padding: 32, // space_32
-    // elevation_3 - prominent modal
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  titleText: {
-    // tokens: h2
-    fontSize: 24,
-    lineHeight: 32,
-    fontWeight: '600',
-    letterSpacing: -0.3,
-    color: '#FAFAFA', // textPrimary
-    textAlign: 'center',
-    marginBottom: 12, // space_12
-  },
-  descriptionText: {
-    // tokens: bodySecondary
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '400',
-    letterSpacing: 0,
-    color: '#A1A1AA', // textSecondary
-    textAlign: 'center',
-    marginBottom: 32, // space_32
-  },
-  actionsSection: {
-    gap: 12, // space_12
-  },
-  // PRIMARY BUTTON: Continue using this app
-  // - Primary accent color
-  // - Placed ABOVE secondary action
-  // - Clear affordance as the main choice
-  // - elevation_2 for prominence
-  primaryButton: {
-    height: 44, // buttonHeight_primary
-    paddingHorizontal: 24, // space_24
-    borderRadius: 12, // radius_12
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#8B7AE8', // tokens: primary
-    // elevation_2
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.4,
-    shadowRadius: 4,
-    elevation: 2,
+    marginBottom: 48,
   },
-  primaryButtonPressed: {
-    opacity: 0.8, // opacity_hover
+  iconContainer: {
+    marginBottom: 24,
+    padding: 16,
+    backgroundColor: COLORS.surfaceSecondary,
+    borderRadius: 999,
+    // Subtle glow
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 0,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    textAlign: 'center',
+    marginBottom: 16,
+    letterSpacing: -0.3,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  actionContainer: {
+    width: '100%',
+    gap: 12,
+  },
+  primaryButton: {
+    backgroundColor: COLORS.primary,
+    height: 52,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
   },
   primaryButtonText: {
-    // tokens: button
+    color: '#FFF',
     fontSize: 16,
-    lineHeight: 24,
-    fontWeight: '500',
+    fontWeight: '600',
     letterSpacing: 0.1,
-    color: '#FAFAFA', // textPrimary
   },
-  // SECONDARY BUTTON: Quit this app
-  // - Ghost/transparent style
-  // - Subtle border
-  // - Lower visual hierarchy
   secondaryButton: {
-    height: 36, // buttonHeight_secondary
-    paddingHorizontal: 24, // space_24
-    borderRadius: 12, // radius_12
-    alignItems: 'center',
+    height: 44,
     justifyContent: 'center',
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: '#3F3F46', // border
-  },
-  secondaryButtonPressed: {
-    opacity: 0.6, // opacity_muted
+    alignItems: 'center',
   },
   secondaryButtonText: {
-    // tokens: button
-    fontSize: 16,
-    lineHeight: 24,
-    fontWeight: '500',
-    letterSpacing: 0.1,
-    color: '#A1A1AA', // textSecondary
+    color: COLORS.textMuted,
+    fontSize: 14,
+    fontWeight: '400',
   },
   buttonDisabled: {
-    opacity: 0.4, // opacity_disabled
-  },
+    opacity: 0.5,
+  }
 });

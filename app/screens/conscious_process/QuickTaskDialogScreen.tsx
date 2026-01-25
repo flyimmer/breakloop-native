@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
+import { getQuickTaskDurationMs } from '@/src/os/osConfig';
+import { getQuickTaskRemainingForDisplay } from '@/src/systemBrain/publicApi';
+import { setSystemSurfaceActive } from '@/src/systemBrain/stateManager';
+import React, { useEffect, useState } from 'react';
 import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
-import { getQuickTaskRemainingForDisplay, setLastIntervenedApp, transitionQuickTaskToActive, clearQuickTaskPhase } from '@/src/systemBrain/publicApi';
-import { setSystemSurfaceActive } from '@/src/systemBrain/stateManager';
-import { getQuickTaskDurationMs } from '@/src/os/osConfig';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -38,7 +38,7 @@ export default function QuickTaskDialogScreen() {
   const { session, dispatchSystemEvent, safeEndSession, setTransientTargetApp } = useSystemSession();
   const [isProcessing, setIsProcessing] = useState(false);
   const [displayInfo, setDisplayInfo] = useState<{ remaining: number; windowMinutes: number } | null>(null);
-  
+
   // Get app from session
   const targetApp = session?.kind === 'QUICK_TASK' ? session.app : null;
 
@@ -71,9 +71,9 @@ export default function QuickTaskDialogScreen() {
     console.log('[QuickTaskDialog] targetApp:', targetApp);
     console.log('[QuickTaskDialog] displayInfo:', displayInfo);
     console.log('[QuickTaskDialog] ========================================');
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  
+
   // Debug: Log whenever session changes
   useEffect(() => {
     console.log('[QuickTaskDialog] session changed:', JSON.stringify(session));
@@ -84,21 +84,29 @@ export default function QuickTaskDialogScreen() {
     if (isProcessing || !session || session.kind !== 'QUICK_TASK') {
       return;
     }
-    
+
     setIsProcessing(true);
-    
+
     try {
-      // Clear phase (user chose not to use Quick Task)
-      await clearQuickTaskPhase(session.app);
-      
+      // PHASE 4.2: Notify Native that we are switching to Intervention
+      // This resets native Quick Task state machine but keeps SystemSurface open
+      if (AppMonitorModule) {
+        try {
+          await AppMonitorModule.quickTaskSwitchToIntervention(session.app);
+          console.log(`[QT][INTENT] SWITCH_TO_INTERVENTION app=${session.app}`);
+        } catch (error) {
+          // Fallback - continue even if native call fails
+        }
+      }
+
       // Atomic session replacement - no transient null state
       // This prevents race condition where END_SESSION → session === null → activity finishes
-      dispatchSystemEvent({ 
-        type: 'REPLACE_SESSION', 
-        newKind: 'INTERVENTION', 
-        app: session.app 
+      dispatchSystemEvent({
+        type: 'REPLACE_SESSION',
+        newKind: 'INTERVENTION',
+        app: session.app
       });
-      
+
       // Reset isProcessing after a delay
       setTimeout(() => {
         setIsProcessing(false);
@@ -112,13 +120,13 @@ export default function QuickTaskDialogScreen() {
     if (isProcessing || !session || session.kind !== 'QUICK_TASK') {
       return;
     }
-    
+
     setIsProcessing(true);
-    
+
     try {
       // PHASE 4.2: Send intent to Native, Native handles everything
       const durationMs = getQuickTaskDurationMs();
-      
+
       if (AppMonitorModule) {
         try {
           // Native will:
@@ -135,16 +143,16 @@ export default function QuickTaskDialogScreen() {
           return;
         }
       }
-      
+
       // PHASE 4.2: ACTIVE phase is silent - close SystemSurface immediately
       // User continues using the app, Native enforces timer
-      
+
       // Set transient targetApp for finish-time navigation
       setTransientTargetApp(session.app);
-      
+
       // End session and return to app (ACTIVE phase has no UI)
       safeEndSession(false);
-      
+
       // Reset isProcessing
       setIsProcessing(false);
     } catch (error) {
@@ -156,9 +164,9 @@ export default function QuickTaskDialogScreen() {
     if (isProcessing) {
       return;
     }
-    
+
     setIsProcessing(true);
-    
+
     try {
       // PHASE 4.2: Send decline intent to Native
       if (AppMonitorModule && session?.app) {
@@ -173,13 +181,13 @@ export default function QuickTaskDialogScreen() {
           // Silent failure
         }
       }
-      
+
       // Notify native that SystemSurface is finishing
       setSystemSurfaceActive(false);
-      
+
       // End session and launch home (idempotent, immediate)
       safeEndSession(true);
-      
+
       // Reset isProcessing after a delay in case dismissal doesn't happen
       setTimeout(() => {
         setIsProcessing(false);
@@ -216,7 +224,7 @@ export default function QuickTaskDialogScreen() {
         {/* Usage limit info */}
         <View style={styles.infoSection}>
           <Text style={styles.infoText}>
-            {displayInfo 
+            {displayInfo
               ? `${displayInfo.remaining} left in this ${displayInfo.windowMinutes}-minute window.`
               : 'Loading...'}
           </Text>

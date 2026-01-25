@@ -22,6 +22,7 @@ package com.anonymous.breakloopnative
  * This is for development only.
  */
 object NativeBuildCanary {
-    // ⚠️ CHANGE THIS STRING ON EVERY KOTLIN EDIT ⚠️
-    const val BUILD_ID = "QT_FINAL_008"
+    // Increment this number to trigger a fresh native build
+    const val BUILD_VERSION = 23
+    // Added debug logs and boot timeout failsafe for SystemSurfaceActivity
 }

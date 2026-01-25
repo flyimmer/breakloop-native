@@ -24,6 +24,7 @@ const KOTLIN_FILES = [
   'AppDiscoveryModule.kt',
   'AppDiscoveryPackage.kt',
   'NativeBuildCanary.kt',
+  'SystemSurfaceManager.kt',
 ];
 
 function syncKotlinFiles() {
