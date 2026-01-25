@@ -1,3 +1,21 @@
+# ⚠️ ARCHITECTURAL WARNING (Updated 2026-01)
+
+This document contains historical context.
+
+Some sections reflect **pre–Native-authority architecture** and must NOT be followed verbatim.
+
+The authoritative references are now:
+- `spec/BreakLoop Architecture v3.docx`
+- `spec/break_loop_architecture_invariants_v_3.md`
+- `spec/Intervention_OS_Contract_V2.docx`
+- `spec/break_loop_os_runtime_contract.md`
+
+When in doubt:
+👉 Native decides.
+👉 JS renders and sends explicit intent only.
+
+---
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -182,11 +200,11 @@ This project includes comprehensive design documentation that serves as the sour
 
 ## High-Level Architecture
 
-### Architecture Invariants (AUTHORITATIVE - v2)
+### Architecture Invariants (AUTHORITATIVE - v3)
 
 **Status:** These invariants are non-negotiable. Any change that violates these invariants is considered a bug.
 
-**Source:** `spec/BreakLoop Architecture Invariants v2.docx`, `spec/BreakLoop Architecture v2.docx`
+**Source:** `spec/break_loop_architecture_invariants_v_3.md`, `spec/BreakLoop Architecture v3.docx`, `spec/break_loop_os_runtime_contract.md`
 
 #### 1. Core Authority Split (Native vs. JS)
 
@@ -272,6 +290,23 @@ On every monitored app foreground entry, Native **must emit exactly one** of:
 - Decides when to launch SystemSurface
 - Loads/saves state on each event invocation
 - Does NOT run continuously or maintain in-memory state
+
+## ⚠️ System Brain Clarification (Updated in V3)
+
+The System Brain (JS):
+
+- ❌ does NOT decide Quick Task vs Intervention
+- ❌ does NOT evaluate timers
+- ❌ does NOT enforce suppression windows
+- ❌ does NOT manage per-app state
+
+The System Brain:
+- ✅ renders UI based on Native wake reason
+- ✅ sends explicit user intent back to Native
+- ✅ may display informational values only
+
+All behavioral decisions are owned by Native.
+👉 This prevents future AI agents from "helpfully" moving logic back to JS.
 
 **3. System Session** - Defines whether SystemSurfaceActivity has a legitimate reason to exist:
 ```typescript
@@ -407,7 +442,7 @@ This order is **AUTHORITATIVE** and must never change:
 
 #### Quick Task Rules (Detailed Specification)
 
-**Source:** `spec/Intervention_OS_Contract_V1.docx` (Updated 18.01.2026)
+**Source:** `spec/Intervention_OS_Contract_V2.docx` (V2 - Updated 2026-01)
 
 **Definitions:**
 - `t_quickTask`: Duration of the emergency allowance (per-app timer)
@@ -495,7 +530,7 @@ This order is **AUTHORITATIVE** and must never change:
 - When `t_intention` is over and user is still using the monitored app, intervention should start again
 - Every time intervention flow starts or restarts, the `t_intention` for this app shall be deleted
 
-See `docs/OS_Trigger_Contract V1.md` for complete trigger rules and timer logic.
+See `spec/Intervention_OS_Contract_V2.docx` and `spec/break_loop_os_runtime_contract.md` for complete trigger rules and timer logic.
 
 ### React Native (Expo) Application
 
@@ -545,6 +580,11 @@ BreakLoop uses THREE separate JavaScript runtimes:
 - **Community Stack** (`app/navigation/CommunityStackNavigator.tsx`): Stack navigator for community sub-screens
 - **Intervention Screens**: Modal-style screens for the intervention flow (breathing → root-cause → alternatives → action → reflection)
 
+> ⚠️ DEPRECATED (Historical Only)
+> The following "Key Principles" describe pre-V3 architecture where System Brain made decisions.
+> In V3, Native owns all decision logic. System Brain only renders UI based on Native's wake reason.
+> This logic must NOT be reintroduced.
+
 **Key Principles:**
 - ✅ THREE separate JavaScript runtimes (System Brain, SystemSurface, MainApp)
 - ✅ System Brain is event-driven, headless, semantic logic
@@ -561,6 +601,28 @@ BreakLoop uses THREE separate JavaScript runtimes:
 
 ### Framework-Agnostic Core Logic
 The intervention state machine has been extracted into `src/core/intervention/` as pure JavaScript functions with no React dependencies. This allows the same business logic to be reused in React Native or other frameworks. See [Intervention State Machine](#intervention-state-machine) section below.
+
+## Current Runtime Model (Authoritative, V3)
+
+BreakLoop runs with three clearly separated runtimes:
+
+1. **MAIN_APP** (React Native)
+   - Loads configuration
+   - Starts foreground monitoring
+   - Persists settings
+
+2. **SYSTEM_SURFACE** (React Native)
+   - Renders Quick Task, Post-Choice, Intervention UI
+   - Never starts monitoring
+   - Never owns timers or decisions
+
+3. **Native Services**
+   - Accessibility-based foreground detection
+   - Per-app state machines
+   - Timers, counters, suppression windows
+   - SystemSurface lifecycle authority
+
+If a behavior feels unstable, the bug is almost always a runtime coordination issue, not a rule problem.
 
 ### Code Organization
 
@@ -722,6 +784,11 @@ System Brain JS is an **event-driven, headless JavaScript runtime** that runs as
 - Saves state to persistent storage after processing
 - Does NOT run continuously or maintain in-memory state
 
+> ⚠️ DEPRECATED (Historical Only)
+> The following "Responsibilities" section describes pre-V3 architecture where System Brain made decisions.
+> In V3, Native owns all decision logic. System Brain only renders UI based on Native's wake reason.
+> This logic must NOT be reintroduced.
+
 **Responsibilities (Phase 2 - Explicit Pre-Decision):**
 - Receive MECHANICAL events from native ("TIMER_EXPIRED", "FOREGROUND_CHANGED")
 - Classify semantic meaning (Quick Task vs Intention)
@@ -748,6 +815,11 @@ System Brain JS is an **event-driven, headless JavaScript runtime** that runs as
 ### OS Trigger Brain
 
 **Location:** `src/os/osTriggerBrain.ts`
+
+> ⚠️ DEPRECATED (Historical Only)
+> The following section describes pre-V3 architecture where OS Trigger Brain was invoked by System Brain JS.
+> In V3, Native owns all trigger evaluation logic. JS does not evaluate priority chains or timers.
+> This logic must NOT be reintroduced.
 
 The OS Trigger Brain logic is now invoked by System Brain JS (not directly by SystemSurface).
 
@@ -1650,6 +1722,11 @@ The codebase underwent incremental refactoring to improve maintainability while 
 
 ## Context Ownership Rules
 
+> ⚠️ DEPRECATED (Historical Only)
+> The following "Context Ownership Rules" describe pre-V3 architecture where System Brain JS made decisions.
+> In V3, Native owns all decision logic. System Brain only renders UI based on Native's wake reason.
+> This logic must NOT be reintroduced.
+
 **System Brain JS (Event-Driven Headless) MUST:**
 - Receive mechanical events from native ("TIMER_EXPIRED", "FOREGROUND_CHANGED")
 - Classify semantic meaning (Quick Task vs Intention)
@@ -1717,6 +1794,11 @@ The codebase underwent incremental refactoring to improve maintainability while 
 ## React Native Implementation
 
 **Current Status:** React Native app is actively developed using the shared core logic.
+
+> ⚠️ DEPRECATED (Historical Only)
+> The following "Three-Runtime Architecture" describes pre-V3 architecture where System Brain made decisions.
+> In V3, Native owns all decision logic. System Brain only renders UI based on Native's wake reason.
+> This logic must NOT be reintroduced.
 
 **Three-Runtime Architecture:**
 - **System Brain JS** (Headless Task → `src/systemBrain/`)
@@ -1830,16 +1912,31 @@ Recent commit themes:
 - `design/principles/` - Design principles and interaction rules
 
 **Key Documentation Hierarchy:**
-1. **SYSTEM_SURFACE_ARCHITECTURE.md** - Start here for overall architecture
-2. **SystemSurface Lifecycle Contract (Authoritative).md** - **CRITICAL** - Read lifecycle invariants and state transition rules
-3. **SYSTEM_BRAIN_ARCHITECTURE.md** - Understand System Brain JS event-driven runtime
-4. **PHASE2_ARCHITECTURE_UPDATE.md** - Phase 2 explicit wake reasons summary (NEW)
-6. **OS_Trigger_Contract V1.md** - Learn trigger rules and timer logic
-7. **KOTLIN_FILE_SYNC.md** - Follow Kotlin editing workflow
-8. **CLAUDE.md** - Reference for implementation details
-9. spec\Intervention_OS_Contract_V1.docx
-10. spec\Relationship Between System Brain And Os Trigger Brain.docx
-11. spec\Session And Timer Relationship (clarified).docx
-12. spec\Architecture Invariants.docx
+1. **V3_ARCHITECTURE_UPDATE_SUMMARY.md** - **START HERE** for current V3 Native-Authority summary
+2. **break_loop_architecture_invariants_v_3.md** - **V3 AUTHORITATIVE** - Architecture invariants
+3. **break_loop_os_runtime_contract.md** - **V3 AUTHORITATIVE** - OS runtime contract
+4. **SYSTEM_SURFACE_ARCHITECTURE.md** - V3 UI Architecture (updated for Native Authority)
+5. **SystemSurface Lifecycle Contract (Authoritative).md** - **CRITICAL** - Lifecycle invariants
+6. **spec/BreakLoop Architecture v3.docx** - **V3 AUTHORITATIVE**
+7. **spec/Intervention_OS_Contract_V2.docx** - **V3 AUTHORITATIVE**
+8. **CLAUDE.md** - Reference for current implementation details
+9. **SYSTEM_BRAIN_ARCHITECTURE.md** - (Historical/Deprecated) - V2 JS-first context
+10. **OS_Trigger_Contract V1.md** - (Historical/Deprecated) - V1 rules
+11. **PHASE2_ARCHITECTURE_UPDATE.md** - (Historical/Deprecated) - Obsolete JS-pre-decide model
+12. **KOTLIN_FILE_SYNC.md** - Kotlin editing workflow (Current)
+13. **Old Specifications (DO NOT FOLLOW)**: `spec/Old/BreakLoop Architecture v2.docx`, `spec/Old/BreakLoop Architecture Invariants v2.docx`, `spec/Old/Intervention_OS_Contract_V1.docx`
 
+
+## 🚫 Do NOT Do These Things
+
+- Do NOT move timer logic into JS
+- Do NOT start AppMonitorModule in SYSTEM_SURFACE
+- Do NOT infer state from UI lifecycle
+- Do NOT let JS close SystemSurface as the primary mechanism
+- Do NOT merge Intervention and Quick Task logic
+
+If unsure:
+👉 Check OS Runtime Contract → Runtime Event Timeline
+
+This single section will save you from 90% of future regressions.
 

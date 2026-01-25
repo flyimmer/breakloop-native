@@ -1,4 +1,12 @@
-# Documentation Update Summary
+# Documentation Update Summary (HISTORICAL)
+
+> ⚠️ **DEPRECATED / HISTORICAL ONLY**
+>
+> This document summarizes an update from January 19, 2026, which was based on V1/V2 specifications.
+> It has been superseded by the **V3 Architecture** update.
+>
+> **Reference:** `docs/V3_ARCHITECTURE_UPDATE_SUMMARY.md`
+
 
 **Date:** January 19, 2026  
 **Status:** Complete

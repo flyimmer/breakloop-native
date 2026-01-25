@@ -233,11 +233,15 @@ If you see ANY of these, STOP and FIX:
 
 ## References
 
-- **Full Documentation:** `CLAUDE.md` (Architecture Invariants section)
-- **System Brain:** `docs/SYSTEM_BRAIN_ARCHITECTURE.md`
-- **System Surface:** `docs/SYSTEM_SURFACE_ARCHITECTURE.md`
-- **Specifications:**
-  - `spec/Architecture Invariants.docx`
-  - `spec/Relationship Between System Brain And Os Trigger Brain.docx`
-  - `spec/Session And Timer Relationship (clarified).docx`
-  - `spec/Intervention_OS_Contract_V1.docx`
+- **Authoritative Specifications (V3):**
+  - `spec/BreakLoop Architecture v3.docx` - **V3 AUTHORITATIVE**
+  - `spec/break_loop_architecture_invariants_v_3.md` - **V3 AUTHORITATIVE**
+  - `spec/break_loop_os_runtime_contract.md` - **V3 AUTHORITATIVE**
+  - `spec/Intervention_OS_Contract_V2.docx` - **V3 AUTHORITATIVE**
+- **Deprecated (Historical Only):**
+  - `spec/Old/BreakLoop Architecture v2.docx`
+  - `spec/Old/BreakLoop Architecture Invariants v2.docx`
+  - `spec/Old/Intervention_OS_Contract_V1.docx`
+  - `spec/Old/Architecture Invariants.docx`
+  - `spec/Old/Relationship Between System Brain And Os Trigger Brain.docx`
+  - `spec/Old/Session and Timer relationship.docx`

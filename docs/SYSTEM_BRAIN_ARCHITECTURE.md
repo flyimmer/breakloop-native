@@ -1,6 +1,22 @@
-# System Brain JS - Event-Driven Semantic Runtime
+# System Brain JS - Event-Driven Semantic Runtime (DEPRECATED)
+
+> ⚠️ **DEPRECATED / HISTORICAL ONLY**
+>
+> This document describes V2 architecture where System Brain JS was the "Semantic Authority".
+> **V3 Architecture** superseded this by moving **Native** to be the Mechanical Authority AND Decision Maker.
+>
+> **In V3:**
+> - System Brain JS **DOES NOT** decide Quick Task vs Intervention.
+> - System Brain JS **DOES NOT** manage timers.
+> - System Brain JS **DOES NOT** enforce suppression.
+>
+> **Reference:** `docs/V3_ARCHITECTURE_UPDATE_SUMMARY.md`
+
+**Status:** ❌ HISTORICAL (Superseded by V3)
 
 ## Overview
+
+> **Note:** The "Semantic Authority" role described below is obsolete. Native is the Authority.
 
 BreakLoop uses THREE distinct JavaScript runtimes, each with specific responsibilities:
 

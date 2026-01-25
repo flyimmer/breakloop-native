@@ -1,4 +1,19 @@
-# Native–JavaScript Boundary
+# Native–JavaScript Boundary (DEPRECATED)
+
+> ⚠️ **DEPRECATED / HISTORICAL ONLY**
+>
+> This document describes the "Phase 2" boundary where JavaScript was the semantic authority.
+> **V3 Architecture** superseded this by moving all mechanical and decision authority to the **Native Layer**.
+>
+> **In V3:**
+> - Native decides WHEN and IF to show UI.
+> - JavaScript only renders the UI state requested by Native.
+> - Native owns the State Machine and Timers.
+>
+> **Authoritative References:** 
+> - `spec/break_loop_architecture_invariants_v_3.md`
+> - `spec/break_loop_os_runtime_contract.md`
+
 
 This document defines the architectural boundary between native (Kotlin) code and JavaScript code in BreakLoop. It serves as a verification guide to ensure proper separation of concerns.
 

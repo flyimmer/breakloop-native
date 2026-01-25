@@ -1,16 +1,16 @@
 # BreakLoop OS-Level UI Architecture
 
-**Version:** 3.0 (V2 Native Authority)
+**Version:** 3.0 (V3 Native Authority)
 **Date:** January 23, 2026
 **Status:** AUTHORITATIVE
 
 ---
 
-## Architectural Invariants (AUTHORITATIVE - v2)
+## Architectural Invariants (AUTHORITATIVE - v3)
 
 **Status:** These invariants are non-negotiable. Any change that violates these invariants is considered a bug.
 
-**Source:** `spec/BreakLoop Architecture Invariants v2.docx`, `spec/BreakLoop Architecture v2.docx`
+**Source:** `spec/break_loop_architecture_invariants_v_3.md`, `spec/BreakLoop Architecture v3.docx`, `spec/break_loop_os_runtime_contract.md`
 
 ### 1. Session Is a Projection, Not State
 
@@ -271,34 +271,21 @@ During cold start:
 
 ```
 t0  User opens Instagram
-t1  Android OS switches foreground app → Instagram
-t2  AccessibilityService still alive
-t3  AccessibilityService detects monitored app
-t4  Native emits MECHANICAL event: "FOREGROUND_CHANGED" to System Brain JS
-t5  System Brain JS (headless task) receives event
-t6  System Brain JS loads state from AsyncStorage
-t7  System Brain JS calls Decision Engine (decideSystemSurfaceAction)
-t8  Decision Engine evaluates priority chain:
-    - Expired Quick Task check
-    - OS Trigger Brain evaluation
-    - Returns Decision (LAUNCH with wakeReason OR NONE)
-t9  IF Decision.type === 'LAUNCH':
-    → System Brain JS calls launchSystemSurface(app, wakeReason)
-t10 Native launches SystemSurfaceActivity with wakeReason + triggeringApp
-t11 Android creates NEW Activity + NEW RN Context
-t12 React Native initializes
-t13 SystemSurfaceRoot first render
-    - session = null
-    - bootstrapState = BOOTSTRAPPING
-    - ❌ MUST NOT finish
-t14 JS reads from native:
-    - wakeReason (already determined by Decision Engine)
-    - triggeringApp
-t15 SystemSurface JS directly dispatches session based on wakeReason:
-    - SHOW_QUICK_TASK_DIALOG → START_QUICK_TASK
-    - START_INTERVENTION_FLOW → START_INTERVENTION
-    - (NO re-evaluation, wakeReason IS the decision)
-t16 JS sets bootstrapState = READY
+t1  Native Service detects foreground app → Instagram
+t2  Native Service checks mechanical state (timers, quota, state machine)
+t3  Native Service decides: SHOW_QUICK_TASK_DIALOG
+t4  Native Service effectively launches SystemSurfaceActivity with COMMAND extra
+t5  SystemSurfaceActivity starts
+t6  React Native initializes
+t7  SystemSurfaceRoot reads COMMAND from Intent extras
+t8  JS renders UI matching the Command (Semantic Projection)
+    - SHOW_QUICK_TASK_DIALOG → Render Quick Task
+```
+
+**Key Difference in V3:**
+- **Native** makes the decision immediately.
+- **No round-trip** to Headless JS is required for mechanical decisions.
+- **System Brain** is bypassed for pure mechanical triggers.
 t17 SystemSurfaceRoot renders again
     - If session !== null → render corresponding Flow
     - If session === null → finish SystemSurfaceActivity
@@ -439,17 +426,14 @@ This section defines the **final, stable architecture** after Phase 2 completion
 - Launches SystemSurface with **explicit wake reason**
 - **Monitored App Guard**: MUST check `isMonitoredApp()` before any evaluation
 
-**Decision Engine (`decideSystemSurfaceAction()`):**
-- **Architectural Invariant**: This is the ONLY place where SystemSurface launch decisions are made
-- Unifies Quick Task expiration + OS Trigger Brain into single priority chain
-- Called ONLY from UI-safe boundaries (USER_INTERACTION, FOREGROUND_CHANGED)
-- NEVER called from TIMER_EXPIRED (background event, not UI-safe)
-- Returns `Decision` type: `NONE` or `LAUNCH` with app + wakeReason
+**Native Decision Authority (V3):**
+- **Native Service** makes ALL mechanical decisions (Launch Quick Task vs Intervention)
+- **Native Service** owns timers, quotas, and state machines
+- **System Brain JS** acts as a semantic helper only (e.g. deciding *which* breathing exercise to show)
 
-**Event Handlers (State Updates Only):**
-- `handleTimerExpiration()`: Updates state ONLY, marks expired timers, **NEVER** calls decision engine
-- `handleUserInteraction()`: Updates state + calls decision engine (UI-safe boundary)
-- `handleForegroundChange()`: Updates state + calls decision engine (UI-safe boundary)
+> ⚠️ **DEPRECATED (Phase 2):** The concept of a JS-side "Decision Engine" that launches SystemSurface is obsolete.
+> Native launches SystemSurface directly based on its own internal logic.
+
 
 **Guarantees:**
 - **Kill-safe**: State persisted in AsyncStorage, logic reconstructable on each event
@@ -460,7 +444,7 @@ This section defines the **final, stable architecture** after Phase 2 completion
 - **UI-safe boundaries only**: Timer expiration never triggers UI directly
 
 **Key Rule:**
-> **System Brain decides WHY and WHAT UI to show. Decision Engine is the single authority.**
+> **Native Authority decides WHEN and IF UI can be shown (Mechanical Authority). System Brain (JS) decides WHICH pixels to render (Semantic Renderer).**
 
 **Critical Guard Rule:**
 > **OS Trigger Brain logic runs ONLY for monitored apps. System Brain MUST check `isMonitoredApp(packageName)` before Quick Task evaluation or Intervention evaluation. BreakLoop app itself is explicitly excluded.**
@@ -1461,12 +1445,12 @@ These patterns have caused bugs in the past and must be explicitly avoided:
 6. **Event Handlers** = "Dumb" state updaters; call Decision Engine only at UI-safe boundaries
 7. **Bootstrap Lifecycle** = BOOTSTRAPPING → READY (protects cold start)
 8. **Native–JavaScript Boundary** = Native emits MECHANICAL events, System Brain classifies SEMANTIC meaning
-9. **Wake Reason Contract** = System Brain Decision Engine pre-decides, then launches SystemSurface with wake reason
+9. **Wake Reason Contract** = Native launches SystemSurface with explicit COMMAND (wake reason)
 10. **Quick Task Flow** = Emergency bypass (global quota, per-app timer)
 11. **Intervention Flow** = Conscious process (per-app)
 12. **Flows are separate** = Different purposes, different scopes
-13. **Priority chain is locked** = Unified in Decision Engine (Quick Task expiration + OS Trigger Brain)
-14. **System Brain decides** = Native emits events, System Brain Decision Engine decides, SystemSurface renders
+13. **Priority chain is locked** = Native Logic (Quick Task state, quota, permissions)
+14. **Native Authority** = Native commands UI and owns state. JS renders intent.
 
 **This is the canonical model. All implementation must follow this.**
 

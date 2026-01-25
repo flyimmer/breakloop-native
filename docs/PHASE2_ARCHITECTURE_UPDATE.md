@@ -1,13 +1,25 @@
-# Phase 2 Architecture Update - Documentation Summary
+# Phase 2 Architecture Update (HISTORICAL)
 
-**Date:** January 6, 2026  
-**Status:** ✅ Implementation Complete, Documentation Updated
+> ⚠️ **DEPRECATED / HISTORICAL ONLY**
+>
+> This document describes "Phase 2" where System Brain JS made decisions.
+> **V3 Architecture** superseded this by moving all decision authority to the **Native Layer**.
+>
+> **Current References:**
+> - `spec/BreakLoop Architecture v3.docx`
+> - `spec/break_loop_os_runtime_contract.md` (Native = Authority, JS = Renderer)
+
+**Date:** January 6, 2026
+**Status:** ❌ HISTORICAL (Superseded by V3)
 
 ---
 
 ## Overview
 
+> **Note:** The "Pre-Decision" model described below (System Brain decides) is **obsolete**. Native now decides.
+
 Phase 2 has been **fully implemented** in the codebase and the architecture documentation has been updated to reflect the explicit wake reason system.
+
 
 ## What Changed in Phase 2
 

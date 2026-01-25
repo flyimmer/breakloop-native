@@ -1,9 +1,17 @@
-# System Surface Architecture - Task Summary
+# System Surface Architecture - Task Summary (HISTORICAL)
 
-**Date:** December 30, 2025  
-**Task:** Formalize system-level UI architecture (conceptual foundation)
+> ⚠️ **DEPRECATED / HISTORICAL ONLY**
+>
+> This document describes V1/V2 architecture (Dec 2025).
+> **V3 Architecture (Jan 2026)** supersedes this.
+>
+> **Current Reference:** `docs/V3_ARCHITECTURE_UPDATE_SUMMARY.md`
 
-## What Was Done
+**Date:** December 30, 2025 (Archived)
+**Status:** ❌ HISTORICAL (Superseded by V3)
+
+## What Was Done (Historical)
+
 
 ### 1. Created Authoritative Architecture Document
 

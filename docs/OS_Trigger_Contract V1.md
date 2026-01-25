@@ -1,10 +1,17 @@
-# OS Trigger Contract V1
+# OS Trigger Contract V1 (DEPRECATED)
 
-**Status:** ✅ AUTHORITATIVE  
-**Version:** V1 (without `t_appSwitchInterval`)  
+> ⚠️ **DEPRECATED (Historical Only)**
+> This document describes V1 behavior. The authoritative contract is now **V2**.
+>
+> **Authoritative Source:** `spec/Intervention_OS_Contract_V2.docx`
+> **Runtime Reference:** `spec/break_loop_os_runtime_contract.md`
+
+**Status:** ⚠️ HISTORICAL / REFERENCE ONLY
+**Version:** V1 (without `t_appSwitchInterval`)
 **Last Updated:** January 19, 2026
 
 **Changelog:**
+- **26.01.2026**: Superseded by Intervention_OS_Contract_V2.docx
 - **18.01.2026**: Updated Quick Task rules with explicit POST_CHOICE behavior and expiration scenarios
 - **Source:** `spec/Intervention_OS_Contract_V1.docx`
 
@@ -269,7 +276,9 @@ START INTERVENTION FLOW
 - `OS_TRIGGER_LOGIC_TEST_SCENARIOS.md` - Comprehensive test scenarios
 
 ### Specification Documents (Source of Truth)
-- `spec/Intervention_OS_Contract_V1.docx` - OS trigger contract specification (Updated 18.01.2026)
-- `spec/Architecture Invariants.docx` - Non-negotiable architectural rules
-- `spec/Relationship Between System Brain And Os Trigger Brain.docx` - System Brain architecture
-- `spec/Session And Timer Relationship (clarified).docx` - Session vs semantic state
+- `spec/Intervention_OS_Contract_V2.docx` - **V2 AUTHORITATIVE** - OS trigger contract specification
+- `spec/BreakLoop Architecture v3.docx` - **V3 AUTHORITATIVE** - Architecture specification
+- `spec/break_loop_architecture_invariants_v_3.md` - **V3 AUTHORITATIVE** - Non-negotiable architectural rules
+- `spec/break_loop_os_runtime_contract.md` - **V3 AUTHORITATIVE** - Runtime event flow
+- `spec/Old/Intervention_OS_Contract_V1.docx` - (Deprecated)
+- `spec/Old/Architecture Invariants.docx` - (Deprecated)
