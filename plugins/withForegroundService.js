@@ -58,6 +58,7 @@ function getSourcePaths(projectRoot) {
     appDiscoveryPackage: path.join(javaPath, 'AppDiscoveryPackage.kt'),
     nativeBuildCanary: path.join(javaPath, 'NativeBuildCanary.kt'),
     systemSurfaceManager: path.join(javaPath, 'SystemSurfaceManager.kt'),
+    logTags: path.join(javaPath, 'LogTags.kt'),
     accessibilityXml: path.join(pluginSrcPath, 'res', 'xml', 'accessibility_service.xml'),
     stringsXml: path.join(pluginSrcPath, 'res', 'values', 'strings.xml'),
     stylesXml: path.join(pluginSrcPath, 'res', 'values', 'styles.xml'),
@@ -81,6 +82,7 @@ function getDestinationPaths(projectRoot) {
     appDiscoveryPackage: path.join(javaPath, 'AppDiscoveryPackage.kt'),
     nativeBuildCanary: path.join(javaPath, 'NativeBuildCanary.kt'),
     systemSurfaceManager: path.join(javaPath, 'SystemSurfaceManager.kt'),
+    logTags: path.join(javaPath, 'LogTags.kt'),
     accessibilityXml: path.join(androidMainPath, 'res', 'xml', 'accessibility_service.xml'),
   };
 }
@@ -177,6 +179,14 @@ function copyKotlinFiles(projectRoot) {
     console.log(`[${PLUGIN_NAME}] Copied SystemSurfaceManager.kt`);
   } else {
     console.warn(`[${PLUGIN_NAME}] SystemSurfaceManager.kt not found, skipping (optional)`);
+  }
+
+  // Copy LogTags.kt
+  if (fs.existsSync(sourcePaths.logTags)) {
+    fs.copyFileSync(sourcePaths.logTags, destPaths.logTags);
+    console.log(`[${PLUGIN_NAME}] Copied LogTags.kt`);
+  } else {
+    console.warn(`[${PLUGIN_NAME}] LogTags.kt not found, skipping (optional)`);
   }
 }
 

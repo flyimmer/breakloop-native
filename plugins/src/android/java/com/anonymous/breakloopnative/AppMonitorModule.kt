@@ -65,7 +65,7 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
                 else -> "MAIN_APP" // Default to MAIN_APP if activity is null or unknown
             }
             
-            android.util.Log.d("AppMonitorModule", "getRuntimeContext: $context (activity: ${activity?.javaClass?.simpleName})")
+            android.util.Log.e(LogTags.SS_CANARY, "[RUNTIME_CONTEXT] getRuntimeContext: $context (activity: ${activity?.javaClass?.simpleName})")
             promise.resolve(context)
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "Failed to get runtime context", e)
@@ -442,7 +442,7 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             }
             
             android.util.Log.i("AppMonitorModule", "Updating monitored apps list: $apps")
-            ForegroundDetectionService.updateMonitoredApps(apps)
+            ForegroundDetectionService.updateMonitoredApps(apps, reactApplicationContext)
             
             val result: WritableMap = Arguments.createMap()
             result.putBoolean("success", true)
@@ -667,7 +667,7 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
         android.util.Log.i("AppMonitorModule", "🏁 Finishing SystemSurfaceActivity (JS_Request)")
         
         // Delegate to Manager
-        val success = SystemSurfaceManager.finish("JS_Request")
+        val success = SystemSurfaceManager.finish(SystemSurfaceManager.REASON_JS_REQUEST)
         
         if (success) {
             android.util.Log.i("AppMonitorModule", "✅ SystemSurfaceActivity finish requested")
@@ -693,7 +693,7 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             android.util.Log.i("AppMonitorModule", "🚫 Cancelling intervention activity (JS_Cancel)")
             
             // Delegate to Manager
-            SystemSurfaceManager.finish("JS_Cancel")
+            SystemSurfaceManager.finish(SystemSurfaceManager.REASON_JS_REQUEST)
             
             // Launch home screen
             val homeIntent = Intent(Intent.ACTION_MAIN)
@@ -1037,6 +1037,11 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
         super.invalidate()
         // Clean up React context reference when module is invalidated
         AppMonitorService.setReactContext(null)
+    }
+    
+    @ReactMethod
+    fun canaryLog(message: String) {
+        android.util.Log.e("SS_CANARY", "[JS] $message")
     }
 }
 

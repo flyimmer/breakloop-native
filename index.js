@@ -12,4 +12,9 @@ registerRootComponent(App);
 
 // Register System Brain JS (event-driven headless runtime)
 // This must be imported AFTER registerRootComponent to ensure proper initialization
+// Register System Brain JS (headless)
 import './src/systemBrain';
+
+// Canary log to prove JS-to-Native bridge and native logging are working
+import { AppMonitorModule } from './src/native-modules/AppMonitorModule';
+AppMonitorModule.canaryLog('JS Bootstrap Complete - Bridge looks alive');

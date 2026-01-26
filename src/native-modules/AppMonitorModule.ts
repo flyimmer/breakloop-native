@@ -246,12 +246,17 @@ interface IAppMonitorModule {
   /**
    * Get Intent extras from SystemSurfaceActivity.
    * 
-   * Returns the wake reason and triggering app that were passed when launching SystemSurface.
+   * Returns the wake reason and triggeringApp that were passed when launching SystemSurface.
    * Used during bootstrap to determine which flow to show.
    * 
-   * @returns Promise resolving to { wakeReason: string, triggeringApp: string } or null
+   * @returns Promise resolving to { wakeReason: string; triggeringApp: string } or null
    */
   getSystemSurfaceIntentExtras(): Promise<{ wakeReason: string; triggeringApp: string } | null>;
+
+  /**
+   * Log a canary message to native Logcat (Level E) for debugging.
+   */
+  canaryLog(message: string): void;
 }
 
 /**

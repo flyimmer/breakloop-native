@@ -1,5 +1,6 @@
 package com.anonymous.breakloopnative
 
+import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.media.AudioFocusRequest
@@ -126,11 +127,21 @@ class SystemSurfaceActivity : ReactActivity() {
     }
 
     private var uiMounted = false
+    private val LOG_TAG_LIFE = "SS_LIFE"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val triggeringApp = intent?.getStringExtra(EXTRA_TRIGGERING_APP)
         val wakeReason = intent?.getStringExtra(EXTRA_WAKE_REASON)
-        Log.e("SS_BOOT", "onCreate wakeReason=$wakeReason app=$triggeringApp intent=$intent flags=${intent?.flags}")
+        val instanceId = System.identityHashCode(this)
+        
+        // SS_BUILD Fingerprint in Activity
+        val procName = if (android.os.Build.VERSION.SDK_INT >= 28) Application.getProcessName() else "unknown"
+        val fingerprint = "[ACTIVITY_START] debug=${BuildConfig.DEBUG} proc=$procName pid=${android.os.Process.myPid()} thread=${Thread.currentThread().name}"
+        Log.e(LogTags.SS_BUILD, fingerprint)
+
+        val debugInfo = "isDebug=${BuildConfig.DEBUG} pid=${android.os.Process.myPid()}"
+        Log.e(LogTags.SS_BOOT, "[onCreate] instanceId=$instanceId wakeReason=$wakeReason app=$triggeringApp $debugInfo")
+        Log.e(LogTags.SS_CANARY, "[LIFE] onCreate instanceId=$instanceId app=$triggeringApp")
 
         Log.i(TAG, "🎯 SystemSurfaceActivity created")
         
@@ -149,15 +160,10 @@ class SystemSurfaceActivity : ReactActivity() {
         
         // UI Mounted - Right after super.onCreate where React root view is initialized
         uiMounted = true
-        Log.e("SS_BOOT", "UI_MOUNTED reason=$wakeReason app=$triggeringApp")
-
-        // Boot timeout failsafe
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            if (!uiMounted) {
-                Log.e("SS_BOOT", "BOOT_TIMEOUT_FINISH (no UI mounted) reason=$wakeReason app=$triggeringApp")
-                finish()
-            }
-        }, 1200)
+        Log.e(LogTags.SS_BOOT, "UI_MOUNTED instanceId=$instanceId reason=$wakeReason app=$triggeringApp")
+        
+        // Notify Manager to cancel boot watchdog
+        SystemSurfaceManager.notifyUiMounted(instanceId, wakeReason, triggeringApp)
         
         Log.d(TAG, "SystemSurfaceActivity initialized - React Native will load intervention UI")
     }
@@ -168,6 +174,9 @@ class SystemSurfaceActivity : ReactActivity() {
         
         val triggeringApp = intent.getStringExtra(EXTRA_TRIGGERING_APP)
         val wakeReason = intent.getStringExtra(EXTRA_WAKE_REASON)
+        val instanceId = System.identityHashCode(this)
+        
+        Log.d(LOG_TAG_LIFE, "[onNewIntent] instanceId=$instanceId wakeReason=$wakeReason app=$triggeringApp flags=${intent.flags} note=JS_DOES_NOT_REACT")
         Log.e("SS_BOOT", "onNewIntent wakeReason=$wakeReason app=$triggeringApp flags=${intent.flags}")
     }
 
@@ -186,6 +195,12 @@ class SystemSurfaceActivity : ReactActivity() {
     }
 
     override fun onDestroy() {
+        val instanceId = System.identityHashCode(this)
+        val triggeringApp = intent?.getStringExtra(EXTRA_TRIGGERING_APP)
+        val qtState = triggeringApp?.let { ForegroundDetectionService.getQuickTaskStateForApp(it) } ?: "UNKNOWN"
+        
+        Log.e(LogTags.SS_CANARY, "[LIFE] onDestroy instanceId=$instanceId triggeringApp=$triggeringApp qtState=$qtState")
+        Log.d(LogTags.SS_LIFE, "[onDestroy] instanceId=$instanceId triggeringApp=$triggeringApp qtState=$qtState")
         Log.i(TAG, "❌ SystemSurfaceActivity destroyed")
         
         // Signal native service that surface is now destroyed (Lifecycle Gate)
@@ -202,17 +217,41 @@ class SystemSurfaceActivity : ReactActivity() {
             Log.w(TAG, "Cleanup warning: ${e.message}")
         }
         
+        // Final safety guarantee - Unified Cleanup
+        ForegroundDetectionService.onSurfaceExit("ACTIVITY_ON_DESTROY", instanceId, triggeringApp = triggeringApp)
+        
         super.onDestroy()
     }
 
     override fun onPause() {
         super.onPause()
+        val instanceId = System.identityHashCode(this)
+        Log.d(LOG_TAG_LIFE, "[onPause] instanceId=$instanceId isFinishing=$isFinishing")
         Log.d(TAG, "SystemSurfaceActivity paused")
         releaseAudioFocus()
+        
+        // Hardening: If we are paused and not finishing, something might be covering us
+        // but we don't clear the flag here yet because transitions can pause/resume.
+    }
+
+    override fun onStop() {
+        super.onStop()
+        val instanceId = System.identityHashCode(this)
+        Log.d(LOG_TAG_LIFE, "[onStop] instanceId=$instanceId isFinishing=$isFinishing")
+        
+        // Hardening: If the activity is stopped but not finishing, it's definitely not in foreground.
+        // We clear the flag to allow future triggers if the user switched away.
+        if (!isFinishing) {
+            val triggeringApp = intent?.getStringExtra(EXTRA_TRIGGERING_APP)
+            Log.e(LogTags.SURFACE_RECOVERY, "[SURFACE_RECOVERY] reason=ACTIVITY_STOPPED_NOT_FINISHING instanceId=$instanceId")
+            ForegroundDetectionService.onSurfaceExit("ACTIVITY_STOP", instanceId, triggeringApp = triggeringApp)
+        }
     }
 
     override fun onResume() {
         super.onResume()
+        val instanceId = System.identityHashCode(this)
+        Log.d(LOG_TAG_LIFE, "[onResume] instanceId=$instanceId")
         Log.d(TAG, "SystemSurfaceActivity resumed")
         requestAudioFocus()
     }
