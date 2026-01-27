@@ -30,15 +30,36 @@ export default function PostQuickTaskChoiceScreen() {
   const insets = useSafeAreaInsets();
 
   // Get app from session
-  const appName = session?.kind === 'POST_QUICK_TASK_CHOICE' ? session.app : 'Unknown';
+  const appPackageName = session?.kind === 'POST_QUICK_TASK_CHOICE' ? session.app : 'Unknown';
+  const [appName, setAppName] = useState<string>('App');
 
   // Format app name (e.g., "com.instagram.android" -> "Instagram")
   const displayAppName = useMemo(() => {
-    if (!appName || appName === 'Unknown') return 'App';
-    const parts = appName.split('.');
-    const name = parts.length > 2 ? parts[parts.length - 2] : appName; // Handle com.x.y format
+    if (!appPackageName || appPackageName === 'Unknown') return 'App';
+    const parts = appPackageName.split('.');
+    const name = parts.length > 2 ? parts[parts.length - 2] : appPackageName; // Handle com.x.y format
     return name.charAt(0).toUpperCase() + name.slice(1);
-  }, [appName]);
+  }, [appPackageName]);
+
+  // Fetch real app name from native
+  useEffect(() => {
+    async function fetchAppName() {
+      if (appPackageName && appPackageName !== 'Unknown' && AppMonitorModule) {
+        try {
+          const label = await AppMonitorModule.getAppLabel(appPackageName);
+          if (label) {
+            setAppName(label);
+          } else {
+            setAppName(displayAppName);
+          }
+        } catch (error) {
+          console.error('[QT] Failed to fetch app label:', error);
+          setAppName(displayAppName);
+        }
+      }
+    }
+    fetchAppName();
+  }, [appPackageName, displayAppName]);
 
   // Disable Android hardware back button during choice
   useEffect(() => {
@@ -49,16 +70,16 @@ export default function PostQuickTaskChoiceScreen() {
     });
 
     return () => backHandler.remove();
-  }, [appName]);
+  }, [appPackageName]);
 
   const handleQuit = async () => {
-    if (isProcessing || appName === 'Unknown') return;
+    if (isProcessing || appPackageName === 'Unknown') return;
     setIsProcessing(true);
 
     if (AppMonitorModule) {
       try {
-        await AppMonitorModule.quickTaskPostQuit(appName);
-        console.log(`[QT][INTENT] POST_QUIT app=${appName}`);
+        await AppMonitorModule.quickTaskPostQuit(appPackageName);
+        console.log(`[QT][INTENT] POST_QUIT app=${appPackageName}`);
       } catch (error) {
         console.error('[QT] Failed to post quit:', error);
       }
@@ -68,13 +89,13 @@ export default function PostQuickTaskChoiceScreen() {
   };
 
   const handleContinue = async () => {
-    if (isProcessing || appName === 'Unknown') return;
+    if (isProcessing || appPackageName === 'Unknown') return;
     setIsProcessing(true);
 
     if (AppMonitorModule) {
       try {
-        await AppMonitorModule.quickTaskPostContinue(appName);
-        console.log(`[QT][INTENT] POST_CONTINUE app=${appName}`);
+        await AppMonitorModule.quickTaskPostContinue(appPackageName);
+        console.log(`[QT][INTENT] POST_CONTINUE app=${appPackageName}`);
       } catch (error) {
         console.error('[QT] Failed to post continue:', error);
       }
@@ -108,7 +129,7 @@ export default function PostQuickTaskChoiceScreen() {
           activeOpacity={0.8}
           disabled={isProcessing}
         >
-          <Text style={styles.primaryButtonText}>Close {displayAppName}</Text>
+          <Text style={styles.primaryButtonText}>Close {appName}</Text>
         </TouchableOpacity>
 
         {/* Secondary: CONTINUE (The "Friction" Choice) */}
@@ -118,7 +139,7 @@ export default function PostQuickTaskChoiceScreen() {
           activeOpacity={0.6}
           disabled={isProcessing}
         >
-          <Text style={styles.secondaryButtonText}>I need more time (-1 quota)</Text>
+          <Text style={styles.secondaryButtonText}>I want to use "{appName}" more</Text>
         </TouchableOpacity>
 
       </View>

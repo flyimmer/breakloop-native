@@ -25,7 +25,6 @@ import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.Arguments
-import com.anonymous.breakloopnative.SystemSurfaceManager
 import java.io.ByteArrayOutputStream
 import java.lang.ref.WeakReference
 
@@ -331,6 +330,25 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "Failed to get triggering app", e)
             promise.reject("ERROR", "Failed to get triggering app: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Get localized app name from package name
+     * 
+     * @param packageName Package name of the app
+     * @param promise Resolves with app label (String) or null
+     */
+    @ReactMethod
+    fun getAppLabel(packageName: String, promise: Promise) {
+        try {
+            val pm = reactApplicationContext.packageManager
+            val appInfo = pm.getApplicationInfo(packageName, 0)
+            val label = pm.getApplicationLabel(appInfo).toString()
+            promise.resolve(label)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to get app label for $packageName", e)
+            promise.resolve(null)
         }
     }
 
