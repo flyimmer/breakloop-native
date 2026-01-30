@@ -46,6 +46,11 @@ export const interventionReducer = (context, action) => {
         wasCompleted: false, // Clear completed flag when starting new intervention
         intentionTimerSet: false, // Clear intention timer flag when starting new intervention
         wasCancelled: false, // Clear cancelled flag when starting new intervention
+        // TIME-DERIVED BREATHING FIX:
+        breathingStartedAtMs: Date.now(),
+        initialBreathingDuration: action.breathingDuration,
+        breathingDurationSec: action.breathingDuration, // Explicit store as requested
+        breathingCompleted: false, // Strict guard against double transitions
       };
 
       if (__DEV__) {
@@ -59,19 +64,26 @@ export const interventionReducer = (context, action) => {
       return newState;
 
     case 'BREATHING_TICK':
-      if (context.state !== 'breathing') {
+      if (context.state !== 'breathing' || context.breathingCompleted) {
         if (__DEV__) {
-          console.log('[Intervention Reducer] BREATHING_TICK ignored - not in breathing state');
+          console.log('[Intervention Reducer] BREATHING_TICK ignored - invalid state/completed');
         }
         return context;
       }
-      const newCount = Math.max(0, context.breathingCount - 1);
+      const now = Date.now();
+      const startedAt = context.breathingStartedAtMs || now; // Fallback if missing
+      const elapsedSec = Math.floor((now - startedAt) / 1000);
+      const initialDuration = context.initialBreathingDuration || 5; // Fallback default // Use initialBreathingDuration as authoritative source
+
+      // Calculate authoritative remaining time
+      const newCount = Math.max(0, initialDuration - elapsedSec);
       const willTransition = newCount === 0;
 
       if (__DEV__) {
         console.log('[Intervention Reducer] BREATHING_TICK:', {
           oldCount: context.breathingCount,
           newCount,
+          elapsedSec,
           willTransition,
           nextState: willTransition ? 'root-cause' : 'breathing',
         });
@@ -81,7 +93,9 @@ export const interventionReducer = (context, action) => {
         ...context,
         breathingCount: newCount,
         // Auto-transition to root-cause when breathing completes
-        state: newCount === 0 ? 'root-cause' : context.state,
+        // Auto-transition to root-cause when breathing completes
+        state: willTransition ? 'root-cause' : context.state,
+        breathingCompleted: willTransition, // Mark as completed to prevent re-entry
       };
 
     case 'BREATHING_COMPLETE':

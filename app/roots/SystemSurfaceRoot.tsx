@@ -397,6 +397,7 @@ export default function SystemSurfaceRoot() {
 
   // Re-entrancy guard for intent handling
   const lastProcessedNonce = useRef<number>(0);
+  const lastAppliedExtras = useRef<string>(''); // For content de-duping
 
   /**
    * Apply a new System Surface Intent (Context Switch)
@@ -408,18 +409,16 @@ export default function SystemSurfaceRoot() {
    * Updates session, bootstrap state, and intervention state.
    */
   const applyNewSurfaceIntent = async (eventNonce: number, hintApp?: string) => {
-    // 1. Re-entrancy Guard
+    // 1. Re-entrancy Guard (Nonce)
     if (eventNonce <= lastProcessedNonce.current) {
-      console.log('[SystemSurfaceRoot] 🛡️ Ignoring stale/duplicate intent', { eventNonce, last: lastProcessedNonce.current });
+      console.log('[SystemSurfaceRoot] 🛡️ Ignoring stale/duplicate intent (nonce check)', { eventNonce, last: lastProcessedNonce.current });
       return;
     }
     lastProcessedNonce.current = eventNonce;
 
     console.log('[SystemSurfaceRoot] ⚡ Processing new surface intent', { eventNonce, hintApp });
-    console.log('[SystemSurfaceRoot] [SS_INTENT] event received nonce=', eventNonce);
 
     // 2. Pull Authoritative Extras
-
     const extras = await AppMonitorModule?.getSystemSurfaceIntentExtras();
     if (!extras || !extras.triggeringApp) {
       console.warn('[SystemSurfaceRoot] ❌ applyNewSurfaceIntent: No valid extras found via pull');
@@ -427,36 +426,68 @@ export default function SystemSurfaceRoot() {
     }
 
     const { triggeringApp, wakeReason } = extras;
-    const resumeMode = (extras as any).resumeMode;
+    const resumeMode = (extras as any).resumeMode || 'RESET';
+
+    // 3. De-dup Guard (Content)
+    const extraSignature = `${triggeringApp}|${wakeReason}|${resumeMode}`;
+    if (extraSignature === lastAppliedExtras.current) {
+      console.log('[SystemSurfaceRoot] 🛡️ Ignoring duplicate intent (content check)', { extraSignature });
+      return;
+    }
+    lastAppliedExtras.current = extraSignature;
 
     console.log(`[SystemSurfaceRoot] [PULL_EXTRAS] app=${triggeringApp} reason=${wakeReason} mode=${resumeMode}`);
-    console.log(`[SystemSurfaceRoot] [SS_INTENT] extras pulled: triggeringApp=${triggeringApp}, resumeMode=${resumeMode}`);
 
+    // 4. Unified Decision Logic (Single Path)
+    // Determine action based on cross-app vs same-app
+    const isCrossApp = session && session.app !== triggeringApp;
+    const isSameAppReset = session && session.app === triggeringApp && resumeMode === 'RESET';
+    const isSameAppResume = session && session.app === triggeringApp && resumeMode === 'RESUME';
 
-    // 3. Cross-App Check
-    if (session && session.app !== triggeringApp) {
-      console.log(`[SystemSurfaceRoot] [ACTION=RESET] reason=appChanged from=${session.app} to=${triggeringApp}`);
-      console.log('[SystemSurfaceRoot] [SS_INTENT] action=RESET reason=appChanged');
+    if (isCrossApp || isSameAppReset) {
+      console.log(`[SystemSurfaceRoot] [ACTION=RESET] reason=${isCrossApp ? 'crossApp' : 'sameApp_explicit'} newApp=${triggeringApp}`);
 
-      // Force cleanup of old session
-      dispatchIntervention({ type: 'RESET_INTERVENTION' });
-    }
-    // 4. Same-App Resume Mode Check
-    else if (session && session.app === triggeringApp) {
-      if (resumeMode === 'RESET') {
-        console.log('[SystemSurfaceRoot] [ACTION=RESET] reason=sameApp_forceReset');
-        console.log('[SystemSurfaceRoot] [SS_INTENT] action=RESET reason=sameApp_forceReset');
-        dispatchIntervention({ type: 'RESET_INTERVENTION' });
+      // A. Reset Intervention State
+      dispatchIntervention({ type: 'RESET_INTERVENTION', cancelled: true }); // Ensure cancel flag
+
+      // B. Dispatch New System Session (Fresh Start)
+      // Map wakeReason to Session Kind (Duplicate logic from handleWakeReason, but deterministic here)
+      if (wakeReason === 'SHOW_QUICK_TASK_DIALOG' || wakeReason === 'MONITORED_APP_FOREGROUND') {
+        dispatchSystemEvent({ type: 'START_QUICK_TASK', app: triggeringApp });
       } else {
-        console.log('[SystemSurfaceRoot] [ACTION=RESUME] reason=sameApp');
-        console.log('[SystemSurfaceRoot] [SS_INTENT] action=RESUME reason=sameApp');
+        // Default to Intervention for most cases (INTENTION_EXPIRED, START_INTERVENTION_FLOW, etc.)
+        dispatchSystemEvent({ type: 'START_INTERVENTION', app: triggeringApp });
+      }
+    } else if (isSameAppResume) {
+      console.log('[SystemSurfaceRoot] [ACTION=RESUME] reason=sameApp_resume');
+
+      // A. Try to Restore State
+      // Note: For full V3 resume, we would load from AsyncStorage here.
+      // For now, we rely on the implementation plan's "Hydrate state" instruction.
+      // Assuming we just want to ensure we are in the correct session kind.
+
+      // If we are already in the right session, do nothing?
+      // Or if we need to switch from Intervention -> Alternative?
+      // This part depends on *what* we are resuming. 
+      // If we just want to "not reset", we might just return if session matches.
+
+      if (session && session.app === triggeringApp) {
+        console.log('[SystemSurfaceRoot] Resumed existing session (no-op)');
+        return;
+      }
+
+      // If no session but we want to resume? (Should technically go through RESET path if no session?)
+      // Fallback to fresh start if cannot resume
+      dispatchSystemEvent({ type: 'START_INTERVENTION', app: triggeringApp });
+    } else {
+      // Cold Start / No Session Pending
+      console.log('[SystemSurfaceRoot] [ACTION=START] reason=cold_start');
+      if (wakeReason === 'SHOW_QUICK_TASK_DIALOG' || wakeReason === 'MONITORED_APP_FOREGROUND') {
+        dispatchSystemEvent({ type: 'START_QUICK_TASK', app: triggeringApp });
+      } else {
+        dispatchSystemEvent({ type: 'START_INTERVENTION', app: triggeringApp });
       }
     }
-
-    // 5. Execute Bootstrap/Resume Logic (Re-use handleWakeReason but purely for this new context)
-    // We already pulled extras, but handleWakeReason pulls them again. 
-    // Optimization: We can just let handleWakeReason do its job now that we've cleared blocking state.
-    await handleWakeReason();
   };
 
   // Mount effect
