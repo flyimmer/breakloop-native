@@ -32,11 +32,35 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     
     companion object {
         // Activity reference management is now handled exclusively by SystemSurfaceManager
+        
+        // Static reference to the module instance for event emission
+        private var instance: WeakReference<AppMonitorModule>? = null
+
+        /**
+         * Emit the onSystemSurfaceNewIntent signal from SystemSurfaceActivity.
+         * Delegated here because this module has a valid ReactApplicationContext.
+         */
+        fun emitSystemSurfaceNewIntentSignal(params: WritableMap) {
+            val module = instance?.get()
+            if (module != null) {
+                try {
+                    module.reactApplicationContext
+                        .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                        .emit("onSystemSurfaceNewIntent", params)
+                    android.util.Log.d("AppMonitorModule", "⚡ delegateEmit success")
+                } catch (e: Exception) {
+                    android.util.Log.e("AppMonitorModule", "❌ delegateEmit failed", e)
+                }
+            } else {
+                android.util.Log.w("AppMonitorModule", "⚠️ delegateEmit ignored: module instance null")
+            }
+        }
     }
     
     init {
         // Pass React context to the service so it can emit events
         AppMonitorService.setReactContext(reactContext)
+        instance = WeakReference(this)
     }
     
     override fun getName(): String {

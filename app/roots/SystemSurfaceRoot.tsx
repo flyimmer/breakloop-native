@@ -416,8 +416,10 @@ export default function SystemSurfaceRoot() {
     lastProcessedNonce.current = eventNonce;
 
     console.log('[SystemSurfaceRoot] ⚡ Processing new surface intent', { eventNonce, hintApp });
+    console.log('[SystemSurfaceRoot] [SS_INTENT] event received nonce=', eventNonce);
 
     // 2. Pull Authoritative Extras
+
     const extras = await AppMonitorModule?.getSystemSurfaceIntentExtras();
     if (!extras || !extras.triggeringApp) {
       console.warn('[SystemSurfaceRoot] ❌ applyNewSurfaceIntent: No valid extras found via pull');
@@ -427,26 +429,27 @@ export default function SystemSurfaceRoot() {
     const { triggeringApp, wakeReason } = extras;
     const resumeMode = (extras as any).resumeMode;
 
-    console.log('[SystemSurfaceRoot] 🔄 Intent Authority Pulled:', { triggeringApp, wakeReason, resumeMode, currentSessionApp: session?.app });
+    console.log(`[SystemSurfaceRoot] [PULL_EXTRAS] app=${triggeringApp} reason=${wakeReason} mode=${resumeMode}`);
+    console.log(`[SystemSurfaceRoot] [SS_INTENT] extras pulled: triggeringApp=${triggeringApp}, resumeMode=${resumeMode}`);
+
 
     // 3. Cross-App Check
     if (session && session.app !== triggeringApp) {
-      console.log('[SystemSurfaceRoot] 🚨 CROSS-APP TAKEOVER: Switching from', session.app, 'to', triggeringApp);
+      console.log(`[SystemSurfaceRoot] [ACTION=RESET] reason=appChanged from=${session.app} to=${triggeringApp}`);
+      console.log('[SystemSurfaceRoot] [SS_INTENT] action=RESET reason=appChanged');
 
       // Force cleanup of old session
       dispatchIntervention({ type: 'RESET_INTERVENTION' });
-
-      // Dispatch REPLACE_SESSION (Clean Slate)
-      // System Brain reducer will handle the session switch
     }
     // 4. Same-App Resume Mode Check
     else if (session && session.app === triggeringApp) {
       if (resumeMode === 'RESET') {
-        console.log('[SystemSurfaceRoot] 🔄 Same App RESET requested via Intent');
+        console.log('[SystemSurfaceRoot] [ACTION=RESET] reason=sameApp_forceReset');
+        console.log('[SystemSurfaceRoot] [SS_INTENT] action=RESET reason=sameApp_forceReset');
         dispatchIntervention({ type: 'RESET_INTERVENTION' });
-        // We will fall through to handleWakeReason logic which restarts it
       } else {
-        console.log('[SystemSurfaceRoot] 🔄 Same App Re-entry (resume check)');
+        console.log('[SystemSurfaceRoot] [ACTION=RESUME] reason=sameApp');
+        console.log('[SystemSurfaceRoot] [SS_INTENT] action=RESUME reason=sameApp');
       }
     }
 
@@ -471,6 +474,7 @@ export default function SystemSurfaceRoot() {
     });
 
     // New Intent listener (Hot Switch / Re-use)
+    console.log('[SystemSurfaceRoot] [SS_INTENT] listener registered');
     const intentSubscription = DeviceEventEmitter.addListener('onSystemSurfaceNewIntent', (event) => {
       const nonce = event?.intentNonce ?? Date.now();
       const hintApp = event?.triggeringAppHint;

@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.WindowManager
+import com.facebook.react.ReactApplication
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
@@ -138,9 +139,11 @@ class SystemSurfaceActivity : ReactActivity() {
         val fingerprint = "[ACTIVITY_START] debug=${BuildConfig.DEBUG} proc=$procName pid=${android.os.Process.myPid()} thread=${Thread.currentThread().name}"
         Log.e(LogTags.SS_BUILD, fingerprint)
 
-        val debugInfo = "isDebug=${BuildConfig.DEBUG} pid=${android.os.Process.myPid()}"
+        val debugInfo = "isDebug=${BuildConfig.DEBUG} pid=${android.os.Process.myPid()} taskId=$taskId"
         Log.e(LogTags.SS_BOOT, "[onCreate] instanceId=$instanceId wakeReason=$wakeReason app=$triggeringApp $debugInfo")
-        Log.e(LogTags.SS_CANARY, "[LIFE] onCreate instanceId=$instanceId app=$triggeringApp")
+        Log.e(LogTags.SS_CANARY, "[LIFE] onCreate instanceId=$instanceId app=$triggeringApp taskId=$taskId")
+        Log.d(LOG_TAG_LIFE, "[onCreate] instanceId=$instanceId wakeReason=$wakeReason app=$triggeringApp taskId=$taskId")
+
 
         Log.i(TAG, "🎯 SystemSurfaceActivity created")
         
@@ -177,29 +180,26 @@ class SystemSurfaceActivity : ReactActivity() {
         val instanceId = System.identityHashCode(this)
         val intentNonce = System.currentTimeMillis() // Simple monotonic nonce
         
-        Log.d(LOG_TAG_LIFE, "[onNewIntent] instanceId=$instanceId wakeReason=$wakeReason app=$triggeringApp flags=${intent.flags} nonce=$intentNonce")
-        Log.e("SS_BOOT", "onNewIntent wakeReason=$wakeReason app=$triggeringApp flags=${intent.flags} nonce=$intentNonce")
+        Log.d(LOG_TAG_LIFE, "[onNewIntent] instanceId=$instanceId wakeReason=$wakeReason app=$triggeringApp resumeMode=$resumeMode flags=${intent.flags} nonce=$intentNonce taskId=$taskId")
+        Log.e("SS_BOOT", "onNewIntent wakeReason=$wakeReason app=$triggeringApp resumeMode=$resumeMode flags=${intent.flags} nonce=$intentNonce taskId=$taskId")
 
-        // Emit signal to JS (Best Effort)
+        // Emit signal to JS (Delegated to AppMonitorModule)
         try {
-            val reactContext = reactInstanceManager.currentReactContext
-            if (reactContext != null) {
-                val params = com.facebook.react.bridge.Arguments.createMap().apply {
-                    putDouble("intentNonce", intentNonce.toDouble())
-                    putString("triggeringAppHint", triggeringApp)
-                    putString("wakeReasonHint", wakeReason)
-                }
-                
-                reactContext
-                    .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                    .emit("onSystemSurfaceNewIntent", params)
-                
-                Log.d(TAG, "⚡ Emitted onSystemSurfaceNewIntent nonce=$intentNonce")
-            } else {
-                 Log.w(TAG, "⚠️ ReactContext null, cannot emit onSystemSurfaceNewIntent (JS may be reloading)")
-            }
+             Log.d(TAG, "⚡ Delegating emission to AppMonitorModule nonce=$intentNonce")
+             
+             val params = com.facebook.react.bridge.Arguments.createMap().apply {
+                putDouble("intentNonce", intentNonce.toDouble())
+                putString("triggeringAppHint", triggeringApp)
+                putString("wakeReasonHint", wakeReason)
+             }
+             
+             AppMonitorModule.emitSystemSurfaceNewIntentSignal(params)
+             
+             Log.e(LOG_TAG_LIFE, "[emitNewIntent] DELEGATED_TO_MODULE success=true")
+
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Failed to emit onSystemSurfaceNewIntent", e)
+            Log.e(TAG, "❌ Failed to emit onSystemSurfaceNewIntent (Delegation Error)", e)
+            Log.e(LOG_TAG_LIFE, "[emitNewIntent] EXCEPTION_DELEGATION ${e.message}")
         }
     }
 
