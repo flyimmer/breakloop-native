@@ -90,15 +90,10 @@ export default function ActivityTimerScreen() {
     }
   }, [state, actionTimer, dispatchIntervention]);
 
-  // Only render when in 'action_timer' state
-  if (state !== 'action_timer' || !selectedAlternative) {
-    return null;
-  }
-
   // Extract activity data from selectedAlternative
-  const activityTitle = selectedAlternative.title || 'Activity';
-  const activityDuration = selectedAlternative.duration || '5m';
-  const activitySteps = selectedAlternative.actions || selectedAlternative.steps || [];
+  const activityTitle = selectedAlternative?.title || 'Activity';
+  const activityDuration = selectedAlternative?.duration || '5m';
+  const activitySteps = selectedAlternative?.actions || selectedAlternative?.steps || [];
 
   // Derived state
   const isTimerActive = actionTimer > 0;
@@ -106,22 +101,32 @@ export default function ActivityTimerScreen() {
 
   // PR3: Activity Timer is the ONLY preserved state.
   useEffect(() => {
+    // Only run this logic if we are actually in the activity timer state
+    if (state !== 'action_timer') return;
+
     if (interventionState.targetApp && Platform.OS === 'android') {
       const AppMonitorModule = NativeModules.AppMonitorModule;
-      if (AppMonitorModule && AppMonitorModule.setInterventionCancellable) {
+      if (AppMonitorModule && AppMonitorModule.setInterventionPreserved) {
         console.log('[ActivityTimer] Setting intervention as PRESERVED (activity active)');
-        AppMonitorModule.setInterventionCancellable(interventionState.targetApp, false);
+        // preserved = true
+        AppMonitorModule.setInterventionPreserved(interventionState.targetApp, true);
       }
     }
 
-    // Cleanup: When leaving Activity Timer (e.g. to Reflection or Back), reset to Cancellable.
+    // Cleanup: When leaving Activity Timer (e.g. to Reflection or Back), reset to Cancellable (Not Preserved).
     return () => {
       if (interventionState.targetApp && Platform.OS === 'android') {
-        NativeModules.AppMonitorModule?.setInterventionCancellable(interventionState.targetApp, true);
-        console.log('[ActivityTimer] Cleanup: Resetting to CANCELLABLE');
+        // preserved = false
+        NativeModules.AppMonitorModule?.setInterventionPreserved(interventionState.targetApp, false);
+        console.log('[ActivityTimer] Cleanup: Resetting to CANCELLABLE (Not Preserved)');
       }
     };
-  }, [interventionState.targetApp]);
+  }, [interventionState.targetApp, state]); // Added state to dependency array
+
+  // Only render when in 'action_timer' state
+  if (state !== 'action_timer' || !selectedAlternative) {
+    return null;
+  }
 
   // Manual completion handler
   const handleEndActivity = () => {
