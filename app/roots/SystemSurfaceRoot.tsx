@@ -16,10 +16,12 @@
  * - When session === null, activity MUST finish immediately
  */
 
+import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
 import { clearNextSessionOverride, getNextSessionOverride, getSystemSurfaceDecision, setSystemSurfaceActive } from '@/src/systemBrain/stateManager';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useRef, useState } from 'react';
-import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
+import { AppState, AppStateStatus, DeviceEventEmitter, NativeModules, Platform } from 'react-native';
 import AlternativeActivityFlow from '../flows/AlternativeActivityFlow';
 import InterventionFlow from '../flows/InterventionFlow';
 import QuickTaskFlow from '../flows/QuickTaskFlow';
@@ -152,6 +154,7 @@ function finishAndLaunchHome() {
  */
 export default function SystemSurfaceRoot() {
   const { session, bootstrapState, foregroundApp, shouldLaunchHome, lastSemanticChangeTs, dispatchSystemEvent, safeEndSession, getTransientTargetApp, setTransientTargetApp } = useSystemSession();
+  const { dispatchIntervention } = useIntervention();
 
   // Track underlying app (the app user is conceptually interacting with)
   const [underlyingApp, setUnderlyingApp] = useState<string | null>(null);
@@ -191,7 +194,7 @@ export default function SystemSurfaceRoot() {
    * Pattern: Store current value, then update ref at end of this block.
    * This ensures the "user left app" check sees the OLD value during this render.
    */
-  const prevSessionKindRef = useRef<'INTERVENTION' | 'QUICK_TASK' | 'ALTERNATIVE_ACTIVITY' | null>(null);
+  const prevSessionKindRef = useRef<'INTERVENTION' | 'QUICK_TASK' | 'ALTERNATIVE_ACTIVITY' | 'POST_QUICK_TASK_CHOICE' | null>(null);
   const currentSessionKind = session?.kind ?? null;
 
   // Detect if this is a REPLACE_SESSION transition (QUICK_TASK → INTERVENTION)
@@ -233,109 +236,252 @@ export default function SystemSurfaceRoot() {
    * NO OS Trigger Brain evaluation in SystemSurface.
    * System Brain already made the decision - we just consume it.
    */
-  useEffect(() => {
-    const initializeBootstrap = async () => {
-      try {
-        // Read Intent extras from native
-        if (!AppMonitorModule) {
-          console.error('[SystemSurfaceRoot] ❌ AppMonitorModule not available');
-          setSystemSurfaceActive(false);
-          safeEndSession(true);  // Bootstrap failure - go to home
-          return;
-        }
 
-        const extras = await AppMonitorModule.getSystemSurfaceIntentExtras();
 
-        if (!extras || !extras.triggeringApp) {
-          console.error('[SystemSurfaceRoot] ❌ No Intent extras - finishing activity', { extras });
-          setSystemSurfaceActive(false);
-          safeEndSession(true);  // Bootstrap failure - go to home
-          return;
-        }
+  // ... (inside component)
 
-        const { triggeringApp, wakeReason } = extras;
+  const [appState, setAppState] = useState<AppStateStatus>(AppState.currentState);
 
-        // ✅ CRITICAL: Check for session mismatch
-        // Intent extras ALWAYS win over stale in-memory session state
-        // This handles the case where SystemSurface is relaunched while a session is still active
-        if (session && session.app !== triggeringApp) {
-          console.warn('[SystemSurfaceRoot] Session mismatch, replacing session', {
-            oldApp: session.app,
-            newApp: triggeringApp,
-            wakeReason,
-          });
-
-          // Use REPLACE_SESSION for atomic replacement (avoids duplicate lifecycle edges)
-          dispatchSystemEvent({
-            type: 'REPLACE_SESSION',
-            newKind: wakeReason === 'SHOW_QUICK_TASK_DIALOG'
-              ? 'QUICK_TASK'
-              : 'INTERVENTION',
-            app: triggeringApp,
-          });
-
-          return; // Do not proceed with stale session
-        }
-
-        // Dispatch session based on wake reason
-        // System Brain already decided to launch us with this wake reason
-        // We consume that decision without recomputing
-        if (wakeReason === 'SHOW_QUICK_TASK_DIALOG') {
-          dispatchSystemEvent({
-            type: 'START_QUICK_TASK',
-            app: triggeringApp,
-          });
-        } else if (wakeReason === 'START_INTERVENTION_FLOW') {
-          dispatchSystemEvent({
-            type: 'START_INTERVENTION',
-            app: triggeringApp,
-          });
-        } else if (wakeReason === 'POST_QUICK_TASK_CHOICE') {
-          // Quick Task expired in foreground - show choice screen
-          dispatchSystemEvent({
-            type: 'START_POST_QUICK_TASK_CHOICE',
-            app: triggeringApp,
-          });
-        } else if (wakeReason === 'INTENTION_EXPIRED_FOREGROUND') {
-          dispatchSystemEvent({
-            type: 'START_INTERVENTION',
-            app: triggeringApp,
-          });
-        } else if (wakeReason === 'QUICK_TASK_EXPIRED_FOREGROUND') {
-          // ⚠️ DEAD CODE PATH (as of fix for app hang bug)
-          // System Brain should NOT launch SystemSurface for silent expiration
-          // This case is kept as a safety net to prevent zombie Activities
-          console.warn('[SystemSurfaceRoot] ⚠️ UNEXPECTED: Launched for QUICK_TASK_EXPIRED_FOREGROUND');
-          console.warn('[SystemSurfaceRoot] System Brain should handle silent expiration without launching UI');
-          console.warn('[SystemSurfaceRoot] Finishing immediately to prevent hang');
-
-          // Finish immediately, no session event
-          finishSurfaceOnly();
-          return; // Hard stop - no further processing
-        } else if (wakeReason === 'MONITORED_APP_FOREGROUND') {
-          console.warn('[SystemSurfaceRoot] ⚠️ OLD WAKE REASON: MONITORED_APP_FOREGROUND');
-          console.warn('[SystemSurfaceRoot] This should be replaced by SHOW_QUICK_TASK_DIALOG or START_INTERVENTION_FLOW');
-          console.warn('[SystemSurfaceRoot] Defaulting to Quick Task for compatibility');
-          dispatchSystemEvent({
-            type: 'START_QUICK_TASK',
-            app: triggeringApp,
-          });
-        } else {
-          console.error('[SystemSurfaceRoot] ❌ Unknown wake reason:', wakeReason);
-          dispatchSystemEvent({
-            type: 'START_INTERVENTION',
-            app: triggeringApp,
-          });
-        }
-      } catch (error) {
-        console.error('[SystemSurfaceRoot] ❌ Bootstrap initialization failed:', error);
+  /**
+   * Handle wake reason from intent extras
+   * Shared logic for mount (cold start) and resume (warm start)
+   */
+  const handleWakeReason = async () => {
+    try {
+      // Read Intent extras from native
+      if (!AppMonitorModule) {
+        console.error('[SystemSurfaceRoot] ❌ AppMonitorModule not available');
         setSystemSurfaceActive(false);
-        safeEndSession(true);  // Bootstrap failure - go to home
+        safeEndSession(true);
+        return;
       }
-    };
 
-    initializeBootstrap();
-  }, []); // ✅ CRITICAL: Empty dependency array - run once on mount
+      const extras = await AppMonitorModule.getSystemSurfaceIntentExtras();
+
+      if (!extras || !extras.triggeringApp) {
+        // If we are resumed via Recent Apps (no intent extras?), we might just want to show existing session?
+        // But getSystemSurfaceIntentExtras usually returns current intent.
+        // If it's valid, proceed.
+        if (session) {
+          // We have active session, keep it.
+          return;
+        }
+        console.error('[SystemSurfaceRoot] ❌ No Intent extras - finishing activity', { extras });
+        setSystemSurfaceActive(false);
+        safeEndSession(true);
+        return;
+      }
+
+      const { triggeringApp, wakeReason } = extras;
+      setWakeReason(wakeReason);
+
+      // ✅ CRITICAL: Check for session mismatch
+      if (session && session.app !== triggeringApp) {
+        console.warn('[SystemSurfaceRoot] Session mismatch, replacing session', {
+          oldApp: session.app,
+          newApp: triggeringApp,
+          wakeReason,
+        });
+
+        dispatchSystemEvent({
+          type: 'REPLACE_SESSION',
+          newKind: wakeReason === 'SHOW_QUICK_TASK_DIALOG' ? 'QUICK_TASK' : 'INTERVENTION',
+          app: triggeringApp,
+        });
+        return;
+      }
+
+      // Dispatch session based on wake reason
+      if (wakeReason === 'SHOW_QUICK_TASK_DIALOG') {
+        // ... (Quick task logic)
+        dispatchSystemEvent({
+          type: 'START_QUICK_TASK',
+          app: triggeringApp,
+        });
+      } else if (wakeReason === 'START_INTERVENTION_FLOW') {
+        dispatchSystemEvent({
+          type: 'START_INTERVENTION',
+          app: triggeringApp,
+        });
+      } else if (wakeReason === 'POST_QUICK_TASK_CHOICE') {
+        dispatchSystemEvent({
+          type: 'START_POST_QUICK_TASK_CHOICE',
+          app: triggeringApp,
+        });
+      } else if (wakeReason === 'INTENTION_EXPIRED_FOREGROUND') {
+        dispatchSystemEvent({
+          type: 'START_INTERVENTION',
+          app: triggeringApp,
+        });
+      } else if (wakeReason === 'RESUME_PRESERVED_STATE' || extras.resumeMode === 'RESUME') {
+        // V3: Resume Logic
+        const snapshotJson = await AsyncStorage.getItem(`intervention_snapshot_${triggeringApp}`);
+        let resumed = false;
+
+        if (snapshotJson) {
+          try {
+            const snapshot = JSON.parse(snapshotJson);
+            // Validation: Must be action_timer and matches app
+            if (snapshot.state === 'action_timer' && snapshot.targetApp === triggeringApp) {
+              const elapsed = (Date.now() - snapshot.startedAt) / 1000;
+              const remaining = snapshot.duration - elapsed;
+
+              if (remaining > 5) { // Min 5 seconds to resume
+                console.log('[SystemSurfaceRoot] RESUMING intervention', { remaining, original: snapshot.duration });
+
+                // 1. Restore Intervention State (Timer value)
+                // Note: We need access to dispatchIntervention. 
+                // Since we are inside InterventionProvider (App.tsx), we can use the hook.
+                // But we can't use the hook inside this async function if it's not captured.
+                // We need to capture dispatchIntervention from component scope.
+                // See component change below.
+
+                // Dispatch Intervention State Restore
+                dispatchIntervention({
+                  type: 'RESUME_INTERVENTION',
+                  actionTimer: remaining,
+                  targetApp: triggeringApp
+                });
+
+                // Dispatch System Session change (UI Switch)
+                dispatchSystemEvent({
+                  type: 'START_ALTERNATIVE_ACTIVITY',
+                  app: triggeringApp,
+                  shouldLaunchHome: false
+                });
+                resumed = true;
+
+                // Dispatch Intervention State Restore MUST happen. 
+                // We will emit an event or rely on `InterventionFlow` not being mounted?
+                // Actually, if we switch to ALTERNATIVE_ACTIVITY, InterventionFlow is NOT mounted.
+                // AlternativeActivityFlow IS mounted.
+                // AlternativeActivityFlow needs the correct timer value.
+                // InterventionProvider holds the value.
+                // We need to update InterventionProvider state.
+              }
+            }
+          } catch (e) {
+            console.error('[SystemSurfaceRoot] Invalid snapshot', e);
+          }
+        }
+
+        if (!resumed) {
+          console.log('[SystemSurfaceRoot] Resume failed/invalid - falling back to FRESH START');
+          // Clear any stale snapshot
+          await AsyncStorage.removeItem(`intervention_snapshot_${triggeringApp}`);
+
+          dispatchSystemEvent({
+            type: 'START_INTERVENTION',
+            app: triggeringApp,
+          });
+        }
+      } else if (wakeReason === 'MONITORED_APP_FOREGROUND') {
+        // ... (Compatibility)
+        dispatchSystemEvent({
+          type: 'START_QUICK_TASK',
+          app: triggeringApp,
+        });
+      } else {
+        // Fallback
+        dispatchSystemEvent({
+          type: 'START_INTERVENTION',
+          app: triggeringApp,
+        });
+      }
+    } catch (error) {
+      console.error('[SystemSurfaceRoot] ❌ Bootstrap initialization failed:', error);
+      setSystemSurfaceActive(false);
+      safeEndSession(true);
+    }
+  };
+
+  // Re-entrancy guard for intent handling
+  const lastProcessedNonce = useRef<number>(0);
+
+  /**
+   * Apply a new System Surface Intent (Context Switch)
+   * 
+   * Handles:
+   * 1. App Switch (Cross-App): Forces RESET and new session.
+   * 2. Same App (Re-entry): Respects resumeMode (RESET vs RESUME).
+   * 
+   * Updates session, bootstrap state, and intervention state.
+   */
+  const applyNewSurfaceIntent = async (eventNonce: number, hintApp?: string) => {
+    // 1. Re-entrancy Guard
+    if (eventNonce <= lastProcessedNonce.current) {
+      console.log('[SystemSurfaceRoot] 🛡️ Ignoring stale/duplicate intent', { eventNonce, last: lastProcessedNonce.current });
+      return;
+    }
+    lastProcessedNonce.current = eventNonce;
+
+    console.log('[SystemSurfaceRoot] ⚡ Processing new surface intent', { eventNonce, hintApp });
+
+    // 2. Pull Authoritative Extras
+    const extras = await AppMonitorModule?.getSystemSurfaceIntentExtras();
+    if (!extras || !extras.triggeringApp) {
+      console.warn('[SystemSurfaceRoot] ❌ applyNewSurfaceIntent: No valid extras found via pull');
+      return;
+    }
+
+    const { triggeringApp, wakeReason } = extras;
+    const resumeMode = (extras as any).resumeMode;
+
+    console.log('[SystemSurfaceRoot] 🔄 Intent Authority Pulled:', { triggeringApp, wakeReason, resumeMode, currentSessionApp: session?.app });
+
+    // 3. Cross-App Check
+    if (session && session.app !== triggeringApp) {
+      console.log('[SystemSurfaceRoot] 🚨 CROSS-APP TAKEOVER: Switching from', session.app, 'to', triggeringApp);
+
+      // Force cleanup of old session
+      dispatchIntervention({ type: 'RESET_INTERVENTION' });
+
+      // Dispatch REPLACE_SESSION (Clean Slate)
+      // System Brain reducer will handle the session switch
+    }
+    // 4. Same-App Resume Mode Check
+    else if (session && session.app === triggeringApp) {
+      if (resumeMode === 'RESET') {
+        console.log('[SystemSurfaceRoot] 🔄 Same App RESET requested via Intent');
+        dispatchIntervention({ type: 'RESET_INTERVENTION' });
+        // We will fall through to handleWakeReason logic which restarts it
+      } else {
+        console.log('[SystemSurfaceRoot] 🔄 Same App Re-entry (resume check)');
+      }
+    }
+
+    // 5. Execute Bootstrap/Resume Logic (Re-use handleWakeReason but purely for this new context)
+    // We already pulled extras, but handleWakeReason pulls them again. 
+    // Optimization: We can just let handleWakeReason do its job now that we've cleared blocking state.
+    await handleWakeReason();
+  };
+
+  // Mount effect
+  useEffect(() => {
+    // Bootstrap (Cold Start)
+    handleWakeReason();
+
+    // Resume listener (AppState)
+    const appStateSubscription = AppState.addEventListener('change', nextAppState => {
+      if (appState.match(/inactive|background/) && nextAppState === 'active') {
+        console.log('[SystemSurfaceRoot] AppState -> active, checking wake reason');
+        handleWakeReason();
+      }
+      setAppState(nextAppState);
+    });
+
+    // New Intent listener (Hot Switch / Re-use)
+    const intentSubscription = DeviceEventEmitter.addListener('onSystemSurfaceNewIntent', (event) => {
+      const nonce = event?.intentNonce ?? Date.now();
+      const hintApp = event?.triggeringAppHint;
+      applyNewSurfaceIntent(nonce, hintApp);
+    });
+
+    return () => {
+      appStateSubscription.remove();
+      intentSubscription.remove();
+    };
+  }, []);
 
   /**
    * Update SystemSurface decision reactively when session or bootstrap state changes.
@@ -655,7 +801,7 @@ export default function SystemSurfaceRoot() {
       return <PostQuickTaskChoiceScreen />;
 
     case 'INTERVENTION':
-      return <InterventionFlow app={session.app} />;
+      return <InterventionFlow app={session.app} sessionId={(session as any).sessionId} />;
 
     case 'QUICK_TASK':
       return <QuickTaskFlow app={session.app} />;

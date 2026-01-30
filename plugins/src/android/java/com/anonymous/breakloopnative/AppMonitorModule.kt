@@ -411,6 +411,20 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             promise.resolve(null)
         }
     }
+
+    /**
+     * V3: Set the intervention preservation flag for a given app.
+     */
+    @ReactMethod
+    fun setInterventionPreserved(app: String, preserved: Boolean, promise: Promise) {
+        try {
+            ForegroundDetectionService.setInterventionPreserved(app, preserved, reactApplicationContext)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to set intervention preserved flag for $app", e)
+            promise.reject("SET_PRESERVED_FAILED", "Failed to set intervention preserved flag: ${e.message}", e)
+        }
+    }
     
     /**
      * Launch SystemSurfaceActivity from System Brain JS.
@@ -422,7 +436,7 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
      * @param triggeringApp - Package name of the app that triggered the wake
      */
     @ReactMethod
-    fun launchSystemSurface(wakeReason: String, triggeringApp: String) {
+    fun launchSystemSurface(wakeReason: String, triggeringApp: String, extras: com.facebook.react.bridge.ReadableMap? = null) {
         android.util.Log.d("AppMonitorModule", "📱 System Brain requested SystemSurface launch: $wakeReason for $triggeringApp")
         
         // Phase-2 Architecture: SystemSurfaceActivity must be DISPOSABLE and NEVER REUSED
@@ -436,6 +450,13 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
             putExtra(SystemSurfaceActivity.EXTRA_WAKE_REASON, wakeReason)
             putExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP, triggeringApp)
+            
+            // V3: Pass extras to intent
+            if (extras != null) {
+                if (extras.hasKey("resumeMode")) {
+                    putExtra("resumeMode", extras.getString("resumeMode"))
+                }
+            }
         }
         
         android.util.Log.i("AppMonitorModule", "🆕 Launching fresh SystemSurfaceActivity (disposable)")

@@ -12,23 +12,22 @@
  * CRITICAL: This component MUST NOT import QuickTaskFlow or AlternativeActivityFlow
  */
 
-import React, { useEffect, useRef } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { DarkTheme, DefaultTheme, NavigationContainerRef } from '@react-navigation/native';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
 import { getInterventionDurationSec } from '@/src/os/osConfig';
 import { setLastIntervenedApp } from '@/src/systemBrain/publicApi';
 import { setSystemSurfaceActive } from '@/src/systemBrain/stateManager';
-import BreathingScreen from '../screens/conscious_process/BreathingScreen';
-import RootCauseScreen from '../screens/conscious_process/RootCauseScreen';
-import AlternativesScreen from '../screens/conscious_process/AlternativesScreen';
+import { DarkTheme, DefaultTheme, NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import React, { useEffect, useRef } from 'react';
 import ActionConfirmationScreen from '../screens/conscious_process/ActionConfirmationScreen';
 import ActivityTimerScreen from '../screens/conscious_process/ActivityTimerScreen';
-import ReflectionScreen from '../screens/conscious_process/ReflectionScreen';
+import AlternativesScreen from '../screens/conscious_process/AlternativesScreen';
+import BreathingScreen from '../screens/conscious_process/BreathingScreen';
 import IntentionTimerScreen from '../screens/conscious_process/IntentionTimerScreen';
+import ReflectionScreen from '../screens/conscious_process/ReflectionScreen';
+import RootCauseScreen from '../screens/conscious_process/RootCauseScreen';
 
 export type InterventionStackParamList = {
   Breathing: undefined;
@@ -59,9 +58,10 @@ const Stack = createNativeStackNavigator<InterventionStackParamList>();
  */
 interface InterventionFlowProps {
   app: string;
+  sessionId: number;
 }
 
-export default function InterventionFlow({ app }: InterventionFlowProps) {
+export default function InterventionFlow({ app, sessionId }: InterventionFlowProps) {
   const navigationRef = useRef<NavigationContainerRef<InterventionStackParamList>>(null);
   const colorScheme = useColorScheme();
   const { interventionState, dispatchIntervention } = useIntervention();
@@ -85,7 +85,7 @@ export default function InterventionFlow({ app }: InterventionFlowProps) {
    */
   useEffect(() => {
     if (__DEV__) {
-      console.log('[InterventionFlow] BEGIN_INTERVENTION for app:', app);
+      console.log('[InterventionFlow] BEGIN_INTERVENTION for app:', app, 'sessionId:', sessionId);
     }
 
     dispatchIntervention({
@@ -93,7 +93,7 @@ export default function InterventionFlow({ app }: InterventionFlowProps) {
       app,
       breathingDuration: getInterventionDurationSec(),
     });
-  }, [app]);
+  }, [app, sessionId]);
 
   /**
    * Navigate based on intervention state changes
@@ -141,8 +141,8 @@ export default function InterventionFlow({ app }: InterventionFlowProps) {
         if (__DEV__) {
           console.log('[InterventionFlow] Starting alternative activity - dispatching START_ALTERNATIVE_ACTIVITY');
         }
-        dispatchSystemEvent({ 
-          type: 'START_ALTERNATIVE_ACTIVITY', 
+        dispatchSystemEvent({
+          type: 'START_ALTERNATIVE_ACTIVITY',
           app,
           shouldLaunchHome: false,
         });
@@ -154,14 +154,14 @@ export default function InterventionFlow({ app }: InterventionFlowProps) {
         // RULE 3: Dispatch END_SESSION event instead of navigating
         // Determine if we should launch home based on how intervention ended
         const shouldLaunchHome = !interventionState.intentionTimerSet;
-        
+
         if (__DEV__) {
           console.log('[InterventionFlow] Intervention completed - calling safeEndSession', {
             intentionTimerSet: interventionState.intentionTimerSet,
             shouldLaunchHome,
           });
         }
-        
+
         // Set lastIntervenedApp flag if user is returning to the app (not going home)
         // Fire-and-forget - no await, END_SESSION must happen immediately
         if (!shouldLaunchHome && app) {
@@ -170,13 +170,13 @@ export default function InterventionFlow({ app }: InterventionFlowProps) {
             console.log('[InterventionFlow] lastIntervenedApp set (fire-and-forget)');
           }
         }
-        
+
         // Notify native that SystemSurface is finishing
         setSystemSurfaceActive(false);
         if (__DEV__) {
           console.log('[InterventionFlow] Notified native: SystemSurface finishing');
         }
-        
+
         // End session immediately (idempotent, no blocking)
         safeEndSession(shouldLaunchHome);
         break;

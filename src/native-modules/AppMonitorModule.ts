@@ -241,7 +241,7 @@ interface IAppMonitorModule {
    * @param wakeReason - Wake reason string (e.g., "QUICK_TASK_EXPIRED_FOREGROUND", "INTENTION_EXPIRED_FOREGROUND")
    * @param triggeringApp - Package name of the app that triggered the wake
    */
-  launchSystemSurface(wakeReason: string, triggeringApp: string): void;
+  launchSystemSurface(wakeReason: string, triggeringApp: string, extras?: Record<string, any>): void;
 
   /**
    * Get Intent extras from SystemSurfaceActivity.

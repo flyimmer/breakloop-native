@@ -12,9 +12,9 @@
  * - Rule 4: Session is the ONLY authority for SystemSurface lifecycle
  */
 
-import React, { createContext, useContext, useReducer, useEffect, ReactNode, useState } from 'react';
-import { Platform, NativeModules, NativeEventEmitter } from 'react-native';
-import { clearSystemSurfaceActive, clearQuickTaskSuppression } from '../systemBrain/decisionEngine';
+import React, { createContext, ReactNode, useContext, useEffect, useReducer, useState } from 'react';
+import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
+import { clearQuickTaskSuppression, clearSystemSurfaceActive } from '../systemBrain/decisionEngine';
 import { getInMemoryStateCache } from '../systemBrain/stateManager';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
@@ -23,10 +23,10 @@ const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorMod
  * System Session type - determines which system flow is active
  */
 export type SystemSession =
-  | { kind: 'INTERVENTION'; app: string }
-  | { kind: 'QUICK_TASK'; app: string }
-  | { kind: 'POST_QUICK_TASK_CHOICE'; app: string }
-  | { kind: 'ALTERNATIVE_ACTIVITY'; app: string }
+  | { kind: 'INTERVENTION'; app: string; sessionId: number }
+  | { kind: 'QUICK_TASK'; app: string; sessionId: number }
+  | { kind: 'POST_QUICK_TASK_CHOICE'; app: string; sessionId: number }
+  | { kind: 'ALTERNATIVE_ACTIVITY'; app: string; sessionId: number }
   | null;
 
 /**
@@ -129,28 +129,28 @@ function systemSessionReducer(
     case 'START_INTERVENTION':
       return {
         ...state,
-        session: { kind: 'INTERVENTION', app: event.app },
+        session: { kind: 'INTERVENTION', app: event.app, sessionId: Date.now() },
         bootstrapState: 'READY',
       };
 
     case 'START_QUICK_TASK':
       return {
         ...state,
-        session: { kind: 'QUICK_TASK', app: event.app },
+        session: { kind: 'QUICK_TASK', app: event.app, sessionId: Date.now() },
         bootstrapState: 'READY',
       };
 
     case 'START_POST_QUICK_TASK_CHOICE':
       return {
         ...state,
-        session: { kind: 'POST_QUICK_TASK_CHOICE', app: event.app },
+        session: { kind: 'POST_QUICK_TASK_CHOICE', app: event.app, sessionId: Date.now() },
         bootstrapState: 'READY',
       };
 
     case 'START_ALTERNATIVE_ACTIVITY':
       return {
         ...state,
-        session: { kind: 'ALTERNATIVE_ACTIVITY', app: event.app },
+        session: { kind: 'ALTERNATIVE_ACTIVITY', app: event.app, sessionId: Date.now() },
         bootstrapState: 'READY',
         // Alternative activity: don't launch home (default to false)
         shouldLaunchHome: event.shouldLaunchHome ?? false,
@@ -159,7 +159,7 @@ function systemSessionReducer(
     case 'REPLACE_SESSION':
       return {
         ...state,
-        session: { kind: event.newKind, app: event.app },
+        session: { kind: event.newKind, app: event.app, sessionId: Date.now() },
         bootstrapState: 'READY',
         shouldLaunchHome: false, // Keep SystemSurface alive
       };
@@ -169,7 +169,7 @@ function systemSessionReducer(
       if (state.session?.kind === 'INTERVENTION') {
         clearQuickTaskSuppression();
       }
-      
+
       return {
         ...state,
         session: null,
@@ -219,12 +219,12 @@ interface SystemSessionProviderProps {
   transientTargetAppRef?: React.MutableRefObject<string | null>;
 }
 
-export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({ 
+export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
   children,
-  transientTargetAppRef 
+  transientTargetAppRef
 }) => {
   const [state, dispatch] = useReducer(systemSessionReducer, initialSystemSessionState);
-  
+
   /**
    * Track lastSemanticChangeTs from System Brain's in-memory state
    * This allows SystemSurfaceRoot to react when semantic state changes
@@ -313,7 +313,7 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
     hasEndedSessionRef.current = true;
     dispatchSystemEvent({ type: 'END_SESSION', shouldLaunchHome });
   };
-  
+
   /**
    * Clear SystemSurface active flag when finish is confirmed
    * 
@@ -323,14 +323,14 @@ export const SystemSessionProvider: React.FC<SystemSessionProviderProps> = ({
   useEffect(() => {
     if (state.session === null && state.bootstrapState === 'READY') {
       clearSystemSurfaceActive();  // Clear in-memory flag only (JS side)
-      
+
       // PHASE 4.1: Notify Native that SystemSurface is inactive
       if (AppMonitorModule) {
         AppMonitorModule.setSystemSurfaceActive(false).catch((error: any) => {
           // Silent failure - lifecycle coordination is best-effort
         });
       }
-      
+
       hasEndedSessionRef.current = false;  // Reset for next session
       console.log('[SS][CLOSE]');
     }

@@ -52,6 +52,9 @@ android/app/.cxx/
 *.log
 android/*.log
 
+# spec
+spec/Old/
+
 # Expo Config Plugin files are tracked (version-controlled)
 # The plugin automatically applies native changes during expo prebuild
 # plugins/ directory is NOT ignored - it contains source files

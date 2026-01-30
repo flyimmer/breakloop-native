@@ -47,6 +47,11 @@ export default function BreathingScreen() {
     return () => backHandler.remove();
   }, []);
 
+  // PR3: Preserved state logic aligned with Activity Timer (Task 4)
+  // Removed static on-mount effect. Now controlled by timer state below.
+
+  // Continuous breathing rhythm animation
+
   // Continuous breathing rhythm animation
   useEffect(() => {
     // Continuous breathing rhythm using opacity
@@ -71,7 +76,10 @@ export default function BreathingScreen() {
     ).start();
   }, [breatheAnim]);
 
-  // Breathing countdown timer
+  // Breathing is Incomplete -> Cancellable (Default).
+  // No explicit setInterventionCancellable calls needed here.
+  // Logic moved to ActivityTimerScreen (Preserved State).
+
   useEffect(() => {
     // Only tick if we're in breathing state and count > 0
     if (!shouldTickBreathing(state, breathingCount)) {
@@ -84,10 +92,9 @@ export default function BreathingScreen() {
     }, 1000);
 
     // Cleanup interval on unmount or state change
-    // IMPORTANT: targetApp dependency ensures timer is reset when switching apps
-    // This prevents multiple timers from running simultaneously during app switches
     return () => clearInterval(timer);
   }, [state, breathingCount, targetApp, dispatchIntervention]);
+
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>

@@ -41,7 +41,7 @@ class ForegroundDetectionService : AccessibilityService() {
         private var cachedQuickTaskQuota: Int = 1 
         
         enum class QuickTaskState {
-            IDLE, DECISION, ACTIVE, POST_CHOICE
+            IDLE, DECISION, ACTIVE, POST_CHOICE, INTERVENTION_ACTIVE
         }
         
         data class QuickTaskEntry(
@@ -59,7 +59,9 @@ class ForegroundDetectionService : AccessibilityService() {
         }
         
         private val quickTaskMap = mutableMapOf<String, QuickTaskEntry>()
+        private val preservedInterventionFlags = mutableMapOf<String, Boolean>()
         private const val PREFS_QUICK_TASK_STATE = "quick_task_state_v1"
+        private const val PREFS_INTERVENTION_PRESERVED = "intervention_preserved_v1"
         private var underlyingApp: String? = null
         private var dynamicMonitoredApps = mutableSetOf<String>()
         private const val PREFS_MONITORED_APPS = "monitored_apps_native_v1"
@@ -118,13 +120,26 @@ class ForegroundDetectionService : AccessibilityService() {
             val entry = resolvedApp?.let { quickTaskMap[it] }
             val stateBefore = entry?.state?.name ?: "IDLE"
 
-            Log.e(LogTags.SURFACE_FLAG, "[SURFACE_EXIT] reason=$reason app=$resolvedApp instanceId=$instanceId stateBefore=$stateBefore stateAfter=IDLE pid=${android.os.Process.myPid()}")
+            Log.e(LogTags.SURFACE_FLAG, "[SURFACE_EXIT] reason=$reason app=$resolvedApp instanceId=$instanceId stateBefore=$stateBefore pid=${android.os.Process.myPid()}")
             
             // 1. Reset flag (Single source of truth)
             setSystemSurfaceActive(false, "EXIT_$reason")
             
-            // 2. Reset decision state to IDLE if it was stuck in DECISION
-            resolvedApp?.let { cleanupTransientStateIfNeeded(it) }
+            // 2. V3: Handle Preservation vs. Reset
+            resolvedApp?.let { app ->
+                val preserved = preservedInterventionFlags[app] == true
+                if (entry?.state == QuickTaskState.INTERVENTION_ACTIVE && preserved) {
+                    Log.e(LogTags.QT_STATE, "[SURFACE_EXIT] Preserving INTERVENTION_ACTIVE for $app (background resume pending)")
+                    // Keep state as INTERVENTION_ACTIVE
+                } else {
+                    cleanupTransientStateIfNeeded(app)
+                    if (entry?.state == QuickTaskState.INTERVENTION_ACTIVE) {
+                        entry.state = QuickTaskState.IDLE
+                        Log.i(TAG, "[SURFACE_EXIT] Resetting INTERVENTION_ACTIVE -> IDLE (not preserved) for $app")
+                    }
+                    preservedInterventionFlags.remove(app)
+                }
+            }
             
             // 3. Clear session references
             underlyingApp = null
@@ -318,6 +333,24 @@ class ForegroundDetectionService : AccessibilityService() {
 
             underlyingApp = app
             
+            // V3: Handle Interrupted Intervention Resumption
+            if (entry?.state == QuickTaskState.INTERVENTION_ACTIVE) {
+                val preserved = preservedInterventionFlags[app] == true
+                if (preserved) {
+                    Log.e(LogTags.QT_STATE, "[RESUME] Resuming intervention for $app")
+                    val extras = Arguments.createMap().apply {
+                        putString("resumeMode", "RESUME")
+                    }
+                    emitQuickTaskCommand("SHOW_INTERVENTION", app, context, extras)
+                    return
+                } else {
+                    Log.i(TAG, "[RESET] Intervention active but not preserved for $app -> Resetting to IDLE")
+                    entry.state = QuickTaskState.IDLE
+                    preservedInterventionFlags.remove(app)
+                    // Fall through to normal decision logic
+                }
+            }
+            
             // Hardening (Recovery): If we are in POST_CHOICE but UI is not visible, relaunch it with gating.
             if (entry?.state == QuickTaskState.POST_CHOICE) {
                 if (!isSystemSurfaceActive) {
@@ -359,15 +392,35 @@ class ForegroundDetectionService : AccessibilityService() {
             }
         }
 
-        private fun emitQuickTaskCommand(command: String, app: String, context: android.content.Context) {
+        private fun emitQuickTaskCommand(command: String, app: String, context: android.content.Context, extraParams: com.facebook.react.bridge.WritableMap? = null) {
             val reactContext = AppMonitorService.getReactContext()
             if (reactContext == null || !reactContext.hasActiveReactInstance()) return
             val params = Arguments.createMap().apply {
                 putString("command", command)
                 putString("app", app)
                 putDouble("timestamp", System.currentTimeMillis().toDouble())
+                
+                // V3: Manual merge for simple params (avoiding missing merge() method)
+                if (extraParams != null) {
+                    if (extraParams.hasKey("resumeMode")) {
+                        putString("resumeMode", extraParams.getString("resumeMode"))
+                    }
+                }
             }
             reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java).emit("QUICK_TASK_COMMAND", params)
+        }
+
+        @JvmStatic
+        fun setInterventionPreserved(app: String, preserved: Boolean, context: android.content.Context) {
+            preservedInterventionFlags[app] = preserved
+            Log.e(LogTags.QT_STATE, "[PRESERVE] set app=$app preserved=$preserved")
+            
+            val prefs = context.getSharedPreferences(PREFS_INTERVENTION_PRESERVED, android.content.Context.MODE_PRIVATE)
+            if (preserved) {
+                prefs.edit().putBoolean(app, true).apply()
+            } else {
+                prefs.edit().remove(app).apply()
+            }
         }
 
         @JvmStatic
@@ -382,10 +435,27 @@ class ForegroundDetectionService : AccessibilityService() {
                     if (state == QuickTaskState.ACTIVE && expiresAt != null && expiresAt > now) {
                         quickTaskMap[app] = QuickTaskEntry(app, state, expiresAt)
                         startNativeTimer(app, expiresAt)
+                    } else if (state == QuickTaskState.INTERVENTION_ACTIVE) {
+                        // Keep INTERVENTION_ACTIVE during boot restoration if it was saved
+                        quickTaskMap[app] = QuickTaskEntry(app, state, expiresAt)
                     } else {
                         prefs.edit().remove(app).apply()
                     }
                 } catch (e: Exception) {}
+            }
+
+            // Restore preserved flags
+            val presPrefs = context.getSharedPreferences(PREFS_INTERVENTION_PRESERVED, android.content.Context.MODE_PRIVATE)
+            presPrefs.all.forEach { (app, value) ->
+                if (value is Boolean && value) {
+                    preservedInterventionFlags[app] = true
+                    // Ensure state consistency: if preserved, must be in INTERVENTION_ACTIVE state
+                    val entry = quickTaskMap.getOrPut(app) { QuickTaskEntry(app, QuickTaskState.IDLE) }
+                    if (entry.state != QuickTaskState.INTERVENTION_ACTIVE) {
+                        entry.state = QuickTaskState.INTERVENTION_ACTIVE
+                        Log.i(TAG, "[RESTORE] Restoring preserved state for $app")
+                    }
+                }
             }
             
             // Restore monitored apps from disk

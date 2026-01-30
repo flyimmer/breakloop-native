@@ -23,6 +23,7 @@ package com.anonymous.breakloopnative
  */
 object NativeBuildCanary {
     // Increment this number to trigger a fresh native build
-    const val BUILD_VERSION = 23
+    const val BUILD_VERSION = 27
+    const val VERSION_NAME = "V3-Intervention-Preservation"
     // Added debug logs and boot timeout failsafe for SystemSurfaceActivity
 }

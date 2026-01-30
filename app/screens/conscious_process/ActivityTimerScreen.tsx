@@ -5,7 +5,7 @@ import {
   shouldTickActionTimer,
 } from '@/src/core/intervention';
 import React, { useEffect, useState } from 'react';
-import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 /**
@@ -103,6 +103,25 @@ export default function ActivityTimerScreen() {
   // Derived state
   const isTimerActive = actionTimer > 0;
   const timerDisplay = formatTimerDisplay(actionTimer);
+
+  // PR3: Activity Timer is the ONLY preserved state.
+  useEffect(() => {
+    if (interventionState.targetApp && Platform.OS === 'android') {
+      const AppMonitorModule = NativeModules.AppMonitorModule;
+      if (AppMonitorModule && AppMonitorModule.setInterventionCancellable) {
+        console.log('[ActivityTimer] Setting intervention as PRESERVED (activity active)');
+        AppMonitorModule.setInterventionCancellable(interventionState.targetApp, false);
+      }
+    }
+
+    // Cleanup: When leaving Activity Timer (e.g. to Reflection or Back), reset to Cancellable.
+    return () => {
+      if (interventionState.targetApp && Platform.OS === 'android') {
+        NativeModules.AppMonitorModule?.setInterventionCancellable(interventionState.targetApp, true);
+        console.log('[ActivityTimer] Cleanup: Resetting to CANCELLABLE');
+      }
+    };
+  }, [interventionState.targetApp]);
 
   // Manual completion handler
   const handleEndActivity = () => {

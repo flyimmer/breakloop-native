@@ -109,7 +109,7 @@ async function handleTimerExpiration(
   } else if (quickTaskTimer && timestamp >= quickTaskTimer.expiresAt) {
     // QUICK TASK EXPIRATION: IGNORED IN JS (Native handles this)
     console.log('[QT][SB] Ignoring Quick Task expiration event - Native is authoritative');
-    
+
     // Clean up our local state state anyway to keep it clean
     delete state.quickTaskTimers[packageName];
     timerType = 'UNKNOWN'; // Skip processing
@@ -425,6 +425,22 @@ export async function handleQuickTaskCommand(event: {
       await launchSystemSurface(app, 'SHOW_QUICK_TASK_DIALOG');
       break;
 
+      break;
+
+    case 'SHOW_INTERVENTION':
+      // PR2: Native says show Intervention explicitly
+      // Native has already checked quota and intention timers.
+      // JS executes unconditionally.
+
+      // Task 1: Native Directly Launches Surface. JS is passive here.
+      // But Native is calling JS to launch surface? 
+      // Architecture v2 Update: Native calls "SHOW_INTERVENTION". JS calls "launchSystemSurface".
+      // We must pass resumeMode if present.
+      const resumeMode = (event as any).resumeMode;
+      console.log(`[Event] SHOW_INTERVENTION for ${app} resumeMode=${resumeMode}`);
+      await launchSystemSurface(app, 'START_INTERVENTION_FLOW', { resumeMode });
+      break;
+
     default:
       // Unknown command - silent failure
       break;
@@ -444,9 +460,9 @@ export async function handleQuotaUpdate(event: {
   try {
     const { NativeModules, Platform } = require('react-native');
     if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
-       // Optional: Could update a local UI store here if needed
+      // Optional: Could update a local UI store here if needed
     }
   } catch (e) {
-      // Silent failure
+    // Silent failure
   }
 }

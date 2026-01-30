@@ -32,7 +32,7 @@ export const interventionReducer = (context, action) => {
       // If intervention is already active for a DIFFERENT app, reset and start fresh
       // This ensures each app gets its own independent intervention flow
       const isDifferentApp = context.targetApp && context.targetApp !== action.app;
-      
+
       // ARCHITECTURE: Quick Task is now separate from intervention
       // Intervention ALWAYS starts with breathing (no Quick Task logic here)
       const newState = {
@@ -47,7 +47,7 @@ export const interventionReducer = (context, action) => {
         intentionTimerSet: false, // Clear intention timer flag when starting new intervention
         wasCancelled: false, // Clear cancelled flag when starting new intervention
       };
-      
+
       if (__DEV__) {
         console.log('[Intervention Reducer] BEGIN_INTERVENTION result:', {
           newState: newState.state,
@@ -55,7 +55,7 @@ export const interventionReducer = (context, action) => {
           targetApp: newState.targetApp,
         });
       }
-      
+
       return newState;
 
     case 'BREATHING_TICK':
@@ -67,7 +67,7 @@ export const interventionReducer = (context, action) => {
       }
       const newCount = Math.max(0, context.breathingCount - 1);
       const willTransition = newCount === 0;
-      
+
       if (__DEV__) {
         console.log('[Intervention Reducer] BREATHING_TICK:', {
           oldCount: context.breathingCount,
@@ -76,7 +76,7 @@ export const interventionReducer = (context, action) => {
           nextState: willTransition ? 'root-cause' : 'breathing',
         });
       }
-      
+
       return {
         ...context,
         breathingCount: newCount,
@@ -163,6 +163,23 @@ export const interventionReducer = (context, action) => {
         ...context,
         state: 'reflection',
         actionTimer: 0,
+      };
+
+      return {
+        ...context,
+        state: 'reflection',
+        actionTimer: 0,
+      };
+
+    case 'RESUME_INTERVENTION':
+      // V3: Resume from preserved snapshot
+      return {
+        ...context,
+        state: 'action_timer',
+        actionTimer: action.actionTimer,
+        targetApp: action.targetApp, // Ensure target app is set
+        wasCompleted: false,
+        wasCancelled: false,
       };
 
     case 'FINISH_ACTION':
@@ -299,18 +316,18 @@ export const parseDurationToMinutes = (durationStr) => {
  */
 export const startAlternative = (context, alternative) => {
   const durationMinutes = parseDurationToMinutes(alternative.duration || '5m');
-  
+
   // First select the alternative (selection only, no state transition)
   const withSelected = interventionReducer(context, {
     type: 'SELECT_ALTERNATIVE',
     alternative,
   });
-  
+
   // Then commit to action state
   const withCommitted = interventionReducer(withSelected, {
     type: 'PROCEED_TO_ACTION',
   });
-  
+
   // Then start the timer (transition to 'action_timer')
   return interventionReducer(withCommitted, {
     type: 'START_ALTERNATIVE',

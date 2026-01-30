@@ -173,10 +173,34 @@ class SystemSurfaceActivity : ReactActivity() {
         
         val triggeringApp = intent.getStringExtra(EXTRA_TRIGGERING_APP)
         val wakeReason = intent.getStringExtra(EXTRA_WAKE_REASON)
+        val resumeMode = intent.getBundleExtra("extras")?.getString("resumeMode")
         val instanceId = System.identityHashCode(this)
+        val intentNonce = System.currentTimeMillis() // Simple monotonic nonce
         
-        Log.d(LOG_TAG_LIFE, "[onNewIntent] instanceId=$instanceId wakeReason=$wakeReason app=$triggeringApp flags=${intent.flags} note=JS_DOES_NOT_REACT")
-        Log.e("SS_BOOT", "onNewIntent wakeReason=$wakeReason app=$triggeringApp flags=${intent.flags}")
+        Log.d(LOG_TAG_LIFE, "[onNewIntent] instanceId=$instanceId wakeReason=$wakeReason app=$triggeringApp flags=${intent.flags} nonce=$intentNonce")
+        Log.e("SS_BOOT", "onNewIntent wakeReason=$wakeReason app=$triggeringApp flags=${intent.flags} nonce=$intentNonce")
+
+        // Emit signal to JS (Best Effort)
+        try {
+            val reactContext = reactInstanceManager.currentReactContext
+            if (reactContext != null) {
+                val params = com.facebook.react.bridge.Arguments.createMap().apply {
+                    putDouble("intentNonce", intentNonce.toDouble())
+                    putString("triggeringAppHint", triggeringApp)
+                    putString("wakeReasonHint", wakeReason)
+                }
+                
+                reactContext
+                    .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                    .emit("onSystemSurfaceNewIntent", params)
+                
+                Log.d(TAG, "⚡ Emitted onSystemSurfaceNewIntent nonce=$intentNonce")
+            } else {
+                 Log.w(TAG, "⚠️ ReactContext null, cannot emit onSystemSurfaceNewIntent (JS may be reloading)")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to emit onSystemSurfaceNewIntent", e)
+        }
     }
 
     override fun getMainComponentName(): String = "main"
