@@ -67,11 +67,42 @@ Just run: npm run android          Run expo prebuild
 
 **Key Rule:** If you're editing existing Kotlin files and native logs appear correctly, you DON'T need `expo prebuild`.
 
-### 2. Verifying Changes
-increase the version in plugins\src\android\java\com\anonymous\breakloopnative\NativeBuildCanary.kt
+### 1.1 Stale Build Recovery (Force Reinstall)
+
+**Problem:** Sometimes `npm run android` successfully builds but the device keeps running the OLD binary (stale logic). This happens because Android's `adb install` might skip installation if it sees the same version ID.
+
+**Solution: The "Version Bump" Force.** 
+If `NATIVE_BUILD_CANARY` in logcat does not match your code:
+1.  Open `android/app/build.gradle`.
+2.  Increment `versionCode` by 1 (e.g., `5 -> 6`).
+3.  Increment `versionName` (e.g., `1.0.4 -> 1.0.5`).
+4.  Run `npm run android` again.
+
+This forces the Android OS to recognize the APK as a fresh update and strictly overwrite the old logic.
+
+### 2. Verifying and Forcing Native Changes
+
+#### A. The Logic Proof (Canary)
+Increase the version in `plugins\src\android\java\com\anonymous\breakloopnative\NativeBuildCanary.kt`.
 To verify it in the code if the current version is used on the cellphone:
+```bash
 adb logcat | Select-String "QT_DEV"
 adb logcat | Select-String "NATIVE_BUILD_CANARY"
+```
+
+#### B. The Installation Signal (Forcing Update)
+> [!IMPORTANT]
+> **If logs show an old version number** despite running `npm run android`, it means Android/ADB skipped the installation because the `versionCode` didn't change.
+
+**To FORCE a fresh installation:**
+1.  Open `android/app/build.gradle`.
+2.  Increment `versionCode` (e.g., from `5` to `6`).
+3.  Increment `versionName` (e.g., from `1.0.4` to `1.0.5`).
+4.  Run `npm run android` again.
+
+**Rule of Thumb:**
+-   **Edit logic only?** Increment `NativeBuildCanary`.
+-   **Logs still stale?** Bump `versionCode` in `build.gradle`.
 
 
 ### 0. First Time Setup / After Cloning Project

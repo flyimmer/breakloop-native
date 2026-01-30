@@ -125,6 +125,7 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             
             val triggeringApp = intent.getStringExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP)
             val wakeReason = intent.getStringExtra(SystemSurfaceActivity.EXTRA_WAKE_REASON)
+            val resumeMode = intent.getStringExtra("resumeMode") // V3: Extract resumeMode
             
             if (triggeringApp != null) {
                 extras.putString("triggeringApp", triggeringApp)
@@ -133,8 +134,12 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             if (wakeReason != null) {
                 extras.putString("wakeReason", wakeReason)
             }
+
+            if (resumeMode != null) {
+                extras.putString("resumeMode", resumeMode)
+            }
             
-            android.util.Log.d("AppMonitorModule", "getSystemSurfaceIntentExtras: triggeringApp=$triggeringApp, wakeReason=$wakeReason")
+            android.util.Log.d("AppMonitorModule", "getSystemSurfaceIntentExtras: triggeringApp=$triggeringApp, wakeReason=$wakeReason, resumeMode=$resumeMode")
             promise.resolve(extras)
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "Failed to get SystemSurface Intent extras", e)
@@ -442,6 +447,7 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     @ReactMethod
     fun setInterventionPreserved(app: String, preserved: Boolean, promise: Promise) {
         try {
+            android.util.Log.e("SS_PRESERVE", "[SET_PRESERVED] app=$app preserved=$preserved")
             ForegroundDetectionService.setInterventionPreserved(app, preserved, reactApplicationContext)
             promise.resolve(true)
         } catch (e: Exception) {
@@ -476,11 +482,22 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             putExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP, triggeringApp)
             
             // V3: Pass extras to intent
-            if (extras != null) {
+            var resumeModeLogged = "null"
+            val isPreserved = if (triggeringApp != null) ForegroundDetectionService.isInterventionPreserved(triggeringApp) else false
+            
+            if (isPreserved) {
+                // FORCE RESUME if preserved (Override JS)
+                putExtra("resumeMode", "RESUME")
+                resumeModeLogged = "RESUME_FORCED"
+            } else if (extras != null) {
                 if (extras.hasKey("resumeMode")) {
-                    putExtra("resumeMode", extras.getString("resumeMode"))
+                    val mode = extras.getString("resumeMode")
+                    putExtra("resumeMode", mode)
+                    resumeModeLogged = mode ?: "null"
                 }
             }
+            // Probe B: Intent Extras Log
+            android.util.Log.e("SS_INTENT", "[LAUNCH_SURFACE] [PRESERVE_READ] app=$triggeringApp isPreserved=$isPreserved -> resumeMode=$resumeModeLogged")
         }
         
         android.util.Log.i("AppMonitorModule", "🆕 Launching fresh SystemSurfaceActivity (disposable)")

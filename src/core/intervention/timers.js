@@ -22,7 +22,7 @@ export const shouldTickBreathing = (state, breathingCount) => {
  * @returns {boolean}
  */
 export const isBreathingComplete = (state, breathingCount) => {
-  return state === 'breathing' && breathingCount === 0;
+  return state === 'breathing' && breathingCount <= 0;
 };
 
 /**
@@ -42,7 +42,7 @@ export const shouldTickActionTimer = (state, actionTimer) => {
  * @returns {boolean}
  */
 export const isActionTimerComplete = (state, actionTimer) => {
-  return state === 'action_timer' && actionTimer === 0;
+  return state === 'action_timer' && actionTimer <= 0;
 };
 
 /**
@@ -51,8 +51,9 @@ export const isActionTimerComplete = (state, actionTimer) => {
  * @returns {string} Formatted time string
  */
 export const formatTimerDisplay = (totalSeconds) => {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
   return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 };
 
