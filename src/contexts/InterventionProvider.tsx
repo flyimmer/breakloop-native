@@ -29,6 +29,7 @@ interface InterventionContextValue {
     intentionTimerSet?: boolean;
     wasCompleted?: boolean;
     wasCancelled?: boolean;
+    resetReason?: string | null;
   };
   dispatchIntervention: (action: any) => void;
 }

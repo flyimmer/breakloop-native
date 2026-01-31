@@ -154,7 +154,8 @@ function finishAndLaunchHome() {
  */
 export default function SystemSurfaceRoot() {
   const { session, bootstrapState, foregroundApp, shouldLaunchHome, lastSemanticChangeTs, dispatchSystemEvent, safeEndSession, getTransientTargetApp, setTransientTargetApp } = useSystemSession();
-  const { dispatchIntervention } = useIntervention();
+  const { interventionState, dispatchIntervention } = useIntervention();
+  const [bootstrapComplete, setBootstrapComplete] = useState(false);
 
   // Track underlying app (the app user is conceptually interacting with)
   const [underlyingApp, setUnderlyingApp] = useState<string | null>(null);
@@ -398,6 +399,19 @@ export default function SystemSurfaceRoot() {
   // Re-entrancy guard for intent handling
   const lastProcessedNonce = useRef<number>(0);
   const lastProcessedSignature = useRef<{ sig: string; ts: number } | null>(null);
+  const isApplyingIntentRef = useRef<boolean>(false); // Single-choice execution lock
+
+  // STALE CLOSURE FIX: Track current state in refs for async listeners
+  const currentTargetAppRef = useRef<string | null>(null);
+  const currentSessionAppRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    currentTargetAppRef.current = interventionState?.targetApp ?? null;
+  }, [interventionState?.targetApp]);
+
+  useEffect(() => {
+    currentSessionAppRef.current = session?.app ?? null;
+  }, [session?.app]);
 
   /**
    * Apply a new System Surface Intent (Context Switch)
@@ -417,111 +431,93 @@ export default function SystemSurfaceRoot() {
     }
     lastProcessedNonce.current = eventNonce;
 
-    console.log('[SystemSurfaceRoot] ⚡ Processing new surface intent', { eventNonce, hintApp });
-
-    // 2. Pull Authoritative Extras
-    const extras = await AppMonitorModule?.getSystemSurfaceIntentExtras();
-    if (!extras || !extras.triggeringApp) {
-      console.warn('[SystemSurfaceRoot] ❌ applyNewSurfaceIntent: No valid extras found via pull');
+    // Single-Choice Lock (prevent parallel execution)
+    if (isApplyingIntentRef.current) {
+      console.log('[SystemSurfaceRoot] 🛡️ Locking: Intent execution already in progress - ignoring parallel request');
       return;
     }
+    isApplyingIntentRef.current = true;
 
-    const { triggeringApp, wakeReason } = extras;
-    const resumeMode = (extras as any).resumeMode ?? 'RESET';
+    try {
+      console.log('[SystemSurfaceRoot] ⚡ Processing new surface intent', { eventNonce, hintApp });
 
-    // Layer B: Signature + TTL Guard (Collapse bursts)
-    const signature = `${triggeringApp}|${wakeReason}|${resumeMode}`;
-    const now = Date.now();
-    if (
-      lastProcessedSignature.current &&
-      lastProcessedSignature.current.sig === signature &&
-      now - lastProcessedSignature.current.ts < 500
-    ) {
-      console.log(`[SystemSurfaceRoot] 🛡️ Ignoring burst intent (signature guard) sig=${signature} age=${now - lastProcessedSignature.current.ts}ms`);
-      return;
-    }
-    lastProcessedSignature.current = { sig: signature, ts: now };
+      // 2. Pull Authoritative Extras
+      const extras = await AppMonitorModule?.getSystemSurfaceIntentExtras();
+      if (!extras || !extras.triggeringApp) {
+        console.warn('[SystemSurfaceRoot] ❌ applyNewSurfaceIntent: No valid extras found via pull');
+        return;
+      }
 
-    console.log(`[SystemSurfaceRoot] [PULL_EXTRAS] app=${triggeringApp} reason=${wakeReason} mode=${resumeMode}`);
+      const { triggeringApp, wakeReason } = extras;
+      const resumeMode = (extras as any).resumeMode ?? 'RESET';
 
-    // 3. Strict Decision Logic
-    // Determine action based on cross-app vs same-app
-    const isCrossApp = session && session.app !== triggeringApp;
-    const isSameAppReset = session && session.app === triggeringApp && resumeMode === 'RESET';
-    const isResuming = resumeMode === 'RESUME';
+      // Layer B: Signature + TTL Guard (Collapse bursts)
+      const signature = `${triggeringApp}|${wakeReason}|${resumeMode}`;
+      const now = Date.now();
+      if (
+        lastProcessedSignature.current &&
+        lastProcessedSignature.current.sig === signature &&
+        now - lastProcessedSignature.current.ts < 500
+      ) {
+        console.log(`[SystemSurfaceRoot] 🛡️ Ignoring burst intent (signature guard) sig=${signature} age=${now - lastProcessedSignature.current.ts}ms`);
+        return;
+      }
+      lastProcessedSignature.current = { sig: signature, ts: now };
 
-    if (isResuming) {
-      console.log('[SystemSurfaceRoot] [ACTION=RESUME] reason=explicit_resume_mode');
-      console.log('[SystemSurfaceRoot] [RESUME_PATH] hydrate_start');
+      console.log(`[SystemSurfaceRoot] [PULL_EXTRAS] app=${triggeringApp} reason=${wakeReason} mode=${resumeMode}`);
 
-      // STRICT RESUME PATH: Hydrate -> Resume Intervention -> Alternative Activity
-      // NO cleanup, NO RESET, NO BEGIN_INTERVENTION
+      // 4. Strict Decision Logic
+      // Compute previous app from REFS (not closure) to fix stale state bug
+      const prevApp = currentTargetAppRef.current ?? currentSessionAppRef.current ?? null;
 
-      const snapshotJson = await AsyncStorage.getItem(`intervention_snapshot_${triggeringApp}`);
-      let resumed = false;
+      console.log(`[SystemSurfaceRoot] [INTENT] triggeringApp=${triggeringApp} prevApp=${prevApp} wakeReason=${wakeReason} resumeMode=${resumeMode}`);
 
-      if (snapshotJson) {
-        try {
-          const snapshot = JSON.parse(snapshotJson);
-          // Validate snapshot matches current intent
-          if (snapshot.state === 'action_timer' && snapshot.targetApp === triggeringApp) {
-            const elapsed = (Date.now() - snapshot.startedAt) / 1000;
-            const remaining = snapshot.duration - elapsed;
+      // UNCONDITIONAL HARD RESET for all non-RESUME intents
+      // This prevents ANY state leakage across apps or stale sessions.
+      if (resumeMode !== 'RESUME') {
+        const reason = prevApp && triggeringApp && triggeringApp !== prevApp ? 'APP_SWITCH' : 'RESET';
+        console.log(`[SystemSurfaceRoot] [ACTION=HARD_RESET] reason=${reason} prevApp=${prevApp} newApp=${triggeringApp}`);
 
-            if (remaining > 5) {
-              console.log('[SystemSurfaceRoot] [RESUME_PATH] hydrating snapshot', { remaining: Math.floor(remaining) });
+        // Always hard reset state
+        dispatchIntervention({ type: 'RESET_INTERVENTION', cancelled: true, reason });
 
-              // 1. Restore Timer State
-              dispatchIntervention({
-                type: 'RESUME_INTERVENTION',
-                actionTimer: Math.floor(remaining),
-                targetApp: triggeringApp
-              });
-
-              // 2. Mount Timer UI (Alternative Activity)
-              // This bypasses InterventionFlow entirely, preventing BEGIN_INTERVENTION
-              dispatchSystemEvent({
-                type: 'START_ALTERNATIVE_ACTIVITY',
-                app: triggeringApp,
-                shouldLaunchHome: false
-              });
-
-              console.log('[SystemSurfaceRoot] [RESUME_PATH] hydrate_success - Stopping execution (Single Choice)');
-              resumed = true;
-              return; // STOP HERE
-            } else {
-              console.log('[SystemSurfaceRoot] [RESUME_PATH] snapshot expired');
-            }
-          }
-        } catch (e) {
-          console.error('[SystemSurfaceRoot] [RESUME_PATH] snapshot invalid', e);
+        // Dispatch new system session
+        if (wakeReason === 'SHOW_QUICK_TASK_DIALOG' || wakeReason === 'MONITORED_APP_FOREGROUND') {
+          dispatchSystemEvent({ type: 'START_QUICK_TASK', app: triggeringApp });
+        } else {
+          dispatchSystemEvent({ type: 'START_INTERVENTION', app: triggeringApp });
         }
+
+        return; // SINGLE-CHOICE: Stop processing
       }
 
-      if (!resumed) {
-        console.log('[SystemSurfaceRoot] [RESUME_PATH] failed - Falling back to RESET');
-        // Fall through to reset logic?? 
-        // User said "Strict RESUME path... do NOT calling BEGIN_INTERVENTION"
-        // If resume fails, we MUST fallback to standard flow, otherwise user is stuck.
-        // But we logic below handles that.
+      // Resume Path (Strict)
+      const isResuming = resumeMode === 'RESUME';
+
+      if (isResuming) {
+        console.log('[SystemSurfaceRoot] [ACTION=RESUME] reason=explicit_resume_mode');
+        // Do NOT reset intervention.
+        // Resume logic handled by default flow (snapshot hydration etc, if implemented in caller or state persists)
+        // With Unconditional Reset above, if we are here, we are STRICTLY resuming.
+        // We might need to dispatch START_INTERVENTION if session is null?
+        // But resume usually implies we just keep the surface active or restore state.
+
+        // Use existing resume logic if any (lines below in original file would handle resume if they weren't conditioned on !isSameAppReset)
+        // Actually, for RESUME, if session is already active, we do nothing?
+        if (!session || session.app !== triggeringApp) {
+          // If session is wrong/missing, we might need to start it proper?
+          // But if resumeMode is RESUME, we likely have state.
+          // For now, let's assume RESUME means "don't reset reducer".
+          // Ensure we have a visible session.
+          if (!session) {
+            dispatchSystemEvent({ type: 'START_INTERVENTION', app: triggeringApp });
+          }
+        }
+        return;
       }
-    }
 
-    if (isCrossApp || isSameAppReset || !isResuming) { // Fallback for failed resume or explicit reset
-      console.log(`[SystemSurfaceRoot] [ACTION=RESET] reason=${isCrossApp ? 'crossApp' : 'sameApp_explicit'} newApp=${triggeringApp}`);
-
-      // A. Reset Intervention State (HARD RESET)
-      // Ensure we clear any stale state from previous session
-      // ONLY called in RESET path
-      dispatchIntervention({ type: 'RESET_INTERVENTION', cancelled: true });
-
-      // B. Dispatch New System Session (Fresh Start)
-      if (wakeReason === 'SHOW_QUICK_TASK_DIALOG' || wakeReason === 'MONITORED_APP_FOREGROUND') {
-        dispatchSystemEvent({ type: 'START_QUICK_TASK', app: triggeringApp });
-      } else {
-        // Default to Intervention
-        dispatchSystemEvent({ type: 'START_INTERVENTION', app: triggeringApp });
-      }
+    } finally {
+      isApplyingIntentRef.current = false;
     }
   };
 

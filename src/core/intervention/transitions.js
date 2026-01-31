@@ -179,11 +179,6 @@ export const interventionReducer = (context, action) => {
         actionTimer: 0,
       };
 
-      return {
-        ...context,
-        state: 'reflection',
-        actionTimer: 0,
-      };
 
     case 'RESUME_INTERVENTION':
       // V3: Resume from preserved snapshot
@@ -251,7 +246,34 @@ export const interventionReducer = (context, action) => {
         wasCancelled: false, // Not cancelled (user chose intention timer)
       };
 
+    case 'BEGIN_INTERVENTION':
+      if (__DEV__) {
+        console.log('[Intervention Reducer] BEGIN_INTERVENTION clearing resetReason');
+      }
+      return {
+        ...context,
+        state: 'breathing',
+        targetApp: action.targetApp, // Ensure targetApp is updated
+        breathingCount: 0,
+        selectedCauses: [],
+        selectedAlternative: null,
+        actionTimer: 0,
+        wasCompleted: false,
+        intentionTimerSet: false,
+        wasCancelled: false,
+        resetReason: null,
+        breathingStartedAtMs: Date.now(),
+        initialBreathingDuration: action.breathingDuration,
+        breathingDurationSec: action.breathingDuration,
+        breathingCompleted: false,
+      };
+
+    // ... (BREATHING_TICK, etc. are correct)
+
     case 'RESET_INTERVENTION':
+      if (__DEV__) {
+        console.log('[Intervention Reducer] RESET_INTERVENTION reason=', action.reason);
+      }
       return {
         ...context,
         state: 'idle',
@@ -263,6 +285,7 @@ export const interventionReducer = (context, action) => {
         wasCompleted: false, // Not completed (was cancelled)
         intentionTimerSet: false, // Clear intention timer flag
         wasCancelled: action.cancelled === true, // Set cancelled flag if explicitly cancelled
+        resetReason: action.reason || null, // Store reason (e.g., 'APP_SWITCH')
       };
 
     // REMOVED: PROCEED_TO_BREATHING and ACTIVATE_QUICK_TASK

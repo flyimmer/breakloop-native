@@ -152,6 +152,19 @@ export default function InterventionFlow({ app, sessionId }: InterventionFlowPro
         break;
       case 'idle':
         // RULE 3: Dispatch END_SESSION event instead of navigating
+
+        // APP_SWITCH BYPASS (Hot Swap)
+        // If we represent a cross-app switch, the surface MUST remain active.
+        // We will immediately start a NEW intervention for the NEW app.
+        // Do NOT close the surface here.
+        if (interventionState.resetReason === 'APP_SWITCH') {
+          if (__DEV__) {
+            console.log('[InterventionFlow] Idle due to APP_SWITCH — skip safeEndSession / surface finish');
+          }
+          // Resume execution? No, just break. The new intervention will start via new props.
+          break;
+        }
+
         // Determine if we should launch home based on how intervention ended
         const shouldLaunchHome = !interventionState.intentionTimerSet;
 
