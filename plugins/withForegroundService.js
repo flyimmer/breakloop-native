@@ -59,6 +59,8 @@ function getSourcePaths(projectRoot) {
     nativeBuildCanary: path.join(javaPath, 'NativeBuildCanary.kt'),
     systemSurfaceManager: path.join(javaPath, 'SystemSurfaceManager.kt'),
     logTags: path.join(javaPath, 'LogTags.kt'),
+    quickTaskQuotaStore: path.join(javaPath, 'QuickTaskQuotaStore.kt'),
+    monitoredAppsStore: path.join(javaPath, 'MonitoredAppsStore.kt'),
     accessibilityXml: path.join(pluginSrcPath, 'res', 'xml', 'accessibility_service.xml'),
     stringsXml: path.join(pluginSrcPath, 'res', 'values', 'strings.xml'),
     stylesXml: path.join(pluginSrcPath, 'res', 'values', 'styles.xml'),
@@ -83,6 +85,8 @@ function getDestinationPaths(projectRoot) {
     nativeBuildCanary: path.join(javaPath, 'NativeBuildCanary.kt'),
     systemSurfaceManager: path.join(javaPath, 'SystemSurfaceManager.kt'),
     logTags: path.join(javaPath, 'LogTags.kt'),
+    quickTaskQuotaStore: path.join(javaPath, 'QuickTaskQuotaStore.kt'),
+    monitoredAppsStore: path.join(javaPath, 'MonitoredAppsStore.kt'),
     accessibilityXml: path.join(androidMainPath, 'res', 'xml', 'accessibility_service.xml'),
   };
 }
@@ -187,6 +191,22 @@ function copyKotlinFiles(projectRoot) {
     console.log(`[${PLUGIN_NAME}] Copied LogTags.kt`);
   } else {
     console.warn(`[${PLUGIN_NAME}] LogTags.kt not found, skipping (optional)`);
+  }
+
+  // Copy QuickTaskQuotaStore.kt
+  if (fs.existsSync(sourcePaths.quickTaskQuotaStore)) {
+    fs.copyFileSync(sourcePaths.quickTaskQuotaStore, destPaths.quickTaskQuotaStore);
+    console.log(`[${PLUGIN_NAME}] Copied QuickTaskQuotaStore.kt`);
+  } else {
+    console.warn(`[${PLUGIN_NAME}] QuickTaskQuotaStore.kt not found, skipping (optional)`);
+  }
+
+  // Copy MonitoredAppsStore.kt
+  if (fs.existsSync(sourcePaths.monitoredAppsStore)) {
+    fs.copyFileSync(sourcePaths.monitoredAppsStore, destPaths.monitoredAppsStore);
+    console.log(`[${PLUGIN_NAME}] Copied MonitoredAppsStore.kt`);
+  } else {
+    console.warn(`[${PLUGIN_NAME}] MonitoredAppsStore.kt not found, skipping (optional)`);
   }
 }
 

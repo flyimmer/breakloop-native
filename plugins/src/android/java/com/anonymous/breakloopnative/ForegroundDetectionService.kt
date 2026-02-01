@@ -14,6 +14,7 @@ import com.facebook.react.bridge.ReactContext
 import com.facebook.react.HeadlessJsTaskService
 import com.facebook.react.jstasks.HeadlessJsTaskConfig
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import kotlinx.coroutines.*
 
 /**
  * AccessibilityService for detecting foreground app changes
@@ -38,7 +39,7 @@ class ForegroundDetectionService : AccessibilityService() {
         )
         
         private val activeTimerRunnables = mutableMapOf<String, Runnable>()
-        private var cachedQuickTaskQuota: Int = 1 
+        // private var cachedQuickTaskQuota: Int = 1 // REPLACED BY quotaStore / cachedQuotaState 
         
         @JvmStatic
         fun isInterventionPreserved(app: String): Boolean {
@@ -65,16 +66,28 @@ class ForegroundDetectionService : AccessibilityService() {
             return quickTaskMap[app]?.state?.name ?: "UNKNOWN"
         }
         
+        private val monitoredLock = Any()
+        
+        // Native Config Stores
+        private lateinit var quotaStore: QuickTaskQuotaStore
+        private lateinit var monitoredStore: MonitoredAppsStore
+        private val serviceScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
+        
+        // Volatile In-Memory Cache (Native Authority)
+        @Volatile private var cachedQuotaState: QuotaState = QuotaState(1L, 0L, 1L)
+        @Volatile private var cachedMonitoredApps: Set<String> = emptySet()
+
+
+        
         private val quickTaskMap = mutableMapOf<String, QuickTaskEntry>()
         private val preservedInterventionFlags = mutableMapOf<String, Boolean>()
         private const val PREFS_QUICK_TASK_STATE = "quick_task_state_v1"
         private const val PREFS_INTERVENTION_PRESERVED = "intervention_preserved_v1"
         private var underlyingApp: String? = null
-        private var dynamicMonitoredApps = mutableSetOf<String>()
-        private const val PREFS_MONITORED_APPS = "monitored_apps_native_v1"
-        private const val KEY_MONITORED_APPS = "monitored_apps_set"
+        // dynamicMonitoredApps replaced by cachedMonitoredApps
+        private const val PREFS_MONITORED_APPS = "monitored_apps_native_v1" // DEPRECATED
+        private const val KEY_MONITORED_APPS = "monitored_apps_set" // DEPRECATED
         private val suppressWakeUntil = mutableMapOf<String, Long>()
-        private val monitoredLock = Any()
 
         @Volatile
         private var isSystemSurfaceActive: Boolean = false
@@ -207,24 +220,37 @@ class ForegroundDetectionService : AccessibilityService() {
             currentForegroundApp = app
         }
 
+        // DEPRECATED: JS should not drive quota. It can only set max quota.
         @JvmStatic
         fun updateQuickTaskQuota(quota: Int) {
-            cachedQuickTaskQuota = quota
+            // Log.w(TAG, "[DEPRECATED] updateQuickTaskQuota ignored. Native authority in place.")
+            // No-op to prevent corruption of native state
+        }
+        
+        @JvmStatic
+        fun setQuickTaskMaxQuota(max: Int) {
+            serviceScope.launch {
+                val newState = quotaStore.setMaxQuota(max.toLong())
+                cachedQuotaState = newState
+                Log.e(LogTags.QT_STATE, "[CONFIG] Updated Max Quota: max=${newState.maxPer15m} remaining=${newState.remaining}")
+            }
+        }
+        
+        @JvmStatic
+        fun updateMonitoredAppsCache(apps: Set<String>) {
+            cachedMonitoredApps = apps
+            Log.e(LogTags.SERVICE_LIFE, "[MONITORED_APPS] Cache updated immediately count=${apps.size}")
         }
 
         @JvmStatic
         fun updateMonitoredApps(apps: Set<String>, context: android.content.Context? = null) {
-            synchronized(monitoredLock) {
-                dynamicMonitoredApps.clear()
-                dynamicMonitoredApps.addAll(apps)
-            }
+            // 1. Update Cache Immediately (Live Update)
+            updateMonitoredAppsCache(apps)
             
-            context?.let {
-                val prefs = it.getSharedPreferences(PREFS_MONITORED_APPS, android.content.Context.MODE_PRIVATE)
-                // Defensive copy for SharedPreferences putStringSet
-                val defensiveApps = HashSet(apps)
-                prefs.edit().putStringSet(KEY_MONITORED_APPS, defensiveApps).apply()
-                Log.e(LogTags.SERVICE_LIFE, "[MONITORED_APPS] persisted count=${defensiveApps.size} pid=${android.os.Process.myPid()}")
+            // 2. Persist Async
+            serviceScope.launch {
+                monitoredStore.setMonitoredApps(apps)
+                Log.e(LogTags.SERVICE_LIFE, "[MONITORED_APPS] Persisted to DataStore count=${apps.size}")
             }
         }
 
@@ -317,7 +343,33 @@ class ForegroundDetectionService : AccessibilityService() {
             // AVOID CONFLICTS: Quick Task Eligibility Logic
             val qtState = entry?.state ?: QuickTaskState.IDLE
             val isSurfaceActive = isSystemSurfaceActive
-            val quotaRemaining = cachedQuickTaskQuota
+            
+            // NATIVE REFILL CHECK (Synchronous Check, Async Write)
+            // 1. Check window expiry against cache
+            val currentState = cachedQuotaState
+            var remaining = currentState.remaining
+            
+            if (now - currentState.windowStartMs >= (15 * 60 * 1000L)) {
+                // Window expired -> REFILL
+                remaining = currentState.maxPer15m // Reset to max
+                
+                // Update Cache Immediately
+                cachedQuotaState = QuotaState(currentState.maxPer15m, now, remaining)
+                Log.e(LogTags.QT_STATE, "[QUOTA_REFILL] Window expired. Refilled to $remaining")
+                
+                // Persist Async
+                serviceScope.launch {
+                    try {
+                         // We re-read snapshot to avoid race, or just trust our calc. 
+                         // Store logic handles it safely if we call checkRefillAndGetRemaining
+                         val finalState = quotaStore.checkRefillAndGetRemaining(now, currentState)
+                         // Sync back to cache just in case
+                         cachedQuotaState = finalState
+                    } catch (e: Exception) { Log.e(TAG, "Failed to persist refill", e) }
+                }
+            }
+
+            val quotaRemaining = remaining
             val qSuppressMs = (quitSuppressionUntil[app] ?: 0L) - now
             val wSuppressMs = (suppressWakeUntil[app] ?: 0L) - now
             
@@ -346,6 +398,8 @@ class ForegroundDetectionService : AccessibilityService() {
 
             // ENTRY_START: Decisive Log
             Log.e(LogTags.ENTRY_START, "[ENTRY_START] pkg=$app source=$source force=$force elig=$qtEligible reason=$eligReason pid=${android.os.Process.myPid()}")
+            val hasTimer = activeTimerRunnables.containsKey(app)
+            Log.e(TAG, "[ENTRY] pkg=$app decision=$qtEligible reason=$eligReason isSystemSurfaceActive=$isSurfaceActive remainingQuota=$quotaRemaining quickTaskState=$qtState timers=$hasTimer")
 
             if (!force) {
                 val suppressUntil = quitSuppressionUntil[app]
@@ -397,6 +451,7 @@ class ForegroundDetectionService : AccessibilityService() {
             
             // Hardening (Recovery): If we are in POST_CHOICE but UI is not visible, relaunch it with gating.
             if (entry?.state == QuickTaskState.POST_CHOICE) {
+                // ... (Existing recovery logic unchanged) ...
                 if (!isSystemSurfaceActive) {
                     val throttleMs = 10_000L
                     val suppressionMs = 20_000L
@@ -425,8 +480,22 @@ class ForegroundDetectionService : AccessibilityService() {
             if (entry == null || entry.state == QuickTaskState.IDLE) {
                 val activeEntry = entry ?: QuickTaskEntry(app, QuickTaskState.IDLE).also { quickTaskMap[app] = it }
                 activeEntry.state = QuickTaskState.DECISION
-                if (cachedQuickTaskQuota > 0) {
+                if (quotaRemaining > 0) {
                     Log.e("DECISION_GATE", "[DECISION_GATE] ACTION: SHOW_QUICK_TASK_DIALOG pkg=$app")
+                    
+                    // COMMIT POINT: Decrement Quota
+                    // Update cache immediately
+                    val newRemaining = remaining - 1
+                    cachedQuotaState = cachedQuotaState.copy(remaining = newRemaining)
+                    Log.e(LogTags.QT_STATE, "[QUOTA_USE] Decremented quota. New remaining: $newRemaining")
+                    
+                    // Persist Async
+                    serviceScope.launch {
+                        try {
+                            quotaStore.decrementQuota()
+                        } catch (e: Exception) { Log.e(TAG, "Failed to persist quota decrement", e) }
+                    }
+                    
                     emitQuickTaskCommand("SHOW_QUICK_TASK_DIALOG", app, context)
                 } else {
                     Log.e("DECISION_GATE", "[DECISION_GATE] ACTION: NO_QUICK_TASK (Quota Zero) pkg=$app")
@@ -506,24 +575,20 @@ class ForegroundDetectionService : AccessibilityService() {
             // Restore monitored apps from disk
             val monPrefs = context.getSharedPreferences(PREFS_MONITORED_APPS, android.content.Context.MODE_PRIVATE)
             val storedApps = monPrefs.getStringSet(KEY_MONITORED_APPS, null)
-            if (storedApps != null) {
-                val restored = HashSet(storedApps)
-                synchronized(monitoredLock) {
-                    dynamicMonitoredApps.clear()
-                    dynamicMonitoredApps.addAll(restored)
-                }
-                Log.e(LogTags.SERVICE_LIFE, "[MONITORED_APPS] restored count=${restored.size} pid=${android.os.Process.myPid()}")
-            } else {
+                if (storedApps != null) {
+                    val restored = HashSet(storedApps)
+                    updateMonitoredAppsCache(restored)
+                    Log.e(LogTags.SERVICE_LIFE, "[MONITORED_APPS] restored count=${restored.size} pid=${android.os.Process.myPid()}")
+                } else {
                 Log.w(LogTags.SERVICE_LIFE, "[MONITORED_APPS] No apps found on disk during restoration")
             }
         }
 
-        @JvmStatic
         fun onQuickTaskAccepted(app: String, durationMs: Long, context: android.content.Context) {
             val entry = quickTaskMap[app] ?: return
             entry.state = QuickTaskState.ACTIVE
             entry.expiresAt = System.currentTimeMillis() + durationMs
-            if (cachedQuickTaskQuota > 0) cachedQuickTaskQuota--
+            // DEPRECATED: cachedQuickTaskQuota decrement moved to commit point (StartQuickTask)
             startNativeTimer(app, entry.expiresAt!!)
             emitQuickTaskCommand("START_QUICK_TASK_ACTIVE", app, context)
         }
@@ -601,7 +666,10 @@ class ForegroundDetectionService : AccessibilityService() {
             
             val context = AppMonitorService.getReactContext()?.applicationContext ?: return
             if (isForeground) {
-                if (cachedQuickTaskQuota > 0) {
+                // Preserving existing logic: Post Choice seems to depend on having quota? 
+                // Or maybe this was a bug I'm preserving? User said "Do not change user-facing behavior".
+                // Logic: If quota > 0, show Post Choice. If 0, finish.
+                if (cachedQuotaState.remaining > 0) {
                     Log.d(LOG_TAG_QT, "[TRANSITION] app=$app ACTIVE -> POST_CHOICE")
                     entry.state = QuickTaskState.POST_CHOICE
                     entry.expiresAt = null
@@ -649,6 +717,10 @@ class ForegroundDetectionService : AccessibilityService() {
         super.onServiceConnected()
         isServiceConnected = true
         
+        // Init Stores
+        quotaStore = QuickTaskQuotaStore(applicationContext)
+        monitoredStore = MonitoredAppsStore(applicationContext)
+        
         // SS_BUILD Fingerprint in Service
         val procName = if (android.os.Build.VERSION.SDK_INT >= 28) Application.getProcessName() else "unknown"
         val fingerprint = "[SERVICE_START] debug=${BuildConfig.DEBUG} proc=$procName pid=${android.os.Process.myPid()} thread=${Thread.currentThread().name}"
@@ -660,6 +732,20 @@ class ForegroundDetectionService : AccessibilityService() {
         setSystemSurfaceActive(false, "SERVICE_CONNECTED")
         
         restoreFromDisk(applicationContext)
+        
+        // LOAD CONFIG FROM DATASTORE (Native Authority)
+        serviceScope.launch {
+            // Load Quota
+            val quotaState = quotaStore.getSnapshot()
+            cachedQuotaState = quotaState
+            Log.e(LogTags.QT_STATE, "[CONFIG] Loaded Quota: max=${quotaState.maxPer15m} remaining=${quotaState.remaining} windowStart=${quotaState.windowStartMs}")
+            
+            // Load Monitored Apps
+            val apps = monitoredStore.getMonitoredApps()
+            cachedMonitoredApps = apps
+            Log.e(LogTags.SERVICE_LIFE, "[CONFIG] Loaded Monitored Apps: count=${apps.size}")
+        }
+        
         val info = AccessibilityServiceInfo().apply {
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
                         AccessibilityEvent.TYPE_VIEW_SCROLLED or
@@ -676,9 +762,15 @@ class ForegroundDetectionService : AccessibilityService() {
         val packageName = event?.packageName?.toString() ?: return
         val eventType = event.eventType
         
-        val (isMonitored, dynCount) = synchronized(monitoredLock) {
-            dynamicMonitoredApps.contains(packageName) to dynamicMonitoredApps.size
-        }
+        // USE VOLATILE CACHE (Non-blocking)
+        val isMonitored = cachedMonitoredApps.contains(packageName)
+        val dynCount = cachedMonitoredApps.size
+
+        val lowerPkg = packageName.lowercase()
+        val isLauncher = lowerPkg.contains("launcher")
+        val isSystemUI = lowerPkg.contains("systemui")
+        val isOurApp = packageName == "com.anonymous.breakloopnative"
+        Log.e(TAG, "[FG_EVT] pkg=$packageName isMonitored=$isMonitored isLauncher=$isLauncher isSystemUI=$isSystemUI isOurApp=$isOurApp")
         val surfaceActive = isSystemSurfaceActive
         
         // Audit-focused logging: Restricted to WINDOW_STATE_CHANGED to avoid log flooding
@@ -757,7 +849,7 @@ class ForegroundDetectionService : AccessibilityService() {
                         val currentFG = currentForegroundApp ?: ""
                         val finalPkg = pickReplayCandidate(currentFG)
                         
-                        val isMonitoredAtFire = finalPkg?.let { synchronized(monitoredLock) { dynamicMonitoredApps.contains(it) } } ?: false
+                        val isMonitoredAtFire = finalPkg?.let { cachedMonitoredApps.contains(it) } ?: false
                         
                         Log.e(LogTags.SURFACE_RECOVERY, "[SURFACE_RECOVERY] debounceFire fg=$currentFG replay=$isMonitoredAtFire pid=${android.os.Process.myPid()}")
                         
@@ -805,7 +897,7 @@ class ForegroundDetectionService : AccessibilityService() {
     }
 
     private fun triggerReplayDelayed(packageName: String, delayMs: Long) {
-        val isMonitored = synchronized(monitoredLock) { dynamicMonitoredApps.contains(packageName) }
+        val isMonitored = cachedMonitoredApps.contains(packageName)
         if (!isMonitored) return
 
         surfaceRecoveryHandler.postDelayed({

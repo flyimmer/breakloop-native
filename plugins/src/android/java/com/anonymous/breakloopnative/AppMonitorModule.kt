@@ -534,6 +534,20 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
         }
     }
 
+
+
+    @ReactMethod
+    fun setQuickTaskQuotaPer15m(quota: Int, promise: Promise) {
+        try {
+            android.util.Log.d("AppMonitorModule", "setQuickTaskQuotaPer15m: $quota")
+            ForegroundDetectionService.setQuickTaskMaxQuota(quota)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to set quick task quota", e)
+            promise.reject("SET_QUOTA_FAILED", e.message, e)
+        }
+    }
+
     /**
      * Store intention timer in SharedPreferences
      * 
@@ -561,22 +575,7 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             android.util.Log.e("AppMonitorModule", "Failed to store intention timer", e)
         }
     }
-    
-    /**
-     * Set wake suppression flag
-     * 
-     * This tells native: "Do not launch SystemSurfaceActivity before this timestamp"
-     * 
-     * SEMANTIC OWNERSHIP:
-     * - JavaScript makes semantic decision (e.g., "user wants 1-min intention timer")
-     * - JavaScript sets mechanical flag: "don't wake before X"
-     * - Native reads mechanical flag, has ZERO semantic knowledge
-     * - Native doesn't know WHY suppression exists (intention timer, quick task, etc.)
-     * - Native only knows: "Don't wake before this timestamp"
-     * 
-     * @param packageName Package name (e.g., "com.instagram.android")
-     * @param suppressUntil Timestamp (milliseconds) - don't wake before this time
-     */
+
     @ReactMethod
     fun setSuppressSystemSurfaceUntil(packageName: String, suppressUntil: Double) {
         try {
@@ -987,14 +986,10 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
      */
     @ReactMethod
     fun updateQuickTaskQuota(quota: Int, promise: Promise) {
-        try {
-            ForegroundDetectionService.updateQuickTaskQuota(quota)
-            android.util.Log.i("AppMonitorModule", "📊 Quick Task quota updated: $quota")
-            promise.resolve(true)
-        } catch (e: Exception) {
-            android.util.Log.e("AppMonitorModule", "Failed to update quota", e)
-            promise.reject("UPDATE_QUOTA_ERROR", "Failed to update quota: ${e.message}", e)
-        }
+        // Log rate-limited warning
+        android.util.Log.d("AppMonitorModule", "[DEPRECATED] updateQuickTaskQuota call ignored. Use setQuickTaskQuotaPer15m.")
+        // Resolve success so JS doesn't crash
+        promise.resolve(true)
     }
     
     /**

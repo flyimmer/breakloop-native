@@ -26,6 +26,8 @@ const KOTLIN_FILES = [
   'NativeBuildCanary.kt',
   'SystemSurfaceManager.kt',
   'LogTags.kt',
+  'QuickTaskQuotaStore.kt',
+  'MonitoredAppsStore.kt',
 ];
 
 function syncKotlinFiles() {

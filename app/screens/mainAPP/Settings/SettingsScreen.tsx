@@ -261,14 +261,14 @@ const SettingsScreen = () => {
       // PHASE 4.1 FIX: Sync quota to Native after settings change
       // Native needs updated quota cache for entry decisions
       try {
-        const { loadTimerState } = require('../../../../src/systemBrain/stateManager');
-        const { syncQuotaToNative } = require('../../../../src/systemBrain/decisionEngine');
-        const state = await loadTimerState();
-        await syncQuotaToNative(state);
-        console.log('[SettingsScreen] ✅ Synced quota to Native after settings change');
+        const { NativeModules, Platform } = require('react-native');
+        if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
+            // NEW NATIVE AUTHORITY: Set Max Quota directly
+            console.log(`[SettingsScreen] ⚡ Updating Native Quota Max to ${usesPerWindow}`);
+            await NativeModules.AppMonitorModule.setQuickTaskQuotaPer15m(usesPerWindow);
+        }
       } catch (syncError) {
         console.error('[SettingsScreen] ❌ Failed to sync quota to Native:', syncError);
-        console.error('[SettingsScreen] Error details:', syncError.message, syncError.stack);
         // Non-critical error - settings are still saved
       }
     } catch (error) {
