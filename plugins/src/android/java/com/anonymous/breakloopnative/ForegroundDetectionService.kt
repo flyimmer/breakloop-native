@@ -58,7 +58,8 @@ class ForegroundDetectionService : AccessibilityService() {
             var expiresAt: Long? = null,
             var postChoiceShown: Boolean = false,
             var lastRecoveryLaunchAtMs: Long = 0,
-            var suppressRecoveryUntilMs: Long = 0
+            var suppressRecoveryUntilMs: Long = 0,
+            var decisionStartedAtMs: Long = 0L
         )
         
         @JvmStatic
@@ -188,6 +189,36 @@ class ForegroundDetectionService : AccessibilityService() {
         fun onSystemSurfaceDestroyed() {
             onSurfaceExit("ON_DESTROY")
             Log.e(LogTags.SS_CANARY, "[SURFACE] Surface DESTROYED")
+        }
+
+        @JvmStatic
+        fun onSessionClosed(session: SessionManager.Session, reason: String) {
+            val app = session.pkg
+            
+            // 1. Check Preservation
+            val preserved = preservedInterventionFlags[app] == true
+            if (preserved) {
+                Log.e(LogTags.QT_STATE, "[SESSION_CLOSE] SKIPPING reset for $app (preserved=true) sessionId=${session.sessionId} reason=$reason")
+                return
+            }
+
+            // 2. State Reset
+            // We trust the SessionManager: if this session was just ended, we MUST reset its app's state if it's still running.
+            val entry = quickTaskMap[app]
+            val didReset: Boolean
+            
+            if (entry != null && entry.state != QuickTaskState.IDLE) {
+                // Force IDLE (Synchronous Logical End)
+                // Log BEFORE write for clarity if needed, but existing pattern is AFTER in most places.
+                // Keeping existing pattern: [STATE_WRITE]
+                Log.e(LogTags.QT_STATE, "[STATE_WRITE] app=$app state=${entry.state} -> IDLE (session_closed)")
+                entry.state = QuickTaskState.IDLE
+                didReset = true
+            } else {
+                didReset = false
+            }
+
+            Log.i(TAG, "[SESSION_CLOSE] closed sessionId=${session.sessionId} pkg=$app reason=$reason reset=$didReset")
         }
         
         private fun cleanupTransientStateIfNeeded(app: String) {
@@ -360,7 +391,21 @@ class ForegroundDetectionService : AccessibilityService() {
 
             // Probe A: Definitive Entry State Log
             val preserved = preservedInterventionFlags[app] == true
-            val state = entry?.state ?: QuickTaskState.IDLE
+            var state = entry?.state ?: QuickTaskState.IDLE
+            
+            // Phase-2 Watchdog: Reset stuck DECISION state (Native Authority recovery)
+            if (state == QuickTaskState.DECISION) {
+                val entryStart = entry?.decisionStartedAtMs ?: 0L
+                val age = now - entryStart
+                val overlayState = SessionManager.getOverlayState()
+                
+                if (age > 5000 && overlayState == SessionManager.OverlayState.INACTIVE) {
+                    Log.w(LogTags.QT_STATE, "[DECISION_WD] reset pkg=$app ageMs=$age reason=NO_ACK overlayState=$overlayState")
+                    entry?.state = QuickTaskState.IDLE
+                    state = QuickTaskState.IDLE
+                }
+            }
+            
             Log.e(LogTags.ENTRY_START, "[ENTRY] app=$app preservedFlag=$preserved state=$state source=$source pid=${android.os.Process.myPid()}")
 
             // NATIVE REFILL CHECK (Synchronous Check, Async Write)
@@ -427,25 +472,35 @@ class ForegroundDetectionService : AccessibilityService() {
             // EXECUTE ACTION (SIDE EFFECTS)
             when (action) {
                 is DecisionGate.GateAction.StartIntervention -> {
-                    showInterventionLastEmittedAt[app] = now
+                    // Start Session
+                    val decision = SessionManager.tryStart(app, SessionManager.Kind.INTERVENTION, now)
                     
-                    if (snapshot.isInterventionPreserved) {
-                        Log.e(LogTags.ENTRY_START, "[PRESERVE_ENTRY] app=$app preserved=true -> resumeMode=RESUME")
-                        val extras = Arguments.createMap().apply {
-                            putString("resumeMode", "RESUME")
+                    if (decision is SessionManager.StartDecision.Start) {
+                        showInterventionLastEmittedAt[app] = now
+                        
+                        // Pass sessionId via extras
+                        val params = Arguments.createMap().apply {
+                            putString("sessionId", decision.sessionId)
                         }
-                        emitQuickTaskCommand("SHOW_INTERVENTION", app, context, extras)
-                        return
-                    } else if (snapshot.quickTaskState == QuickTaskState.INTERVENTION_ACTIVE) {
-                        Log.e(LogTags.QT_STATE, "[RESUME] Resuming intervention for $app")
-                         val extras = Arguments.createMap().apply {
-                            putString("resumeMode", "RESUME")
+
+                        if (snapshot.isInterventionPreserved) {
+                            Log.e(LogTags.ENTRY_START, "[PRESERVE_ENTRY] app=$app preserved=true -> resumeMode=RESUME")
+                            params.putString("resumeMode", "RESUME")
+                            emitQuickTaskCommand("SHOW_INTERVENTION", app, context, params)
+                            return
+                        } else if (snapshot.quickTaskState == QuickTaskState.INTERVENTION_ACTIVE) {
+                            Log.e(LogTags.QT_STATE, "[RESUME] Resuming intervention for $app")
+                            params.putString("resumeMode", "RESUME")
+                            emitQuickTaskCommand("SHOW_INTERVENTION", app, context, params)
+                            return
                         }
-                        emitQuickTaskCommand("SHOW_INTERVENTION", app, context, extras)
-                        return
+                        // Fallback
+                        emitQuickTaskCommand("SHOW_INTERVENTION", app, context, params)
+                    } else {
+                        // Suppressed by SessionManager
+                        val reason = (decision as SessionManager.StartDecision.Suppress).reason
+                        Log.e(LogTags.ENTRY_BLOCK, "[SESSION_BLOCK] app=$app reason=$reason")
                     }
-                    // Fallback to generic start (should not happen given current logic but good for completeness)
-                    emitQuickTaskCommand("SHOW_INTERVENTION", app, context)
                 }
                 
                 is DecisionGate.GateAction.StartQuickTask -> {
@@ -485,25 +540,36 @@ class ForegroundDetectionService : AccessibilityService() {
                     // So we proceed to start new.
                     
                     // Create entry if needed
-                    val activeEntry = entry ?: QuickTaskEntry(app, QuickTaskState.IDLE).also { quickTaskMap[app] = it }
-                    activeEntry.state = QuickTaskState.DECISION
-                     
-                    Log.e(LogTags.DECISION_GATE, "[DECISION_GATE] ACTION: SHOW_QUICK_TASK_DIALOG pkg=$app")
-                    
-                    // COMMIT POINT: Decrement Quota
-                    // Update cache immediately
-                    val newRemaining = remaining - 1
-                    cachedQuotaState = cachedQuotaState.copy(remaining = newRemaining)
-                    Log.e(LogTags.QT_STATE, "[QUOTA_USE] Decremented quota. New remaining: $newRemaining")
-                    
-                    // Persist Async
-                    serviceScope.launch {
-                        try {
-                            quotaStore.decrementQuota()
-                        } catch (e: Exception) { Log.e(TAG, "Failed to persist quota decrement", e) }
+                    // Start Session
+                    val decision = SessionManager.tryStart(app, SessionManager.Kind.QUICK_TASK, now)
+
+                    if (decision is SessionManager.StartDecision.Start) {
+                        val activeEntry = entry ?: QuickTaskEntry(app, QuickTaskState.IDLE).also { quickTaskMap[app] = it }
+                        activeEntry.state = QuickTaskState.DECISION
+                        activeEntry.decisionStartedAtMs = now
+                         
+                        Log.e(LogTags.DECISION_GATE, "[DECISION_GATE] ACTION: SHOW_QUICK_TASK_DIALOG pkg=$app sessionId=${decision.sessionId}")
+                        
+                        // COMMIT POINT: Decrement Quota
+                        val newRemaining = remaining - 1
+                        cachedQuotaState = cachedQuotaState.copy(remaining = newRemaining)
+                        Log.e(LogTags.QT_STATE, "[QUOTA_USE] Decremented quota. New remaining: $newRemaining")
+                        
+                        serviceScope.launch {
+                            try {
+                                quotaStore.decrementQuota()
+                            } catch (e: Exception) { Log.e(TAG, "Failed to persist quota decrement", e) }
+                        }
+                        
+                        val params = Arguments.createMap().apply {
+                            putString("sessionId", decision.sessionId)
+                        }
+                        emitQuickTaskCommand("SHOW_QUICK_TASK_DIALOG", app, context, params)
+                    } else {
+                         // Suppressed by SessionManager
+                        val reason = (decision as SessionManager.StartDecision.Suppress).reason
+                        Log.e(LogTags.ENTRY_BLOCK, "[SESSION_BLOCK] app=$app reason=$reason")
                     }
-                    
-                    emitQuickTaskCommand("SHOW_QUICK_TASK_DIALOG", app, context)
                 }
 
                 is DecisionGate.GateAction.NoAction -> {
@@ -533,11 +599,22 @@ class ForegroundDetectionService : AccessibilityService() {
                                       Log.e(LogTags.ENTRY_BLOCK, "[ENTRY_BLOCK] pkg=$app reason=RECOVERY_THROTTLED source=$source age=${now - entry.lastRecoveryLaunchAtMs}ms")
                                       return
                                   }
-                                  Log.e(LogTags.QT_ENTRY_E, "[RECOVERY_LAUNCH] app=$app (Decision Point)")
-                                  Log.e(LogTags.SS_CANARY, "[RECOVERY_LAUNCH] app=$app")
-                                  entry.lastRecoveryLaunchAtMs = now
-                                  entry.suppressRecoveryUntilMs = now + suppressMs
-                                  emitQuickTaskCommand("SHOW_POST_QUICK_TASK_CHOICE", app, context)
+                                  // Recovery Session (POST_CHOICE)
+                                  val decision = SessionManager.tryStart(app, SessionManager.Kind.POST_CHOICE_RECOVERY, now)
+                                  
+                                  if (decision is SessionManager.StartDecision.Start) {
+                                      Log.e(LogTags.QT_ENTRY_E, "[RECOVERY_LAUNCH] app=$app (Decision Point) sessionId=${decision.sessionId}")
+                                      Log.e(LogTags.SS_CANARY, "[RECOVERY_LAUNCH] app=$app")
+                                      entry.lastRecoveryLaunchAtMs = now
+                                      entry.suppressRecoveryUntilMs = now + suppressMs
+                                      
+                                      val params = Arguments.createMap().apply {
+                                          putString("sessionId", decision.sessionId)
+                                      }
+                                      emitQuickTaskCommand("SHOW_POST_QUICK_TASK_CHOICE", app, context, params)
+                                  } else {
+                                      Log.e(LogTags.ENTRY_BLOCK, "[SESSION_BLOCK] app=$app reason=ACTIVE_SESSION_EXISTS")
+                                  }
                              }
                         } else {
                             Log.e(LogTags.ENTRY_BLOCK, "[ENTRY_BLOCK] pkg=$app reason=SURFACE_ALREADY_ACTIVE source=$source")
@@ -587,6 +664,26 @@ class ForegroundDetectionService : AccessibilityService() {
         private fun emitQuickTaskCommand(command: String, app: String, context: android.content.Context, extraParams: com.facebook.react.bridge.WritableMap? = null) {
             val reactContext = AppMonitorService.getReactContext()
             if (reactContext == null || !reactContext.hasActiveReactInstance()) return
+            
+            // OPTION 1: NATIVE LAUNCH AUTHORITY (Bypass JS Bridge for Surface Launch)
+            // If the command is to SHOW UI, we launch the Activity DIRECTLY from Native.
+            // This guarantees sessionId integrity and eliminates the JS bridge race condition.
+            if (command == "SHOW_INTERVENTION" || command == "SHOW_QUICK_TASK_DIALOG" || command == "SHOW_POST_QUICK_TASK_CHOICE") {
+                val sid = extraParams?.getString("sessionId")
+                val resumeMode = if (extraParams?.hasKey("resumeMode") == true) extraParams.getString("resumeMode") else null
+                
+                Log.i(TAG, "[NATIVE_LAUNCH] Direct launch for $command app=$app sessionId=$sid")
+                
+                val intent = Intent(context, SystemSurfaceActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                    putExtra(SystemSurfaceActivity.EXTRA_WAKE_REASON, command)
+                    putExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP, app)
+                    putExtra("sessionId", sid)
+                    if (resumeMode != null) putExtra("resumeMode", resumeMode)
+                }
+                context.startActivity(intent)
+            }
+
             val params = Arguments.createMap().apply {
                 putString("command", command)
                 putString("app", app)
@@ -596,6 +693,9 @@ class ForegroundDetectionService : AccessibilityService() {
                 if (extraParams != null) {
                     if (extraParams.hasKey("resumeMode")) {
                         putString("resumeMode", extraParams.getString("resumeMode"))
+                    }
+                    if (extraParams.hasKey("sessionId")) {
+                        putString("sessionId", extraParams.getString("sessionId"))
                     }
                 }
             }

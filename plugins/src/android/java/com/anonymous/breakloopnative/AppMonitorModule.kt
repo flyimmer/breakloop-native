@@ -139,6 +139,11 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
                 extras.putString("resumeMode", resumeMode)
             }
             
+            val sessionId = intent.getStringExtra("sessionId")
+            if (sessionId != null) {
+                extras.putString("sessionId", sessionId)
+            }
+            
             android.util.Log.d("AppMonitorModule", "getSystemSurfaceIntentExtras: triggeringApp=$triggeringApp, wakeReason=$wakeReason, resumeMode=$resumeMode")
             promise.resolve(extras)
         } catch (e: Exception) {
@@ -467,26 +472,25 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
      */
     @ReactMethod
     fun launchSystemSurface(wakeReason: String, triggeringApp: String, extras: com.facebook.react.bridge.ReadableMap? = null) {
-        android.util.Log.d("AppMonitorModule", "📱 System Brain requested SystemSurface launch: $wakeReason for $triggeringApp")
+        val overlayState = SessionManager.getOverlayState()
+        android.util.Log.d("AppMonitorModule", "📱 JS requested launchSystemSurface (Legacy): $wakeReason for $triggeringApp state=$overlayState")
+
+        // HARD GUARD: Native Launch Authority Enabled (v50+)
+        // We strictly ignore JS launch requests to prevent double-launches and enforce native lifecycle control.
+        android.util.Log.w("AppMonitorModule", "[DEPRECATION_NOTICE] legacy JS launch ignored (native authority enabled)")
         
-        // Phase-2 Architecture: SystemSurfaceActivity must be DISPOSABLE and NEVER REUSED
-        // Each launch creates a fresh Activity instance with fresh Intent extras
-        // REMOVED FLAG_ACTIVITY_CLEAR_TOP to prevent Activity reuse
-        // 
-        // Modal Task Launch: POST_QUICK_TASK_CHOICE is a blocking obligation, not an overlay
-        // FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS makes it a modal system task that survives
-        // launcher interactions (swipe up, search) without being destroyed by Android
+        /* 
+         * LEGACY CODE (DISABLED):
+         * 
         val intent = Intent(reactApplicationContext, SystemSurfaceActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
             putExtra(SystemSurfaceActivity.EXTRA_WAKE_REASON, wakeReason)
             putExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP, triggeringApp)
             
-            // V3: Pass extras to intent
             var resumeModeLogged = "null"
             val isPreserved = if (triggeringApp != null) ForegroundDetectionService.isInterventionPreserved(triggeringApp) else false
             
             if (isPreserved) {
-                // FORCE RESUME if preserved (Override JS)
                 putExtra("resumeMode", "RESUME")
                 resumeModeLogged = "RESUME_FORCED"
             } else if (extras != null) {
@@ -495,13 +499,19 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
                     putExtra("resumeMode", mode)
                     resumeModeLogged = mode ?: "null"
                 }
+
+                if (extras.hasKey("sessionId")) {
+                    val sid = extras.getString("sessionId")
+                    putExtra("sessionId", sid)
+                }
             }
-            // Probe B: Intent Extras Log
-            android.util.Log.e("SS_INTENT", "[LAUNCH_SURFACE] [PRESERVE_READ] app=$triggeringApp isPreserved=$isPreserved -> resumeMode=$resumeModeLogged")
+            // Probe B: Intent Extras Log (DEPRECATED PATH)
+            // Log.e("SS_INTENT", "...") - Moved to SystemSurfaceActivity and ForegroundDetectionService
         }
         
         android.util.Log.i("AppMonitorModule", "🆕 Launching fresh SystemSurfaceActivity (disposable)")
         reactApplicationContext.startActivity(intent)
+        */
     }
 
     /**

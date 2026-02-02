@@ -30,6 +30,7 @@ const KOTLIN_FILES = [
   'MonitoredAppsStore.kt',
   'DecisionGate.kt',
   'IntentionStore.kt',
+  'SessionManager.kt',
 ];
 
 function syncKotlinFiles() {

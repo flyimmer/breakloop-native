@@ -63,6 +63,7 @@ function getSourcePaths(projectRoot) {
     monitoredAppsStore: path.join(javaPath, 'MonitoredAppsStore.kt'),
     decisionGate: path.join(javaPath, 'DecisionGate.kt'),
     intentionStore: path.join(javaPath, 'IntentionStore.kt'),
+    sessionManager: path.join(javaPath, 'SessionManager.kt'),
     accessibilityXml: path.join(pluginSrcPath, 'res', 'xml', 'accessibility_service.xml'),
     stringsXml: path.join(pluginSrcPath, 'res', 'values', 'strings.xml'),
     stylesXml: path.join(pluginSrcPath, 'res', 'values', 'styles.xml'),
@@ -91,6 +92,7 @@ function getDestinationPaths(projectRoot) {
     monitoredAppsStore: path.join(javaPath, 'MonitoredAppsStore.kt'),
     decisionGate: path.join(javaPath, 'DecisionGate.kt'),
     intentionStore: path.join(javaPath, 'IntentionStore.kt'),
+    sessionManager: path.join(javaPath, 'SessionManager.kt'),
     accessibilityXml: path.join(androidMainPath, 'res', 'xml', 'accessibility_service.xml'),
   };
 }
@@ -227,6 +229,14 @@ function copyKotlinFiles(projectRoot) {
     console.log(`[${PLUGIN_NAME}] Copied IntentionStore.kt`);
   } else {
     console.warn(`[${PLUGIN_NAME}] IntentionStore.kt not found, skipping (optional)`);
+  }
+
+  // Copy SessionManager.kt
+  if (fs.existsSync(sourcePaths.sessionManager)) {
+    fs.copyFileSync(sourcePaths.sessionManager, destPaths.sessionManager);
+    console.log(`[${PLUGIN_NAME}] Copied SessionManager.kt`);
+  } else {
+    console.warn(`[${PLUGIN_NAME}] SessionManager.kt not found, skipping (optional)`);
   }
 }
 

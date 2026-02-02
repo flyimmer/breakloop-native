@@ -87,6 +87,11 @@ class SystemSurfaceActivity : ReactActivity() {
 
     private var audioManager: AudioManager? = null
     private var audioFocusRequest: AudioFocusRequest? = null
+    
+    // Lifecycle Tracking
+    private var currentSessionId: String? = null
+    private var finishReason: String = "ACTIVITY_DESTROYED" // Default reason
+    private var isClosing: Boolean = false // M4 Hardening: Loop prevention
 
     companion object {
         private const val TAG = "SystemSurfaceActivity"
@@ -147,8 +152,11 @@ class SystemSurfaceActivity : ReactActivity() {
 
         Log.i(TAG, "🎯 SystemSurfaceActivity created")
         
+        val sessionId = intent?.getStringExtra("sessionId")
+        currentSessionId = sessionId
+        
         // Register with Manager
-        SystemSurfaceManager.register(this)
+        SystemSurfaceManager.register(this, sessionId)
         
         // Signal native service that surface is now active (Lifecycle Gate)
         ForegroundDetectionService.onSystemSurfaceOpened()
@@ -180,7 +188,10 @@ class SystemSurfaceActivity : ReactActivity() {
         val instanceId = System.identityHashCode(this)
         val intentNonce = System.currentTimeMillis() // Simple monotonic nonce
         
-        Log.d(LOG_TAG_LIFE, "[onNewIntent] instanceId=$instanceId wakeReason=$wakeReason app=$triggeringApp resumeMode=$resumeMode flags=${intent.flags} nonce=$intentNonce taskId=$taskId")
+        val sessionId = intent.getStringExtra("sessionId")
+        currentSessionId = sessionId // Update tracking for unregister
+        
+        Log.d(LOG_TAG_LIFE, "[onNewIntent] instanceId=$instanceId wakeReason=$wakeReason app=$triggeringApp sessionId=$sessionId resumeMode=$resumeMode flags=${intent.flags} nonce=$intentNonce taskId=$taskId")
         Log.e("SS_BOOT", "onNewIntent wakeReason=$wakeReason app=$triggeringApp resumeMode=$resumeMode flags=${intent.flags} nonce=$intentNonce taskId=$taskId")
 
         // Emit signal to JS (Delegated to AppMonitorModule)
@@ -191,6 +202,7 @@ class SystemSurfaceActivity : ReactActivity() {
                 putDouble("intentNonce", intentNonce.toDouble())
                 putString("triggeringAppHint", triggeringApp)
                 putString("wakeReasonHint", wakeReason)
+                putString("sessionIdHint", sessionId)
              }
              
              AppMonitorModule.emitSystemSurfaceNewIntentSignal(params)
@@ -230,7 +242,9 @@ class SystemSurfaceActivity : ReactActivity() {
         ForegroundDetectionService.onSystemSurfaceDestroyed()
         
         // Unregister from Manager
-        SystemSurfaceManager.unregister(this)
+        // Unregister from Manager
+        val sessionId = intent?.getStringExtra("sessionId") ?: currentSessionId
+        SystemSurfaceManager.unregister(this, sessionId, finishReason)
         
         // Paranoid Cleanup (Guardrail C)
         try {
@@ -267,7 +281,24 @@ class SystemSurfaceActivity : ReactActivity() {
         if (!isFinishing) {
             val triggeringApp = intent?.getStringExtra(EXTRA_TRIGGERING_APP)
             Log.e(LogTags.SURFACE_RECOVERY, "[SURFACE_RECOVERY] reason=ACTIVITY_STOPPED_NOT_FINISHING instanceId=$instanceId")
-            ForegroundDetectionService.onSurfaceExit("ACTIVITY_STOP", instanceId, triggeringApp = triggeringApp)
+            // Redundant cleanup removed. requestClose handles it.
+            
+            // ZOMBIE PREVENTION (FIX):
+            // If we are stopped and NOT changing configurations (e.g. rotation), we MUST finish.
+            // Otherwise, we leave a zombie session in SessionManager that blocks future launches.
+            if (!isChangingConfigurations && !isClosing) {
+                // M4 Hardening: Logical End Before Physical Finish
+                val sessionId = currentSessionId
+                if (sessionId != null) {
+                    isClosing = true
+                    Log.i("SURFACE_LIFECYCLE", "[SURFACE_LIFECYCLE] onStop triggering requestClose sessionId=$sessionId")
+                    SystemSurfaceManager.requestClose(sessionId, "ACTIVITY_STOP_FINISH")
+                } else {
+                    // Fallback if no session (shouldn't happen in valid flow, but just in case)
+                     finishReason = "ACTIVITY_STOP_FINISH_NO_SESSION"
+                     finish()
+                }
+            }
         }
     }
 

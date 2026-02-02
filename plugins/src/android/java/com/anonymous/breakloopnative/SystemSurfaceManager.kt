@@ -33,11 +33,15 @@ object SystemSurfaceManager {
     private var createdAt: Long = 0
     private var watchdogRunnable: Runnable? = null
     private val handler = Handler(Looper.getMainLooper())
+    
+    // M4 Hardening: Idempotency set for closing sessions
+    // specific replacement for newKeySet compatibility
+    private val closingSessions = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
 
     /**
      * Register activity instance (called from onCreate)
      */
-    fun register(activity: SystemSurfaceActivity) {
+    fun register(activity: SystemSurfaceActivity, sessionId: String?) {
         val instanceId = System.identityHashCode(activity)
         activityRef = WeakReference(activity)
         currentInstanceId = instanceId
@@ -47,6 +51,13 @@ object SystemSurfaceManager {
         
         Log.i(TAG, "✅ Registered SystemSurfaceActivity instanceId=$instanceId reason=$currentWakeReason app=$currentApp")
         Log.d(LogTags.SS_WD, "[REGISTER] instanceId=$instanceId wakeReason=$currentWakeReason app=$currentApp")
+        
+        // Notify SessionManager
+        if (sessionId != null) {
+            SessionManager.onOverlayShown(sessionId)
+        } else {
+             Log.w(TAG, "⚠️ register called without sessionId - SessionManager state might be out of sync")
+        }
         
         // Auto-schedule primary boot watchdog (2s)
         // This is cancelled by notifyUiMounted() when React UI finishes mounting.
@@ -69,7 +80,7 @@ object SystemSurfaceManager {
     /**
      * Unregister activity instance (called from onDestroy)
      */
-    fun unregister(activity: SystemSurfaceActivity) {
+    fun unregister(activity: SystemSurfaceActivity, sessionId: String?, reason: String = "ACTIVITY_DESTROYED") {
         val current = activityRef?.get()
         if (current === activity) {
             val instanceId = System.identityHashCode(activity)
@@ -78,7 +89,46 @@ object SystemSurfaceManager {
             }
             cancelWatchdog()
             activityRef = null
-            Log.i(TAG, "🧹 Unregistered SystemSurfaceActivity instanceId=$instanceId")
+            Log.i(TAG, "🧹 Unregistered SystemSurfaceActivity instanceId=$instanceId reason=$reason")
+            
+            // Notify SessionManager
+             if (sessionId != null) {
+                SessionManager.endSession(sessionId, reason)
+             }
+        }
+    }
+
+    /**
+     * M4 Hardening: Logical End Before Physical Finish
+     * Single choke point for all close requests.
+     */
+    fun requestClose(sessionId: String, reason: String) {
+        if (!closingSessions.add(sessionId)) {
+            Log.w(TAG, "[SESSION_CLOSE] Ignored duplicate requestClose for sessionId=$sessionId reason=$reason")
+            return
+        }
+
+        try {
+            // 1. Logical Close (Synchronous)
+            // We tell SessionManager to end. It returns the session object if it was valid/active.
+            val session = SessionManager.endSession(sessionId, reason)
+
+            // 2. State Reset (Synchronous)
+            // If the session was valid, we reset the app state immediately.
+            if (session != null) {
+                ForegroundDetectionService.onSessionClosed(session, reason)
+            }
+
+            // 3. Physical Close
+            // We trigger the activity finish. This runs independently of session state.
+            finish(reason)
+            
+        } finally {
+            // Cleanup after a short delay to allow physical destroy to complete? 
+            // actually, strictly speaking we should remove it only when destroyed, but for simple idempotency
+            // covering the "race" window, removing it here is fine because endSession is already atomic.
+            // The set protects against *concurrent* calls to requestClose.
+            closingSessions.remove(sessionId)
         }
     }
 
@@ -111,6 +161,12 @@ object SystemSurfaceManager {
                 } finally {
                     // Unified state cleanup on finish
                     ForegroundDetectionService.onSurfaceExit("FINISH_EXEC_$reason", instanceId, triggeringApp = currentApp)
+                    
+                     // Explicit session close (backup for unregister)
+                     val sid = SessionManager.getCurrentSessionId()
+                     if (sid != null) {
+                         SessionManager.endSession(sid, "FINISH_CALLED_$reason")
+                     }
                 }
             }
             return true
