@@ -28,6 +28,8 @@ const KOTLIN_FILES = [
   'LogTags.kt',
   'QuickTaskQuotaStore.kt',
   'MonitoredAppsStore.kt',
+  'DecisionGate.kt',
+  'IntentionStore.kt',
 ];
 
 function syncKotlinFiles() {

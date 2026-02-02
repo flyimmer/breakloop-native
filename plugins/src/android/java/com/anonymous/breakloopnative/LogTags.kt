@@ -18,4 +18,5 @@ object LogTags {
     const val SURFACE_RECOVERY = "SURFACE_RECOVERY"
     const val ENTRY_BLOCK = "ENTRY_BLOCK"
     const val ENTRY_START = "ENTRY_START"
+    const val DECISION_GATE = "DECISION_GATE"
 }

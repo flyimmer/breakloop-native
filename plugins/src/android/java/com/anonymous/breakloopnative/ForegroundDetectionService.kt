@@ -71,11 +71,13 @@ class ForegroundDetectionService : AccessibilityService() {
         // Native Config Stores
         private lateinit var quotaStore: QuickTaskQuotaStore
         private lateinit var monitoredStore: MonitoredAppsStore
+        private lateinit var intentionStore: IntentionStore
         private val serviceScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
         
         // Volatile In-Memory Cache (Native Authority)
         @Volatile private var cachedQuotaState: QuotaState = QuotaState(1L, 0L, 1L)
         @Volatile private var cachedMonitoredApps: Set<String> = emptySet()
+        @Volatile private var cachedIntentions: Map<String, Long> = emptyMap()
 
 
         
@@ -254,6 +256,45 @@ class ForegroundDetectionService : AccessibilityService() {
             }
         }
 
+        @JvmStatic
+        fun setIntention(app: String, durationMs: Long) {
+            val now = System.currentTimeMillis()
+            val until = now + durationMs
+            
+            // 1. Update Cache Immediately
+            val currentMap = HashMap(cachedIntentions)
+            currentMap[app] = until
+            cachedIntentions = currentMap
+            Log.e(LogTags.QT_STATE, "[INTENTION] Set for $app duration=${durationMs}ms until=$until")
+            
+            // 2. Persist Async
+            serviceScope.launch {
+                intentionStore.setIntention(app, until)
+            }
+        }
+
+        @JvmStatic
+        fun clearIntention(app: String) {
+            // 1. Update Cache Immediately
+            val currentMap = HashMap(cachedIntentions)
+            if (currentMap.remove(app) != null) {
+                cachedIntentions = currentMap
+                Log.e(LogTags.QT_STATE, "[INTENTION] Cleared for $app")
+                
+                // 2. Persist Async
+                serviceScope.launch {
+                    intentionStore.clearIntention(app)
+                }
+            }
+        }
+        
+        @JvmStatic
+        fun getIntentionRemainingMs(app: String): Long {
+            val until = cachedIntentions[app] ?: 0L
+            val now = System.currentTimeMillis()
+            return kotlin.math.max(0L, until - now)
+        }
+
         private fun cancelNativeTimer(app: String) {
             activeTimerRunnables.remove(app)?.let {
                 Handler(Looper.getMainLooper()).removeCallbacks(it)
@@ -315,35 +356,13 @@ class ForegroundDetectionService : AccessibilityService() {
 
         private fun handleMonitoredAppEntry(app: String, context: android.content.Context, source: String = "NORMAL", force: Boolean = false) {
             val now = System.currentTimeMillis()
-            val entry = quickTaskMap[app]
-            
+            var entry = quickTaskMap[app] // var because we might mutate it (reset IDLE)
+
             // Probe A: Definitive Entry State Log
             val preserved = preservedInterventionFlags[app] == true
             val state = entry?.state ?: QuickTaskState.IDLE
             Log.e(LogTags.ENTRY_START, "[ENTRY] app=$app preservedFlag=$preserved state=$state source=$source pid=${android.os.Process.myPid()}")
 
-            // V3: Early Preservation Override (Highest Priority)
-            if (preservedInterventionFlags[app] == true) {
-                 // DEBOUNCE: Suppress duplicate SHOW_INTERVENTION within 800ms
-                 val lastEmitted = showInterventionLastEmittedAt[app] ?: 0L
-                 if (now - lastEmitted < 800) {
-                     Log.e(LogTags.ENTRY_START, "[SHOW_INT_DEBOUNCE] suppressed for $app (last=${now-lastEmitted}ms ago)")
-                     return
-                 }
-                 showInterventionLastEmittedAt[app] = now
-
-                 Log.e(LogTags.ENTRY_START, "[PRESERVE_ENTRY] app=$app preserved=true -> resumeMode=RESUME")
-                 val extras = Arguments.createMap().apply {
-                     putString("resumeMode", "RESUME")
-                 }
-                 emitQuickTaskCommand("SHOW_INTERVENTION", app, context, extras)
-                 return
-            }
-            
-            // AVOID CONFLICTS: Quick Task Eligibility Logic
-            val qtState = entry?.state ?: QuickTaskState.IDLE
-            val isSurfaceActive = isSystemSurfaceActive
-            
             // NATIVE REFILL CHECK (Synchronous Check, Async Write)
             // 1. Check window expiry against cache
             val currentState = cachedQuotaState
@@ -368,120 +387,108 @@ class ForegroundDetectionService : AccessibilityService() {
                     } catch (e: Exception) { Log.e(TAG, "Failed to persist refill", e) }
                 }
             }
-
-            val quotaRemaining = remaining
-            val qSuppressMs = (quitSuppressionUntil[app] ?: 0L) - now
-            val wSuppressMs = (suppressWakeUntil[app] ?: 0L) - now
             
-            var qtEligible = true
-            var eligReason = "ELIGIBLE"
-
-            if (isSurfaceActive) {
-                qtEligible = false
-                eligReason = "SURFACE_ACTIVE"
-            } else if (qtState != QuickTaskState.IDLE && qtState != QuickTaskState.POST_CHOICE) {
-                // DECISION or ACTIVE state blocks re-entry unless cleaned up
-                qtEligible = false
-                eligReason = "STATE_NOT_IDLE_${qtState}"
-            } else if (quotaRemaining <= 0) {
-                qtEligible = false
-                eligReason = "QUOTA_ZERO"
-            } else if (qSuppressMs > 0 && !force) {
-                qtEligible = false
-                eligReason = "SUPPRESSION_QUIT_${qSuppressMs}ms"
-            } else if (wSuppressMs > 0 && !force) {
-                qtEligible = false
-                eligReason = "SUPPRESSION_WAKE_${wSuppressMs}ms"
+            // BUILD SNAPSHOT (PURE READ)
+            val intentionUntil = cachedIntentions[app] ?: 0L
+            var intentionRemaining = if (intentionUntil > now) intentionUntil - now else 0L
+            
+            // Lazy Expiry Pruning
+            if (intentionUntil > 0 && intentionRemaining == 0L) {
+               // It was set but expired. Optimistically remove from RAM cache.
+               // We don't block for persistence here, and we don't trigger a full persist unless necessary.
+               // For now, let's just use the value 0. The store's restore() will clean up disk next boot.
+               // Or we can fire and forget:
+               serviceScope.launch {
+                   clearIntention(app) // This logs and persists
+               }
             }
 
-            Log.e("DECISION_GATE", "[DECISION_GATE] app=$app qtElig=$qtEligible reason=$eligReason state=$qtState surfaceActive=$isSurfaceActive quota=$quotaRemaining underlying=$underlyingApp")
+            val snapshot = DecisionGate.GateSnapshot(
+                isMonitored = true, // We are in handleMonitoredAppEntry
+                qtRemaining = remaining.toInt(),
+                isSystemSurfaceActive = isSystemSurfaceActive,
+                quickTaskState = state,
+                intentionRemainingMs = intentionRemaining,
+                isInterventionPreserved = preserved,
+                lastInterventionEmittedAt = showInterventionLastEmittedAt[app] ?: 0L,
+                isQuitSuppressed = quitSuppressionUntil.containsKey(app),
+                quitSuppressionRemainingMs = (quitSuppressionUntil[app] ?: 0L) - now,
+                isWakeSuppressed = suppressWakeUntil.containsKey(app),
+                wakeSuppressionRemainingMs = (suppressWakeUntil[app] ?: 0L) - now,
+                isForceEntry = force
+            )
 
-            // ENTRY_START: Decisive Log
-            Log.e(LogTags.ENTRY_START, "[ENTRY_START] pkg=$app source=$source force=$force elig=$qtEligible reason=$eligReason pid=${android.os.Process.myPid()}")
-            val hasTimer = activeTimerRunnables.containsKey(app)
-            Log.e(TAG, "[ENTRY] pkg=$app decision=$qtEligible reason=$eligReason isSystemSurfaceActive=$isSurfaceActive remainingQuota=$quotaRemaining quickTaskState=$qtState timers=$hasTimer")
+            // EVALUATE DECISION (PURE)
+            val (action, reason) = DecisionGate.evaluate(app, now, snapshot)
 
-            if (!force) {
-                val suppressUntil = quitSuppressionUntil[app]
-                if (suppressUntil != null) {
-                    if (now >= suppressUntil) {
-                        quitSuppressionUntil.remove(app)
-                        recheckAttempts.remove(app)
-                    } else {
-                        val isStable = (lastForegroundPackage == app) && (now - lastForegroundChangeTime >= 200)
-                        if (!isStable) {
-                            Log.e(LogTags.ENTRY_BLOCK, "[ENTRY_BLOCK] pkg=$app reason=UNSTABLE source=$source details=stability_delay_active")
-                            scheduleDeferredRecheck(app, context)
-                            return
+            // LOG DECISION
+            Log.e(LogTags.DECISION_GATE, "[DECISION_GATE] pkg=$app action=$action reason=$reason qtRemaining=${snapshot.qtRemaining} quickTaskState=${snapshot.quickTaskState} systemSurfaceActive=${snapshot.isSystemSurfaceActive} suppressed=${snapshot.isQuitSuppressed || snapshot.isWakeSuppressed} preserved=${snapshot.isInterventionPreserved}")
+
+            // EXECUTE ACTION (SIDE EFFECTS)
+            when (action) {
+                is DecisionGate.GateAction.StartIntervention -> {
+                    showInterventionLastEmittedAt[app] = now
+                    
+                    if (snapshot.isInterventionPreserved) {
+                        Log.e(LogTags.ENTRY_START, "[PRESERVE_ENTRY] app=$app preserved=true -> resumeMode=RESUME")
+                        val extras = Arguments.createMap().apply {
+                            putString("resumeMode", "RESUME")
                         }
-                        quitSuppressionUntil.remove(app)
-                        recheckAttempts.remove(app)
+                        emitQuickTaskCommand("SHOW_INTERVENTION", app, context, extras)
+                        return
+                    } else if (snapshot.quickTaskState == QuickTaskState.INTERVENTION_ACTIVE) {
+                        Log.e(LogTags.QT_STATE, "[RESUME] Resuming intervention for $app")
+                         val extras = Arguments.createMap().apply {
+                            putString("resumeMode", "RESUME")
+                        }
+                        emitQuickTaskCommand("SHOW_INTERVENTION", app, context, extras)
+                        return
                     }
+                    // Fallback to generic start (should not happen given current logic but good for completeness)
+                    emitQuickTaskCommand("SHOW_INTERVENTION", app, context)
                 }
-            } else {
-                Log.e(TAG, "[QT_ENTRY] Forced entry for $app (source: $source) - Bypassing suppressions")
-                quitSuppressionUntil.remove(app)
-                recheckAttempts.remove(app)
-            }
-
-            underlyingApp = app
-            
-            // V3: Handle Interrupted Intervention Resumption
-            if (entry?.state == QuickTaskState.INTERVENTION_ACTIVE) {
-                val preserved = preservedInterventionFlags[app] == true
-                Log.e(LogTags.QT_STATE, "[PRESERVE_READ] app=$app value=$preserved caller=handleMonitoredAppEntry_v3")
-                Log.e(LogTags.ENTRY_START, "[ENTRY_DECISION] app=$app state=${entry.state} preserved=$preserved")
                 
-                if (preserved) {
-                    Log.e(LogTags.QT_STATE, "[RESUME] Resuming intervention for $app")
-                    val extras = Arguments.createMap().apply {
-                        putString("resumeMode", "RESUME")
-                    }
-                    emitQuickTaskCommand("SHOW_INTERVENTION", app, context, extras)
-                    return
-                } else {
-                    Log.i(TAG, "[RESET] Intervention active but not preserved for $app -> Resetting to IDLE")
-                    Log.e(LogTags.QT_STATE, "[STATE_WRITE] app=$app state=${entry.state} -> IDLE (entry_not_preserved)")
-                    entry.state = QuickTaskState.IDLE
-                    Log.e(LogTags.QT_STATE, "[PRESERVE_WRITE] app=$app value=REMOVE caller=handleMonitoredAppEntry_reset")
-                    preservedInterventionFlags.remove(app)
-                    // Fall through to normal decision logic
-                }
-            }
-            
-            // Hardening (Recovery): If we are in POST_CHOICE but UI is not visible, relaunch it with gating.
-            if (entry?.state == QuickTaskState.POST_CHOICE) {
-                // ... (Existing recovery logic unchanged) ...
-                if (!isSystemSurfaceActive) {
-                    val throttleMs = 10_000L
-                    val suppressionMs = 20_000L
-                    
-                    if (now < entry.suppressRecoveryUntilMs) {
-                        Log.e(LogTags.ENTRY_BLOCK, "[ENTRY_BLOCK] pkg=$app reason=RECOVERY_SUPPRESSED source=$source")
-                        return
-                    }
-                    
-                    if (now - entry.lastRecoveryLaunchAtMs < throttleMs) {
-                        Log.e(LogTags.ENTRY_BLOCK, "[ENTRY_BLOCK] pkg=$app reason=RECOVERY_THROTTLED source=$source age=${now - entry.lastRecoveryLaunchAtMs}ms")
-                        return
-                    }
-                    
-                    Log.e(LogTags.QT_ENTRY_E, "[RECOVERY_LAUNCH] app=$app (Decision Point)")
-                    Log.e(LogTags.SS_CANARY, "[RECOVERY_LAUNCH] app=$app")
-                    entry.lastRecoveryLaunchAtMs = now
-                    entry.suppressRecoveryUntilMs = now + suppressionMs
-                    emitQuickTaskCommand("SHOW_POST_QUICK_TASK_CHOICE", app, context)
-                } else {
-                    Log.e(LogTags.ENTRY_BLOCK, "[ENTRY_BLOCK] pkg=$app reason=SURFACE_ALREADY_ACTIVE source=$source")
-                }
-                return
-            }
+                is DecisionGate.GateAction.StartQuickTask -> {
+                    // StartQuickTask implies we passed all suppressions, so we clear them
+                     if (!force) { // Logic from before: "if (!force) ... remove ... else remove" -> effectively always remove if we proceed
+                         quitSuppressionUntil.remove(app)
+                         recheckAttempts.remove(app)
+                     } else {
+                         Log.e(TAG, "[QT_ENTRY] Forced entry for $app (source: $source) - Bypassing suppressions")
+                         quitSuppressionUntil.remove(app)
+                         recheckAttempts.remove(app)
+                     }
 
-            if (entry == null || entry.state == QuickTaskState.IDLE) {
-                val activeEntry = entry ?: QuickTaskEntry(app, QuickTaskState.IDLE).also { quickTaskMap[app] = it }
-                activeEntry.state = QuickTaskState.DECISION
-                if (quotaRemaining > 0) {
-                    Log.e("DECISION_GATE", "[DECISION_GATE] ACTION: SHOW_QUICK_TASK_DIALOG pkg=$app")
+                    underlyingApp = app
+                    
+                    // Reset if we were in INTERVENTION_ACTIVE but not preserved (Logic moved from inline)
+                    if (snapshot.quickTaskState == QuickTaskState.INTERVENTION_ACTIVE && !snapshot.isInterventionPreserved) {
+                         Log.i(TAG, "[RESET] Intervention active but not preserved for $app -> Resetting to IDLE")
+                         Log.e(LogTags.QT_STATE, "[STATE_WRITE] app=$app state=${entry?.state} -> IDLE (entry_not_preserved)")
+                         entry?.state = QuickTaskState.IDLE
+                         entry = quickTaskMap[app] // Refresh ref
+                         Log.e(LogTags.QT_STATE, "[PRESERVE_WRITE] app=$app value=REMOVE caller=handleMonitoredAppEntry_reset")
+                         preservedInterventionFlags.remove(app)
+                    }
+                    
+                    // Hardening (Recovery): If we are in POST_CHOICE but UI is not visible, relaunch it with gating.
+                    // This block was previously executed BEFORE the "Start New Decision" block.
+                    // But "StartQuickTask" action means we are ELIGIBLE for a NEW session (or recovery).
+                    // The Gate Logic returns STATE_NOT_IDLE if in POST_CHOICE. 
+                    // So if we are here, we are NOT in POST_CHOICE, OR the Gate allowed it.
+                    // Wait, Gate returns STATE_NOT_IDLE_POST_CHOICE if in POST_CHOICE, effectively blocking StartQuickTask?
+                    // Original code:
+                    // if (entry?.state == QuickTaskState.POST_CHOICE) { ... logic ... return }
+                    // if (entry == null || entry.state == QuickTaskState.IDLE) { ... Start ... }
+                    
+                    // IF Gate returned StartQuickTask, it means state IS IDLE (or effectively IDLE).
+                    // So we proceed to start new.
+                    
+                    // Create entry if needed
+                    val activeEntry = entry ?: QuickTaskEntry(app, QuickTaskState.IDLE).also { quickTaskMap[app] = it }
+                    activeEntry.state = QuickTaskState.DECISION
+                     
+                    Log.e(LogTags.DECISION_GATE, "[DECISION_GATE] ACTION: SHOW_QUICK_TASK_DIALOG pkg=$app")
                     
                     // COMMIT POINT: Decrement Quota
                     // Update cache immediately
@@ -497,10 +504,82 @@ class ForegroundDetectionService : AccessibilityService() {
                     }
                     
                     emitQuickTaskCommand("SHOW_QUICK_TASK_DIALOG", app, context)
-                } else {
-                    Log.e("DECISION_GATE", "[DECISION_GATE] ACTION: NO_QUICK_TASK (Quota Zero) pkg=$app")
-                    Log.e(LogTags.ENTRY_BLOCK, "[ENTRY_BLOCK] pkg=$app reason=QUOTA_ZERO source=$source")
-                    emitQuickTaskCommand("NO_QUICK_TASK_AVAILABLE", app, context)
+                }
+
+                is DecisionGate.GateAction.NoAction -> {
+                    // Handle specific side effects (e.g. logging blocks, handling unstable rechecks)
+                    
+                    // 1. Post Choice Recovery (Special Case where logic was "Block entry, but maybe recover")
+                    if (snapshot.quickTaskState == QuickTaskState.POST_CHOICE) {
+                         // Original logic:
+                         /*
+                        if (!isSystemSurfaceActive) {
+                            // ... throttle logic ...
+                            emitQuickTaskCommand("SHOW_POST_QUICK_TASK_CHOICE", app, context)
+                        } else {
+                             Log.e(LogTags.ENTRY_BLOCK, "[ENTRY_BLOCK] pkg=$app reason=SURFACE_ALREADY_ACTIVE source=$source")
+                        }
+                        return
+                        */
+                        if (!snapshot.isSystemSurfaceActive) {
+                             if (entry != null) {
+                                  val throttleMs = 10_000L
+                                  val suppressMs = 20_000L
+                                  if (now < entry.suppressRecoveryUntilMs) {
+                                      Log.e(LogTags.ENTRY_BLOCK, "[ENTRY_BLOCK] pkg=$app reason=RECOVERY_SUPPRESSED source=$source")
+                                      return
+                                  }
+                                  if (now - entry.lastRecoveryLaunchAtMs < throttleMs) {
+                                      Log.e(LogTags.ENTRY_BLOCK, "[ENTRY_BLOCK] pkg=$app reason=RECOVERY_THROTTLED source=$source age=${now - entry.lastRecoveryLaunchAtMs}ms")
+                                      return
+                                  }
+                                  Log.e(LogTags.QT_ENTRY_E, "[RECOVERY_LAUNCH] app=$app (Decision Point)")
+                                  Log.e(LogTags.SS_CANARY, "[RECOVERY_LAUNCH] app=$app")
+                                  entry.lastRecoveryLaunchAtMs = now
+                                  entry.suppressRecoveryUntilMs = now + suppressMs
+                                  emitQuickTaskCommand("SHOW_POST_QUICK_TASK_CHOICE", app, context)
+                             }
+                        } else {
+                            Log.e(LogTags.ENTRY_BLOCK, "[ENTRY_BLOCK] pkg=$app reason=SURFACE_ALREADY_ACTIVE source=$source")
+                        }
+                        return
+                    }
+
+                    // 2. Unstable Recheck Logic (From original block: "if (!force)...")
+                    if (!force && snapshot.isQuitSuppressed) { // Gate would return SUPPRESSION_QUIT
+                         if (reason.startsWith(DecisionGate.Reason.SUPPRESSION_QUIT)) { // Confirm it's the quit suppression
+                             val suppressUntil = quitSuppressionUntil[app]
+                             if (suppressUntil != null) {
+                                 // Logic: if now >= suppressUntil -> remove (Gate says NoAction, but maybe it just expired?)
+                                 // Gate Logic: if (now < expire) -> suppressed.
+                                 // If Gate says suppressed, it means now < expire.
+                                 
+                                 val isStable = (lastForegroundPackage == app) && (now - lastForegroundChangeTime >= 200)
+                                 if (!isStable) {
+                                     Log.e(LogTags.ENTRY_BLOCK, "[ENTRY_BLOCK] pkg=$app reason=UNSTABLE source=$source details=stability_delay_active")
+                                     scheduleDeferredRecheck(app, context)
+                                     return
+                                 }
+                             }
+                         }
+                    } else if (snapshot.isQuitSuppressed) {
+                         // Gate said NoAction, but maybe expected expired?
+                         // If Gate said SUPPRESSION_QUIT, it means it's valid.
+                         // But if Gate said SUPPRESSION_QUIT, and we are NOT forced, we handle unstable.
+                         // What if Gate said NoAction for another reason?
+                    }
+
+                    // 3. Quota Zero Emission
+                    if (reason == DecisionGate.Reason.QUOTA_ZERO) {
+                        Log.e(LogTags.DECISION_GATE, "[DECISION_GATE] ACTION: NO_QUICK_TASK (Quota Zero) pkg=$app")
+                        Log.e(LogTags.ENTRY_BLOCK, "[ENTRY_BLOCK] pkg=$app reason=QUOTA_ZERO source=$source")
+                        emitQuickTaskCommand("NO_QUICK_TASK_AVAILABLE", app, context)
+                    }
+                    
+                    // 4. Entry Block Logging (General)
+                    // Original: Log.e(LogTags.ENTRY_BLOCK, "[ENTRY_BLOCK] pkg=$app reason=... source=$source")
+                    // We can map Gate reasons to these logs if strict parity needed.
+                    // E.g. UNSTABLE handled above.
                 }
             }
         }
@@ -720,6 +799,7 @@ class ForegroundDetectionService : AccessibilityService() {
         // Init Stores
         quotaStore = QuickTaskQuotaStore(applicationContext)
         monitoredStore = MonitoredAppsStore(applicationContext)
+        intentionStore = IntentionStore(applicationContext)
         
         // SS_BUILD Fingerprint in Service
         val procName = if (android.os.Build.VERSION.SDK_INT >= 28) Application.getProcessName() else "unknown"
@@ -744,6 +824,11 @@ class ForegroundDetectionService : AccessibilityService() {
             val apps = monitoredStore.getMonitoredApps()
             cachedMonitoredApps = apps
             Log.e(LogTags.SERVICE_LIFE, "[CONFIG] Loaded Monitored Apps: count=${apps.size}")
+
+            // Load Intentions
+            intentionStore.restore()
+            cachedIntentions = intentionStore.getSnapshot()
+            Log.e(LogTags.SERVICE_LIFE, "[CONFIG] Loaded Intentions: count=${cachedIntentions.size}")
         }
         
         val info = AccessibilityServiceInfo().apply {
@@ -765,6 +850,10 @@ class ForegroundDetectionService : AccessibilityService() {
         // USE VOLATILE CACHE (Non-blocking)
         val isMonitored = cachedMonitoredApps.contains(packageName)
         val dynCount = cachedMonitoredApps.size
+        
+        if (dynCount == 0) {
+            Log.w(TAG, "[MONITOR_EMPTY] cachedMonitoredApps is EMPTY! Checking backup...")
+        }
 
         val lowerPkg = packageName.lowercase()
         val isLauncher = lowerPkg.contains("launcher")

@@ -567,12 +567,57 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             prefs.edit().putLong(key, expiresAtLong).apply()
             
             val remainingSec = (expiresAtLong - System.currentTimeMillis()) / 1000
-            android.util.Log.i("AppMonitorModule", "Stored intention timer for $packageName (expires in ${remainingSec}s) [NOTE: Native no longer checks this]")
+            android.util.Log.i("AppMonitorModule", "Stored intention timer for $packageName (expires in ${remainingSec}s) [Native Wired]")
             
+            // WIRE NEW NATIVE INTENTION STORE
+            val durationMs = expiresAtLong - System.currentTimeMillis()
+            if (durationMs > 0) {
+                ForegroundDetectionService.setIntention(packageName, durationMs)
+            } else {
+                 ForegroundDetectionService.clearIntention(packageName)
+            }
+
             // Emit MECHANICAL event to System Brain JS with explicit timer type
             emitSystemEventToSystemBrain("TIMER_SET", packageName, System.currentTimeMillis(), expiresAtLong, "INTENTION")
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "Failed to store intention timer", e)
+        }
+    }
+
+    /**
+     * V3.5: Native Intention Store API
+     * Explicitly set/clear intention suppression for DecisionGate.
+     */
+    @ReactMethod
+    fun setIntention(packageName: String, durationMs: Double, promise: Promise) {
+        try {
+             val durationLong = durationMs.toLong()
+             ForegroundDetectionService.setIntention(packageName, durationLong)
+             promise.resolve(true)
+        } catch (e: Exception) {
+             android.util.Log.e("AppMonitorModule", "Failed to set intention", e)
+             promise.reject("Error", e)
+        }
+    }
+
+    @ReactMethod
+    fun clearIntention(packageName: String, promise: Promise) {
+        try {
+             ForegroundDetectionService.clearIntention(packageName)
+             promise.resolve(true)
+        } catch (e: Exception) {
+             android.util.Log.e("AppMonitorModule", "Failed to clear intention", e)
+             promise.reject("Error", e)
+        }
+    }
+    
+    @ReactMethod
+    fun getIntentionRemainingMs(packageName: String, promise: Promise) {
+        try {
+             val remaining = ForegroundDetectionService.getIntentionRemainingMs(packageName)
+             promise.resolve(remaining.toDouble())
+        } catch (e: Exception) {
+             promise.reject("Error", e)
         }
     }
 

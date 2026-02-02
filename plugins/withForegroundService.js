@@ -61,6 +61,8 @@ function getSourcePaths(projectRoot) {
     logTags: path.join(javaPath, 'LogTags.kt'),
     quickTaskQuotaStore: path.join(javaPath, 'QuickTaskQuotaStore.kt'),
     monitoredAppsStore: path.join(javaPath, 'MonitoredAppsStore.kt'),
+    decisionGate: path.join(javaPath, 'DecisionGate.kt'),
+    intentionStore: path.join(javaPath, 'IntentionStore.kt'),
     accessibilityXml: path.join(pluginSrcPath, 'res', 'xml', 'accessibility_service.xml'),
     stringsXml: path.join(pluginSrcPath, 'res', 'values', 'strings.xml'),
     stylesXml: path.join(pluginSrcPath, 'res', 'values', 'styles.xml'),
@@ -87,6 +89,8 @@ function getDestinationPaths(projectRoot) {
     logTags: path.join(javaPath, 'LogTags.kt'),
     quickTaskQuotaStore: path.join(javaPath, 'QuickTaskQuotaStore.kt'),
     monitoredAppsStore: path.join(javaPath, 'MonitoredAppsStore.kt'),
+    decisionGate: path.join(javaPath, 'DecisionGate.kt'),
+    intentionStore: path.join(javaPath, 'IntentionStore.kt'),
     accessibilityXml: path.join(androidMainPath, 'res', 'xml', 'accessibility_service.xml'),
   };
 }
@@ -207,6 +211,22 @@ function copyKotlinFiles(projectRoot) {
     console.log(`[${PLUGIN_NAME}] Copied MonitoredAppsStore.kt`);
   } else {
     console.warn(`[${PLUGIN_NAME}] MonitoredAppsStore.kt not found, skipping (optional)`);
+  }
+
+  // Copy DecisionGate.kt
+  if (fs.existsSync(sourcePaths.decisionGate)) {
+    fs.copyFileSync(sourcePaths.decisionGate, destPaths.decisionGate);
+    console.log(`[${PLUGIN_NAME}] Copied DecisionGate.kt`);
+  } else {
+    console.warn(`[${PLUGIN_NAME}] DecisionGate.kt not found, skipping (optional)`);
+  }
+
+  // Copy IntentionStore.kt
+  if (fs.existsSync(sourcePaths.intentionStore)) {
+    fs.copyFileSync(sourcePaths.intentionStore, destPaths.intentionStore);
+    console.log(`[${PLUGIN_NAME}] Copied IntentionStore.kt`);
+  } else {
+    console.warn(`[${PLUGIN_NAME}] IntentionStore.kt not found, skipping (optional)`);
   }
 }
 
