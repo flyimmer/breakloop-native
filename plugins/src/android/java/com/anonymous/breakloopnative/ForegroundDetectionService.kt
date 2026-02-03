@@ -448,7 +448,10 @@ class ForegroundDetectionService : AccessibilityService() {
                }
             }
 
-            val snapshot = DecisionGate.GateSnapshot(
+                val quitRemaining = (quitSuppressionUntil[app] ?: 0L) - now
+                val wakeRemaining = (suppressWakeUntil[app] ?: 0L) - now
+
+                val snapshot = DecisionGate.GateSnapshot(
                 isMonitored = true, // We are in handleMonitoredAppEntry
                 qtRemaining = remaining.toInt(),
                 isSystemSurfaceActive = isSystemSurfaceActive,
@@ -456,10 +459,10 @@ class ForegroundDetectionService : AccessibilityService() {
                 intentionRemainingMs = intentionRemaining,
                 isInterventionPreserved = preserved,
                 lastInterventionEmittedAt = showInterventionLastEmittedAt[app] ?: 0L,
-                isQuitSuppressed = quitSuppressionUntil.containsKey(app),
-                quitSuppressionRemainingMs = (quitSuppressionUntil[app] ?: 0L) - now,
-                isWakeSuppressed = suppressWakeUntil.containsKey(app),
-                wakeSuppressionRemainingMs = (suppressWakeUntil[app] ?: 0L) - now,
+                isQuitSuppressed = quitRemaining > 0,
+                quitSuppressionRemainingMs = kotlin.math.max(0L, quitRemaining),
+                isWakeSuppressed = wakeRemaining > 0,
+                wakeSuppressionRemainingMs = kotlin.math.max(0L, wakeRemaining),
                 isForceEntry = force
             )
 

@@ -38,6 +38,7 @@ object DecisionGate {
         const val QUOTA_ZERO = "QUOTA_ZERO"
         const val SUPPRESSION_QUIT = "SUPPRESSION_QUIT"
         const val SUPPRESSION_WAKE = "SUPPRESSION_WAKE"
+        const val SUPPRESSION_WAKE_EXPIRED = "SUPPRESSION_WAKE_EXPIRED"
         const val START_QUICK_TASK = "START_QUICK_TASK"
         const val NOT_MONITORED = "NOT_MONITORED"
         const val T_INTENTION_ACTIVE = "T_INTENTION_ACTIVE"
@@ -115,13 +116,19 @@ object DecisionGate {
             return GateAction.NoAction to Reason.QUOTA_ZERO
         }
         
-        // Suppressions
+        // Suppressions (DEFENSIVE: Trust remainingMs > 0 over isSuppressed flag)
         if (s.isQuitSuppressed && !s.isForceEntry) {
-            return GateAction.NoAction to "${Reason.SUPPRESSION_QUIT}_${s.quitSuppressionRemainingMs}ms"
+            if (s.quitSuppressionRemainingMs > 0) {
+                return GateAction.NoAction to "${Reason.SUPPRESSION_QUIT}_${s.quitSuppressionRemainingMs}ms"
+            }
+            // Logic fall-through: Flag was true but time expired -> Treat as NOT suppressed
         }
         
         if (s.isWakeSuppressed && !s.isForceEntry) {
-            return GateAction.NoAction to "${Reason.SUPPRESSION_WAKE}_${s.wakeSuppressionRemainingMs}ms"
+            if (s.wakeSuppressionRemainingMs > 0) {
+                 return GateAction.NoAction to "${Reason.SUPPRESSION_WAKE}_${s.wakeSuppressionRemainingMs}ms"
+            }
+            // Logic fall-through: Flag was true but time expired -> Treat as NOT suppressed
         }
 
         // If we passed all guards -> ELIGIBLE
