@@ -7,7 +7,7 @@ Some sections reflect **pre–Native-authority architecture** and must NOT be fo
 The authoritative references are now:
 - `spec/BreakLoop Architecture v3.docx`
 - `spec/break_loop_architecture_invariants_v_3.md`
-- `spec/Intervention_OS_Contract_V2.docx`
+- `spec/Intervention_OS_Contract_V4.md` (Updated from V2/V3)
 - `spec/break_loop_os_runtime_contract.md`
 
 When in doubt:
@@ -432,7 +432,10 @@ This order is **AUTHORITATIVE** and must never change:
 
 **Important Distinctions:**
 - **t_quickTask** (timer): PER-APP - Each app has its own independent Quick Task timer
-- **n_quickTask** (usage count): GLOBAL - Shared quota across all monitored apps
+- **n_quickTask** (usage count): GLOBAL - Shared quota across all monitored apps within a **fixed rolling time window**
+  - Window sizes are user-configurable: **1h, 4h, 12h, 24h**
+  - Window boundaries are **fixed wall-clock buckets** (e.g., for 1h: 08:00–09:00, 09:00–10:00, 10:00–11:00, ...)
+  - At the start of each new window, `n_quickTask_remaining` resets to `n_quickTask`
 - **t_intention** (timer): PER-APP - Each app has its own intention timer
 
 **Monitored Apps:**
@@ -442,7 +445,7 @@ This order is **AUTHORITATIVE** and must never change:
 
 #### Quick Task Rules (Detailed Specification)
 
-**Source:** `spec/Intervention_OS_Contract_V2.docx` (V2 - Updated 2026-01)
+**Source:** `spec/Intervention_OS_Contract_V4.md` (V4 - Updated 2026-02)
 
 **Definitions:**
 - `t_quickTask`: Duration of the emergency allowance (per-app timer)
@@ -488,7 +491,13 @@ This order is **AUTHORITATIVE** and must never change:
 
 5. **n_quickTask is counted globally across all monitored apps**
    - Using Quick Task on Instagram consumes quota for TikTok too
-   - Shared quota within rolling window
+   - Shared quota within fixed rolling time window (1h, 4h, 12h, or 24h)
+   - Window boundaries are fixed wall-clock buckets
+   - Quota resets at the start of each new window
+
+6. **Quota Refill Must Not Override Intention Expiry Behavior**
+   - Refilling `n_quickTask_remaining` during an active `t_intention` must not trigger anything
+   - When `t_intention` expires while the user is still on the monitored app, the system MUST start **Intervention immediately**, regardless of `n_quickTask_remaining` at that moment
 
 #### Incomplete Intervention Cancellation
 
