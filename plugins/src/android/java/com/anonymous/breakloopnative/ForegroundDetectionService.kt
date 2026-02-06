@@ -97,6 +97,13 @@ class ForegroundDetectionService : AccessibilityService() {
         private val quitSuppressedUntilMsByApp = mutableMapOf<String, Long>()
         private val confirmedSessionIdByApp = mutableMapOf<String, String>() // Idempotent quota decrement
         
+        // Quick Task protection window (survives app switching and timer expiry)
+        // Protected by qtLock for consistent invariants with other state maps
+        private val qtProtectedUntilMsByApp = mutableMapOf<String, Long>()
+        
+        // Per-app duration cache (protected by qtLock)
+        private val cachedQuickTaskDurationMsByApp = mutableMapOf<String, Long>()
+        
         // Caches (Updated via Setters/Stores)
         @Volatile private var cachedQuotaState: QuotaState = QuotaState(1L, 0L, 1L)
         @Volatile private var cachedMonitoredApps: Set<String> = emptySet()
@@ -386,12 +393,7 @@ class ForegroundDetectionService : AccessibilityService() {
             val service = serviceRef?.get()
             Log.e("AppMonitorModule", "[DEBUG] setQuickTaskMaxQuota called with max=$max, serviceRef=${service != null}")
             
-            // VISUAL DEBUG: Toast to confirm code deployment
             service?.let {
-                 Handler(Looper.getMainLooper()).post {
-                     android.widget.Toast.makeText(it, "DEBUG: Updating Quota to $max", android.widget.Toast.LENGTH_SHORT).show()
-                 }
-                 
                 Log.e("AppMonitorModule", "[DEBUG] Launching coroutine to update quota")
                 it.serviceScope.launch {
                     try {
@@ -408,6 +410,19 @@ class ForegroundDetectionService : AccessibilityService() {
         @JvmStatic
         fun getCachedQuotaState(): QuotaState {
             return cachedQuotaState
+        }
+        
+        @JvmStatic
+        fun setQuickTaskDurationForApp(app: String, durationMs: Long) {
+            synchronized(qtLock) {
+                cachedQuickTaskDurationMsByApp[app] = durationMs
+                Log.e("AppMonitorModule", "[DEBUG] setQuickTaskDurationForApp: app=$app durationMs=$durationMs (${durationMs/60000} min)")
+            }
+        }
+        
+        @JvmStatic
+        fun getMonitoredApps(): Set<String> {
+            return cachedMonitoredApps
         }
         
         @JvmStatic
@@ -676,6 +691,24 @@ class ForegroundDetectionService : AccessibilityService() {
                  // Simplified for brevity in this fix block
              }
              
+             // Quick Task Protection Window Check (BEFORE DecisionGate)
+             // Single synchronized block for atomic read+remove
+             synchronized(qtLock) {
+                 val qtProtectUntil = qtProtectedUntilMsByApp[app]
+                 
+                 if (qtProtectUntil != null) {
+                     if (now < qtProtectUntil) {
+                         val remainingMs = qtProtectUntil - now
+                         Log.e("QT_PROTECT", "[QT_PROTECT_BLOCK] app=$app remainingMs=$remainingMs - blocking QT re-offer")
+                         return  // NoAction - still within protection window
+                     } else {
+                         // Protection expired, remove it
+                         qtProtectedUntilMsByApp.remove(app)
+                         Log.i("QT_PROTECT", "[QT_PROTECT_EXPIRED] app=$app - protection window ended")
+                     }
+                 }
+             }
+             
              val snapshot = DecisionGate.GateSnapshot(
                  isMonitored = true,
                  qtRemaining = cachedQuotaState.remaining.toInt(),
@@ -916,12 +949,14 @@ class ForegroundDetectionService : AccessibilityService() {
                 
                 // Case 2: User NOT on app when timer expires
                 if (fg == null || fg != app) {
-                    Log.i("QT_TIMER_EXPIRED_AWAY", "[QT_TIMER_EXPIRED_AWAY] app=$app fg=$fg - clearing state, NO Post-QT")
+                    Log.i("QT_TIMER_EXPIRED_AWAY", "[QT_TIMER_EXPIRED_AWAY] app=$app fg=$fg - clearing ACTIVE state, NO Post-QT")
                     entry.state = QuickTaskState.IDLE
                     activeQuickTaskSessionIdByApp.remove(app)
                     postChoiceSessionIdByApp.remove(app)
                     cancelNativeTimerLocked(app, "EXPIRED_AWAY")
-                    // Do NOT set shouldEmitPostQT - return early via flag
+                    // ✅ CRITICAL: Do NOT remove qtProtectedUntilMsByApp[app]
+                    // Protection map remains unchanged (may still be in future, may already be expired)
+                    // Next entry will check protection via pre-gate check
                     return
                 }
                 
@@ -1018,18 +1053,21 @@ class ForegroundDetectionService : AccessibilityService() {
      * Called from companion object @JvmStatic wrapper via withService.
      */
     private fun handleQuickTaskConfirmed(app: String, sessionId: String, context: android.content.Context) {
-        val durationMs = 10_000L // 10 seconds for testing
+        val now = System.currentTimeMillis()
 
         // 1) Validate + transition (inside lock)
-        val shouldStartTimer = synchronized(qtLock) {
+        val result = synchronized(qtLock) {
             val entry = quickTaskMap[app]
             val promptSid = promptSessionIdByApp[app]
 
             // Guard: must still be OFFERING with matching prompt sid
             if (entry?.state != QuickTaskState.OFFERING || promptSid != sessionId) {
                 Log.w("QT_CONFIRM_IGNORED", "[QT_CONFIRM_IGNORED] app=$app sid=$sessionId state=${entry?.state} promptSid=$promptSid")
-                return@synchronized false
+                return@synchronized null
             }
+
+            // Get per-app duration (default 2 minutes if not set)
+            val durationMs = cachedQuickTaskDurationMsByApp[app] ?: 120_000L
 
             // Clear OFFERING
             promptSessionIdByApp.remove(app)
@@ -1038,6 +1076,10 @@ class ForegroundDetectionService : AccessibilityService() {
             // Become ACTIVE
             entry.state = QuickTaskState.ACTIVE
             activeQuickTaskSessionIdByApp[app] = sessionId
+
+            // Set protection window
+            qtProtectedUntilMsByApp[app] = now + durationMs
+            Log.e("QT_PROTECT", "[QT_PROTECT_SET] app=$app until=${now + durationMs} durationMs=$durationMs")
 
             // Defensive: cancel any old runnable for this app
             cancelNativeTimerLocked(app, "REPLACE_TIMER_ON_CONFIRM")
@@ -1056,10 +1098,11 @@ class ForegroundDetectionService : AccessibilityService() {
                 Log.e("QT_QUOTA", "[QT_QUOTA] app=$app sid=$sessionId before=$before after=$after")
             }
 
-            true
+            durationMs // Return duration for use outside lock
         }
 
-        if (!shouldStartTimer) return
+        if (result == null) return
+        val durationMs = result
 
         // 3) Create runnable OUTSIDE lock
         val runnable = Runnable {

@@ -609,8 +609,6 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     fun setQuickTaskQuotaPer15m(quota: Int, promise: Promise) {
         try {
             android.util.Log.e("AppMonitorModule", "setQuickTaskQuotaPer15m: $quota")
-             // VISUAL DEBUG
-             android.widget.Toast.makeText(reactApplicationContext, "Bridge: setQuickTask -> $quota", android.widget.Toast.LENGTH_SHORT).show()
              
             ForegroundDetectionService.setQuickTaskMaxQuota(quota)
             promise.resolve(true)
@@ -632,6 +630,32 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             promise.resolve(map)
         } catch (e: Exception) {
             promise.reject("GET_QUOTA_FAILED", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun setQuickTaskDurationForApp(appPackage: String, durationMs: Int, promise: Promise) {
+        try {
+            val durationMsLong = durationMs.toLong()
+            ForegroundDetectionService.setQuickTaskDurationForApp(appPackage, durationMsLong)
+            android.util.Log.e("AppMonitorModule", "[DEBUG] setQuickTaskDurationForApp: app=$appPackage durationMs=$durationMs")
+            promise.resolve(true)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to set quick task duration for app", e)
+            promise.reject("SET_DURATION_FAILED", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun getMonitoredApps(promise: Promise) {
+        try {
+            val apps = ForegroundDetectionService.getMonitoredApps()
+            val array = com.facebook.react.bridge.Arguments.createArray()
+            apps.forEach { array.pushString(it) }
+            promise.resolve(array)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to get monitored apps", e)
+            promise.reject("GET_MONITORED_APPS_FAILED", e.message, e)
         }
     }
 

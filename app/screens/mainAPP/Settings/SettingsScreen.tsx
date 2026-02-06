@@ -266,6 +266,14 @@ const SettingsScreen = () => {
           // NEW NATIVE AUTHORITY: Set Max Quota directly
           console.log(`[SettingsScreen] ⚡ Updating Native Quota Max to ${usesPerWindow}`);
           await NativeModules.AppMonitorModule.setQuickTaskQuotaPer15m(usesPerWindow);
+
+          // Set duration for each monitored app (in milliseconds)
+          const monitoredApps = await NativeModules.AppMonitorModule.getMonitoredApps();
+          console.log(`[SettingsScreen] ⏱️ Setting duration ${durationMs}ms for ${monitoredApps.length} monitored apps`);
+
+          for (const app of monitoredApps) {
+            await NativeModules.AppMonitorModule.setQuickTaskDurationForApp(app, durationMs);
+          }
         }
       } catch (syncError) {
         console.error('[SettingsScreen] ❌ Failed to sync quota to Native:', syncError);
