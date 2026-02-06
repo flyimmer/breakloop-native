@@ -18,8 +18,9 @@ object DecisionGate {
         val isMonitored: Boolean,
         val qtRemaining: Int,
         val isSystemSurfaceActive: Boolean,
+        val hasActiveSession: Boolean, // New: Per-App Active Session Check
         val quickTaskState: QuickTaskState,
-        val intentionRemainingMs: Long, // Placeholder M3a
+        val intentionRemainingMs: Long,
         val isInterventionPreserved: Boolean,
         val lastInterventionEmittedAt: Long,
         val isQuitSuppressed: Boolean,
@@ -34,12 +35,15 @@ object DecisionGate {
         const val START_INTERVENTION_RESUME = "START_INTERVENTION_RESUME"
         const val DEBOUNCE_INTERVENTION = "DEBOUNCE_INTERVENTION"
         const val SURFACE_ACTIVE = "SURFACE_ACTIVE"
-        const val STATE_NOT_IDLE = "STATE_NOT_IDLE"
+        const val ALREADY_ACTIVE_SESSION = "ALREADY_ACTIVE_SESSION"
+        const val QT_OFFERING_ACTIVE = "QT_OFFERING_ACTIVE"
+        const val POST_CHOICE_ACTIVE = "POST_CHOICE_ACTIVE"
+        const val T_QUICK_TASK_ACTIVE = "T_QUICK_TASK_ACTIVE"
         const val QUOTA_ZERO = "QUOTA_ZERO"
         const val SUPPRESSION_QUIT = "SUPPRESSION_QUIT"
         const val SUPPRESSION_WAKE = "SUPPRESSION_WAKE"
-        const val SUPPRESSION_WAKE_EXPIRED = "SUPPRESSION_WAKE_EXPIRED"
         const val START_QUICK_TASK = "START_QUICK_TASK"
+        const val START_INTERVENTION = "START_INTERVENTION"
         const val NOT_MONITORED = "NOT_MONITORED"
         const val T_INTENTION_ACTIVE = "T_INTENTION_ACTIVE"
     }
@@ -48,90 +52,81 @@ object DecisionGate {
      * PURE FUNCTION: Evaluate entry + return Action & Reason.
      * Does NOT emit commands or mutate state.
      */
-    fun evaluate(pkg: String, nowMs: Long, s: GateSnapshot): Pair<GateAction, String> {
-        // 1. Not Monitored (Implicit Guard, though caller checks set usually)
+    fun evaluate(pkg: String, nowMs: Long, s: GateSnapshot, disallowQuickTask: Boolean = false): Pair<GateAction, String> {
+        // 1. Not Monitored (Implicit Guard)
         if (!s.isMonitored) return GateAction.NoAction to Reason.NOT_MONITORED
 
-        // 2. V3: Intention Suppression (Highest Priority)
-        // If user has an active intention, suppress EVERYTHING (QT and Intervention)
+        // 2. Active Session Check (ACTIVE map only - not OFFERING)
+        // "Active Session rule": If we have an ACTIVE session, we are already handling this app.
+        if (s.hasActiveSession) return GateAction.NoAction to Reason.ALREADY_ACTIVE_SESSION
+        
+        // 3. Post Choice Block (Specific State Guard)
+        if (s.quickTaskState == QuickTaskState.POST_CHOICE) {
+            return GateAction.NoAction to Reason.POST_CHOICE_ACTIVE
+        }
+
+        // 4. OFFERING Block (Prompt already shown)
+        // Prevents duplicate offers even if surface flags get weird
+        if (s.quickTaskState == QuickTaskState.OFFERING) {
+            return GateAction.NoAction to Reason.QT_OFFERING_ACTIVE
+        }
+
+        // 5. Intention Suppression (Highest User Priority)
+        // If user has an active intention, suppress EVERYTHING.
         if (s.intentionRemainingMs > 0) {
             return GateAction.NoAction to "${Reason.T_INTENTION_ACTIVE}_${s.intentionRemainingMs}ms"
         }
 
-        // 3. V3: Early Preservation Override
+        // 6. Preservation / Resumption (Intervention Priority)
+        
+        // 6a. Preservation Override
         if (s.isInterventionPreserved) {
-            // DEBOUNCE: Suppress duplicate SHOW_INTERVENTION within 800ms
-            if (nowMs - s.lastInterventionEmittedAt < 800) {
-                return GateAction.NoAction to Reason.DEBOUNCE_INTERVENTION
-            }
-            // Mapped to StartIntervention (caller handles resumeMode extras)
-            return GateAction.StartIntervention to Reason.START_INTERVENTION_PRESERVED
+             if (nowMs - s.lastInterventionEmittedAt < 800) {
+                 return GateAction.NoAction to Reason.DEBOUNCE_INTERVENTION
+             }
+             return GateAction.StartIntervention to Reason.START_INTERVENTION_PRESERVED
         }
-
-        // 3. V3: Handle Interrupted Intervention Resumption (Intervention is Active state)
+        
+        // 6b. Intervention Active (Resumption)
         if (s.quickTaskState == QuickTaskState.INTERVENTION_ACTIVE) {
-             // Logic in service was: if preserved -> show; else -> reset. 
-             // But we already checked `isInterventionPreserved` above.
-             // Wait, the service logic has two blocks checks for preservation. 
-             // First block: `if (preservedInterventionFlags[app] == true)` returns early.
-             // Second block: `if (entry?.state == QuickTaskState.INTERVENTION_ACTIVE)`
-             // If we are here, isInterventionPreserved is FALSE.
-             
-             // Original logic for !preserved && INTERVENTION_ACTIVE: 
-             // Log "Intervention active but not preserved -> Resetting to IDLE"
-             // And then "Fall through to normal decision logic".
-             // So DecisionGate should NOT return NoAction here, but treat it as IDLE effectively?
-             // Or rather, the state IS INTERVENTION_ACTIVE, so subsequent checks will see that.
-             // But the original code resets it to IDLE *before* the eligibility check.
-             // Since DecisionGate cannot mutate state, we must Simulate the reset for the rest of the eval.
-             // Let's defer this thought. If we are here, s.quickTaskState IS INTERVENTION_ACTIVE and s.isInterventionPreserved IS FALSE.
-             
-             // The subsequent check is: 
-             // else if (qtState != QuickTaskState.IDLE && qtState != QuickTaskState.POST_CHOICE)
-             
-             // If we don't simulate reset, INTERVENTION_ACTIVE will block entry with STATE_NOT_IDLE.
-             // BUT, original code resets it to IDLE, then continues.
-             // So for PURE evaluation, we should treat the *effective* state as IDLE if (INTERVENTION_ACTIVE && !PRESERVED).
-        }
-        
-        // Resolve Effective State for Calculation
-        val effectiveState = if (s.quickTaskState == QuickTaskState.INTERVENTION_ACTIVE && !s.isInterventionPreserved) {
-            // In service, this triggers a reset side-effect. Here we just assume IDLE for calculation.
-            QuickTaskState.IDLE
-        } else {
-            s.quickTaskState
+             // In V3, we treat this as a signal to Resume Intervention
+             return GateAction.StartIntervention to Reason.START_INTERVENTION_RESUME
         }
 
-        // 4. AVOID CONFLICTS: Quick Task Eligibility Logic
-        if (s.isSystemSurfaceActive) {
-            return GateAction.NoAction to Reason.SURFACE_ACTIVE
+        // 7. Quick Task Active Check (Timer Running)
+        // Check if QT timer is actively running (not just state)
+        // This is checked via the entry's expiresAt or similar mechanism
+        // For now, we rely on ACTIVE state being caught by hasActiveSession above
+        // But we add explicit check for any other "active QT" scenarios
+        if (s.quickTaskState == QuickTaskState.ACTIVE) {
+             return GateAction.NoAction to Reason.T_QUICK_TASK_ACTIVE
         }
-        
-        if (effectiveState != QuickTaskState.IDLE && effectiveState != QuickTaskState.POST_CHOICE) {
-            // DECISION or ACTIVE (or stuck INTERVENTION_ACTIVE if we didn't handle it above, but we did)
-             return GateAction.NoAction to "${Reason.STATE_NOT_IDLE}_${effectiveState}"
-        }
-        
-        if (s.qtRemaining <= 0) {
-            return GateAction.NoAction to Reason.QUOTA_ZERO
-        }
-        
-        // Suppressions (DEFENSIVE: Trust remainingMs > 0 over isSuppressed flag)
+
+        // 8. Suppressions (Quit/Wake)
         if (s.isQuitSuppressed && !s.isForceEntry) {
             if (s.quitSuppressionRemainingMs > 0) {
                 return GateAction.NoAction to "${Reason.SUPPRESSION_QUIT}_${s.quitSuppressionRemainingMs}ms"
             }
-            // Logic fall-through: Flag was true but time expired -> Treat as NOT suppressed
         }
         
         if (s.isWakeSuppressed && !s.isForceEntry) {
             if (s.wakeSuppressionRemainingMs > 0) {
                  return GateAction.NoAction to "${Reason.SUPPRESSION_WAKE}_${s.wakeSuppressionRemainingMs}ms"
             }
-            // Logic fall-through: Flag was true but time expired -> Treat as NOT suppressed
         }
 
-        // If we passed all guards -> ELIGIBLE
-        return GateAction.StartQuickTask to Reason.START_QUICK_TASK
+        // 9. Global Surface Check (After all per-app checks)
+        // "Global Surface rule": If ANY surface is active, we validly block entry to avoid visual pile-up.
+        if (s.isSystemSurfaceActive) return GateAction.NoAction to Reason.SURFACE_ACTIVE
+
+        // 10. Quick Task Decision
+        // If Quota > 0 AND NOT disallowed -> Start QT
+        if (!disallowQuickTask && s.qtRemaining > 0) {
+            return GateAction.StartQuickTask to Reason.START_QUICK_TASK
+        }
+        
+        // 11. Intervention Fallback (Quota 0 or Disallowed)
+        // If we reached here, we are eligible for intervention (no intention, no suppression).
+        return GateAction.StartIntervention to Reason.START_INTERVENTION
     }
 }

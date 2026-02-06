@@ -119,15 +119,17 @@ class SystemSurfaceActivity : ReactActivity() {
          * IMPORTANT: JavaScript MUST check this FIRST before running any logic.
          */
         const val EXTRA_WAKE_REASON = "wakeReason"
+        const val EXTRA_SESSION_ID = "sessionId"
+        const val EXTRA_RESUME_MODE = "resumeMode"
         
-        // Wake reason values
-        // Phase 1 (transitional - will be deprecated)
+        // Canonical Wake Reason Values (Native → JS Contract)
+        const val WAKE_REASON_SHOW_QUICK_TASK = "SHOW_QUICK_TASK"
+        const val WAKE_REASON_SHOW_INTERVENTION = "SHOW_INTERVENTION"
+        const val WAKE_REASON_SHOW_POST_QUICK_TASK_CHOICE = "SHOW_POST_QUICK_TASK_CHOICE"
+        
+        // Legacy wake reasons (backward compatibility)
         const val WAKE_REASON_MONITORED_APP = "MONITORED_APP_FOREGROUND"
         const val WAKE_REASON_INTENTION_EXPIRED = "INTENTION_EXPIRED"
-        
-        // Phase 2 (explicit wake reasons - System Brain pre-decides UI)
-        const val WAKE_REASON_SHOW_QUICK_TASK = "SHOW_QUICK_TASK_DIALOG"
-        const val WAKE_REASON_START_INTERVENTION = "START_INTERVENTION_FLOW"
         const val WAKE_REASON_QUICK_TASK_EXPIRED = "QUICK_TASK_EXPIRED_FOREGROUND"
     }
 
@@ -137,7 +139,13 @@ class SystemSurfaceActivity : ReactActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val triggeringApp = intent?.getStringExtra(EXTRA_TRIGGERING_APP)
         val wakeReason = intent?.getStringExtra(EXTRA_WAKE_REASON)
+        val sessionId = intent?.getStringExtra(EXTRA_SESSION_ID)
         val instanceId = System.identityHashCode(this)
+        
+        NativeBuildCanary.logBuildInfo()
+        
+        // INTENT LOGGING (Critical for debugging wake reason routing)
+        Log.e("INTENT", "[INTENT] wakeReason=$wakeReason app=$triggeringApp sessionId=$sessionId instanceId=$instanceId")
         
         // SS_BUILD Fingerprint in Activity
         val procName = if (android.os.Build.VERSION.SDK_INT >= 28) Application.getProcessName() else "unknown"
@@ -152,14 +160,13 @@ class SystemSurfaceActivity : ReactActivity() {
 
         Log.i(TAG, "🎯 SystemSurfaceActivity created")
         
-        val sessionId = intent?.getStringExtra("sessionId")
         currentSessionId = sessionId
         
         // Register with Manager
         SystemSurfaceManager.register(this, sessionId)
         
         // Signal native service that surface is now active (Lifecycle Gate)
-        ForegroundDetectionService.onSystemSurfaceOpened()
+        ForegroundDetectionService.onSystemSurfaceOpened(triggeringApp, sessionId, instanceId)
         
         // Log the triggering app if provided
         triggeringApp?.let {
@@ -184,12 +191,18 @@ class SystemSurfaceActivity : ReactActivity() {
         
         val triggeringApp = intent.getStringExtra(EXTRA_TRIGGERING_APP)
         val wakeReason = intent.getStringExtra(EXTRA_WAKE_REASON)
+        val sessionId = intent.getStringExtra(EXTRA_SESSION_ID)
         val resumeMode = intent.getBundleExtra("extras")?.getString("resumeMode")
         val instanceId = System.identityHashCode(this)
         val intentNonce = System.currentTimeMillis() // Simple monotonic nonce
         
-        val sessionId = intent.getStringExtra("sessionId")
         currentSessionId = sessionId // Update tracking for unregister
+        
+        // INTENT LOGGING (Critical for debugging wake reason routing)
+        Log.e("INTENT", "[INTENT] wakeReason=$wakeReason app=$triggeringApp sessionId=$sessionId instanceId=$instanceId")
+        
+        // Notify service of new surface session
+        ForegroundDetectionService.onSystemSurfaceOpened(triggeringApp, currentSessionId, instanceId)
         
         Log.d(LOG_TAG_LIFE, "[onNewIntent] instanceId=$instanceId wakeReason=$wakeReason app=$triggeringApp sessionId=$sessionId resumeMode=$resumeMode flags=${intent.flags} nonce=$intentNonce taskId=$taskId")
         Log.e("SS_BOOT", "onNewIntent wakeReason=$wakeReason app=$triggeringApp resumeMode=$resumeMode flags=${intent.flags} nonce=$intentNonce taskId=$taskId")
@@ -229,36 +242,8 @@ class SystemSurfaceActivity : ReactActivity() {
         )
     }
 
-    override fun onDestroy() {
-        val instanceId = System.identityHashCode(this)
-        val triggeringApp = intent?.getStringExtra(EXTRA_TRIGGERING_APP)
-        val qtState = triggeringApp?.let { ForegroundDetectionService.getQuickTaskStateForApp(it) } ?: "UNKNOWN"
-        
-        Log.e(LogTags.SS_CANARY, "[LIFE] onDestroy instanceId=$instanceId triggeringApp=$triggeringApp qtState=$qtState")
-        Log.d(LogTags.SS_LIFE, "[onDestroy] instanceId=$instanceId triggeringApp=$triggeringApp qtState=$qtState")
-        Log.i(TAG, "❌ SystemSurfaceActivity destroyed")
-        
-        // Signal native service that surface is now destroyed (Lifecycle Gate)
-        ForegroundDetectionService.onSystemSurfaceDestroyed()
-        
-        // Unregister from Manager
-        // Unregister from Manager
-        val sessionId = intent?.getStringExtra("sessionId") ?: currentSessionId
-        SystemSurfaceManager.unregister(this, sessionId, finishReason)
-        
-        // Paranoid Cleanup (Guardrail C)
-        try {
-            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            Log.i(TAG, "[SystemSurfaceActivity] onDestroy cleanup complete")
-        } catch (e: Exception) {
-            Log.w(TAG, "Cleanup warning: ${e.message}")
-        }
-        
-        // Final safety guarantee - Unified Cleanup
-        ForegroundDetectionService.onSurfaceExit("ACTIVITY_ON_DESTROY", instanceId, triggeringApp = triggeringApp)
-        
-        super.onDestroy()
-    }
+        // onDestory Removed - Replaced by new implementation below
+
 
     override fun onPause() {
         super.onPause()
@@ -300,6 +285,18 @@ class SystemSurfaceActivity : ReactActivity() {
                 }
             }
         }
+    }
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.i(TAG, "[LIFE] onDestroy reason=$finishReason isFinishing=$isFinishing")
+        
+        // Always notify service of destruction (Ghost Busting)
+        // Pass triggeringApp, currentSessionId, and instanceId.
+        val triggeringAppLocal = intent?.getStringExtra(EXTRA_TRIGGERING_APP)
+        val instanceId = System.identityHashCode(this)
+        
+        ForegroundDetectionService.onSystemSurfaceDestroyed(triggeringAppLocal, currentSessionId, instanceId)
     }
 
     override fun onResume() {

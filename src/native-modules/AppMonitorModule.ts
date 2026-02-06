@@ -137,8 +137,14 @@ interface IAppMonitorModule {
    */
   quickTaskAccept(packageName: string, durationMs: number): Promise<boolean>;
   quickTaskDecline(packageName: string): Promise<boolean>;
-  quickTaskPostContinue(packageName: string): Promise<boolean>;
-  quickTaskPostQuit(packageName: string): Promise<boolean>;
+
+  /**
+   * Report Post-QT completion (User chose to Quit or Continue after Quick Task expired)
+   * @param packageName - Package name of the app
+   * @param sessionId - Session ID from SystemSurface wake extras
+   */
+  quickTaskPostContinue(packageName: string, sessionId: string): void;
+  quickTaskPostQuit(packageName: string, sessionId: string): void;
 
   /**
    * Notify native that SystemSurface is active or inactive (Phase 4.1)

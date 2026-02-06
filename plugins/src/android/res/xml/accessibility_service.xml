@@ -35,6 +35,5 @@
     android:canRetrieveWindowContent="false"
     android:description="@string/accessibility_service_description"
     android:notificationTimeout="0"
-    android:packageNames=""
     android:settingsActivity="com.anonymous.breakloopnative.MainActivity" />
 

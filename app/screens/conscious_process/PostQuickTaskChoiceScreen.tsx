@@ -76,10 +76,10 @@ export default function PostQuickTaskChoiceScreen() {
     if (isProcessing || appPackageName === 'Unknown') return;
     setIsProcessing(true);
 
-    if (AppMonitorModule) {
+    if (AppMonitorModule && session?.sessionId) {
       try {
-        await AppMonitorModule.quickTaskPostQuit(appPackageName);
-        console.log(`[QT][INTENT] POST_QUIT app=${appPackageName}`);
+        await AppMonitorModule.quickTaskPostQuit(appPackageName, session.sessionId);
+        console.log(`[QT][INTENT] POST_QUIT app=${appPackageName} sid=${session.sessionId}`);
       } catch (error) {
         console.error('[QT] Failed to post quit:', error);
       }
@@ -92,10 +92,10 @@ export default function PostQuickTaskChoiceScreen() {
     if (isProcessing || appPackageName === 'Unknown') return;
     setIsProcessing(true);
 
-    if (AppMonitorModule) {
+    if (AppMonitorModule && session?.sessionId) {
       try {
-        await AppMonitorModule.quickTaskPostContinue(appPackageName);
-        console.log(`[QT][INTENT] POST_CONTINUE app=${appPackageName}`);
+        await AppMonitorModule.quickTaskPostContinue(appPackageName, session.sessionId);
+        console.log(`[QT][INTENT] POST_CONTINUE app=${appPackageName} sid=${session.sessionId}`);
       } catch (error) {
         console.error('[QT] Failed to post continue:', error);
       }

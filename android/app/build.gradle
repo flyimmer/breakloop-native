@@ -82,6 +82,12 @@ def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBu
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 android {
+    sourceSets {
+        main {
+            java.srcDirs += 'src/main/java'
+            kotlin.srcDirs += 'src/main/java'
+        }
+    }
     ndkVersion rootProject.ext.ndkVersion
 
     buildToolsVersion rootProject.ext.buildToolsVersion
@@ -92,8 +98,8 @@ android {
         applicationId 'com.anonymous.breakloopnative'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 8
-        versionName "1.0.7"
+        versionCode 13
+        versionName "1.0.12"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -153,6 +159,7 @@ android {
 }
 
 dependencies {
+    implementation "androidx.datastore:datastore-preferences:1.0.0"
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
@@ -179,8 +186,4 @@ dependencies {
     } else {
         implementation jscFlavor
     }
-
-    // DataStore Preferences
-    implementation "androidx.datastore:datastore-preferences:1.1.1"
-    implementation "androidx.datastore:datastore-preferences-core:1.1.1"
 }

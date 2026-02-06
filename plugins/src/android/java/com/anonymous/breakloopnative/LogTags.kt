@@ -5,6 +5,7 @@ object LogTags {
     const val SS_LIFE = "SS_LIFE"
     const val SS_WD = "SS_WD"
     const val QT_STATE = "QT_STATE"
+    const val QT_FINISH = "QT_FINISH"
     const val FG_RAW = "FG_RAW"
     const val SS_CANARY = "SS_CANARY"
     const val SS_BUILD = "SS_BUILD"
@@ -19,4 +20,5 @@ object LogTags {
     const val ENTRY_BLOCK = "ENTRY_BLOCK"
     const val ENTRY_START = "ENTRY_START"
     const val DECISION_GATE = "DECISION_GATE"
+    const val ENTRY_IGNORED = "ENTRY_IGNORED"
 }

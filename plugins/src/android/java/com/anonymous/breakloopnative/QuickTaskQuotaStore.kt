@@ -37,10 +37,8 @@ class QuickTaskQuotaStore(private val context: Context) {
     suspend fun setMaxQuota(newMax: Long): QuotaState {
         context.dataStore.edit { p ->
             p[KEY_MAX] = newMax
-            val currentRemaining = p[KEY_REMAINING] ?: 0L
-            if (currentRemaining > newMax) {
-                p[KEY_REMAINING] = newMax
-            }
+            // Always reset remaining to new max for live updates
+            p[KEY_REMAINING] = newMax
         }
         return getSnapshot()
     }

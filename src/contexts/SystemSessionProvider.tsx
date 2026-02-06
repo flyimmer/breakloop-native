@@ -23,10 +23,10 @@ const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorMod
  * System Session type - determines which system flow is active
  */
 export type SystemSession =
-  | { kind: 'INTERVENTION'; app: string; sessionId: number }
-  | { kind: 'QUICK_TASK'; app: string; sessionId: number }
-  | { kind: 'POST_QUICK_TASK_CHOICE'; app: string; sessionId: number }
-  | { kind: 'ALTERNATIVE_ACTIVITY'; app: string; sessionId: number }
+  | { kind: 'INTERVENTION'; app: string; sessionId: string }
+  | { kind: 'QUICK_TASK'; app: string; sessionId: string }
+  | { kind: 'POST_QUICK_TASK_CHOICE'; app: string; sessionId: string }
+  | { kind: 'ALTERNATIVE_ACTIVITY'; app: string; sessionId: string }
   | null;
 
 /**
@@ -45,11 +45,11 @@ export type SessionBootstrapState = 'BOOTSTRAPPING' | 'READY';
  * System Session Event - event-based API for modifying session (Rule 2)
  */
 export type SystemSessionEvent =
-  | { type: 'START_INTERVENTION'; app: string }
-  | { type: 'START_QUICK_TASK'; app: string }
-  | { type: 'START_POST_QUICK_TASK_CHOICE'; app: string }
-  | { type: 'START_ALTERNATIVE_ACTIVITY'; app: string; shouldLaunchHome?: boolean }
-  | { type: 'REPLACE_SESSION'; newKind: 'INTERVENTION' | 'QUICK_TASK' | 'POST_QUICK_TASK_CHOICE' | 'ALTERNATIVE_ACTIVITY'; app: string }
+  | { type: 'START_INTERVENTION'; app: string; sessionId?: string }
+  | { type: 'START_QUICK_TASK'; app: string; sessionId?: string }
+  | { type: 'START_POST_QUICK_TASK_CHOICE'; app: string; sessionId?: string }
+  | { type: 'START_ALTERNATIVE_ACTIVITY'; app: string; shouldLaunchHome?: boolean; sessionId?: string }
+  | { type: 'REPLACE_SESSION'; newKind: 'INTERVENTION' | 'QUICK_TASK' | 'POST_QUICK_TASK_CHOICE' | 'ALTERNATIVE_ACTIVITY'; app: string; sessionId?: string }
   | { type: 'END_SESSION'; shouldLaunchHome?: boolean; targetApp?: string };
 
 /**
@@ -129,28 +129,28 @@ function systemSessionReducer(
     case 'START_INTERVENTION':
       return {
         ...state,
-        session: { kind: 'INTERVENTION', app: event.app, sessionId: Date.now() },
+        session: { kind: 'INTERVENTION', app: event.app, sessionId: event.sessionId || String(Date.now()) },
         bootstrapState: 'READY',
       };
 
     case 'START_QUICK_TASK':
       return {
         ...state,
-        session: { kind: 'QUICK_TASK', app: event.app, sessionId: Date.now() },
+        session: { kind: 'QUICK_TASK', app: event.app, sessionId: event.sessionId || String(Date.now()) },
         bootstrapState: 'READY',
       };
 
     case 'START_POST_QUICK_TASK_CHOICE':
       return {
         ...state,
-        session: { kind: 'POST_QUICK_TASK_CHOICE', app: event.app, sessionId: Date.now() },
+        session: { kind: 'POST_QUICK_TASK_CHOICE', app: event.app, sessionId: event.sessionId || String(Date.now()) },
         bootstrapState: 'READY',
       };
 
     case 'START_ALTERNATIVE_ACTIVITY':
       return {
         ...state,
-        session: { kind: 'ALTERNATIVE_ACTIVITY', app: event.app, sessionId: Date.now() },
+        session: { kind: 'ALTERNATIVE_ACTIVITY', app: event.app, sessionId: event.sessionId || String(Date.now()) },
         bootstrapState: 'READY',
         // Alternative activity: don't launch home (default to false)
         shouldLaunchHome: event.shouldLaunchHome ?? false,
@@ -159,7 +159,7 @@ function systemSessionReducer(
     case 'REPLACE_SESSION':
       return {
         ...state,
-        session: { kind: event.newKind, app: event.app, sessionId: Date.now() },
+        session: { kind: event.newKind, app: event.app, sessionId: event.sessionId || String(Date.now()) },
         bootstrapState: 'READY',
         shouldLaunchHome: false, // Keep SystemSurface alive
       };

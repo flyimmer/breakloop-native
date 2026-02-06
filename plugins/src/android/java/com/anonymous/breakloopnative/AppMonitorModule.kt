@@ -124,24 +124,23 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
             val extras = Arguments.createMap()
             
             val triggeringApp = intent.getStringExtra(SystemSurfaceActivity.EXTRA_TRIGGERING_APP)
-            val wakeReason = intent.getStringExtra(SystemSurfaceActivity.EXTRA_WAKE_REASON)
-            val resumeMode = intent.getStringExtra("resumeMode") // V3: Extract resumeMode
-            
             if (triggeringApp != null) {
-                extras.putString("triggeringApp", triggeringApp)
-            }
-            
-            if (wakeReason != null) {
-                extras.putString("wakeReason", wakeReason)
+                extras.putString(SystemSurfaceActivity.EXTRA_TRIGGERING_APP, triggeringApp)
             }
 
+            val wakeReason = intent.getStringExtra(SystemSurfaceActivity.EXTRA_WAKE_REASON)
+            if (wakeReason != null) {
+                extras.putString(SystemSurfaceActivity.EXTRA_WAKE_REASON, wakeReason)
+            }
+
+            val resumeMode = intent.getStringExtra(SystemSurfaceActivity.EXTRA_RESUME_MODE) // V3: Extract resumeMode
             if (resumeMode != null) {
-                extras.putString("resumeMode", resumeMode)
+                extras.putString(SystemSurfaceActivity.EXTRA_RESUME_MODE, resumeMode)
             }
             
-            val sessionId = intent.getStringExtra("sessionId")
+            val sessionId = intent.getStringExtra(SystemSurfaceActivity.EXTRA_SESSION_ID)
             if (sessionId != null) {
-                extras.putString("sessionId", sessionId)
+                extras.putString(SystemSurfaceActivity.EXTRA_SESSION_ID, sessionId)
             }
             
             android.util.Log.d("AppMonitorModule", "getSystemSurfaceIntentExtras: triggeringApp=$triggeringApp, wakeReason=$wakeReason, resumeMode=$resumeMode")
@@ -149,6 +148,66 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "Failed to get SystemSurface Intent extras", e)
             promise.reject("GET_INTENT_EXTRAS_ERROR", "Failed to get Intent extras: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Report Quick Task Confirmed (User tapped "Start Quick Task")
+     * Transitions OFFERING → ACTIVE with quota decrement and timer start
+     */
+    @ReactMethod
+    fun reportQuickTaskConfirmed(app: String, sessionId: String) {
+        try {
+            val context = reactApplicationContext
+            ForegroundDetectionService.onQuickTaskConfirmed(app, sessionId, context)
+            android.util.Log.d("AppMonitorModule", "reportQuickTaskConfirmed: app=$app sessionId=$sessionId")
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to report Quick Task confirmed", e)
+        }
+    }
+
+    /**
+     * Quick Task Confirm (TASK 1B: Alias for reportQuickTaskConfirmed)
+     * Transitions OFFERING → ACTIVE with quota decrement and timer start
+     */
+    @ReactMethod
+    fun quickTaskConfirm(packageName: String, sessionId: String, promise: Promise) {
+        try {
+            ForegroundDetectionService.onQuickTaskConfirmed(packageName, sessionId, reactApplicationContext)
+            promise.resolve(null)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to confirm Quick Task", e)
+            promise.reject("QT_CONFIRM_ERROR", "Failed to confirm Quick Task", e)
+        }
+    }
+
+    /**
+     * Report Post-QT Quit (User chose "Quit [App]")
+     * Clears POST_CHOICE lock and allows new QT offers.
+     */
+    @ReactMethod
+    fun quickTaskPostQuit(app: String, sessionId: String) {
+        try {
+            android.util.Log.d("AppMonitorModule", "quickTaskPostQuit: app=$app sessionId=$sessionId")
+            ForegroundDetectionService.onPostQuickTaskChoiceCompletedFromJs(app, sessionId, "QUIT")
+            finishInterventionActivity()
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to report Post-QT quit", e)
+        }
+    }
+
+    /**
+     * Report Post-QT Continue (User chose "I want to use [App] more")
+     * Clears POST_CHOICE lock and closes dialog.
+     */
+    @ReactMethod
+    fun quickTaskPostContinue(app: String, sessionId: String) {
+        try {
+            android.util.Log.d("AppMonitorModule", "quickTaskPostContinue: app=$app sessionId=$sessionId")
+            ForegroundDetectionService.onPostQuickTaskChoiceCompletedFromJs(app, sessionId, "CONTINUE")
+            finishInterventionActivity()
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to report Post-QT continue", e)
         }
     }
 
@@ -549,12 +608,30 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     @ReactMethod
     fun setQuickTaskQuotaPer15m(quota: Int, promise: Promise) {
         try {
-            android.util.Log.d("AppMonitorModule", "setQuickTaskQuotaPer15m: $quota")
+            android.util.Log.e("AppMonitorModule", "setQuickTaskQuotaPer15m: $quota")
+             // VISUAL DEBUG
+             android.widget.Toast.makeText(reactApplicationContext, "Bridge: setQuickTask -> $quota", android.widget.Toast.LENGTH_SHORT).show()
+             
             ForegroundDetectionService.setQuickTaskMaxQuota(quota)
             promise.resolve(true)
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "Failed to set quick task quota", e)
             promise.reject("SET_QUOTA_FAILED", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun getQuickTaskQuota(promise: Promise) {
+        try {
+            val state = ForegroundDetectionService.getCachedQuotaState()
+            val map = com.facebook.react.bridge.Arguments.createMap().apply {
+                putDouble("max", state.maxPer15m.toDouble())
+                putDouble("remaining", state.remaining.toDouble())
+                putDouble("windowStart", state.windowStartMs.toDouble())
+            }
+            promise.resolve(map)
+        } catch (e: Exception) {
+            promise.reject("GET_QUOTA_FAILED", e.message, e)
         }
     }
 
@@ -1126,40 +1203,6 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "Failed to switch quick task to intervention", e)
             promise.reject("QUICK_TASK_SWITCH_ERROR", e.message, e)
-        }
-    }
-
-    /**
-     * User chose to continue after POST_CHOICE
-     * PHASE 4.2: Intent from JS → calls skeleton function
-     */
-    @ReactMethod
-    fun quickTaskPostContinue(app: String, promise: Promise) {
-        try {
-            // Call skeleton function
-            ForegroundDetectionService.onPostChoiceContinue(app, reactApplicationContext)
-            
-            promise.resolve(true)
-        } catch (e: Exception) {
-            android.util.Log.e("AppMonitorModule", "Failed to handle post continue", e)
-            promise.reject("QUICK_TASK_POST_CONTINUE_ERROR", e.message, e)
-        }
-    }
-
-    /**
-     * User chose to quit after POST_CHOICE
-     * PHASE 4.2: Intent from JS → calls skeleton function
-     */
-    @ReactMethod
-    fun quickTaskPostQuit(app: String, promise: Promise) {
-        try {
-            // Call skeleton function
-            ForegroundDetectionService.onPostChoiceQuit(app, reactApplicationContext)
-            
-            promise.resolve(true)
-        } catch (e: Exception) {
-            android.util.Log.e("AppMonitorModule", "Failed to handle post quit", e)
-            promise.reject("QUICK_TASK_POST_QUIT_ERROR", e.message, e)
         }
     }
     

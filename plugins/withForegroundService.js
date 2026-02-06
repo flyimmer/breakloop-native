@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { withAndroidManifest, withStringsXml, withDangerousMod } = require('@expo/config-plugins');
+const { withAndroidManifest, withStringsXml, withDangerousMod, withAppBuildGradle } = require('@expo/config-plugins');
 
 /**
  * Expo Config Plugin: withForegroundService
@@ -441,6 +441,48 @@ function withAndroidManifestModifications(config) {
       console.log(`[${PLUGIN_NAME}] Added PACKAGE_USAGE_STATS permission`);
     }
 
+    // Add FOREGROUND_SERVICE permission (required for startForeground())
+    const hasForegroundServicePermission = permissions.some(
+      (perm) => perm.$['android:name'] === 'android.permission.FOREGROUND_SERVICE'
+    );
+
+    if (!hasForegroundServicePermission) {
+      permissions.push({
+        $: {
+          'android:name': 'android.permission.FOREGROUND_SERVICE',
+        },
+      });
+      console.log(`[${PLUGIN_NAME}] Added FOREGROUND_SERVICE permission`);
+    }
+
+    // Add FOREGROUND_SERVICE_SPECIAL_USE permission (Android 14+)
+    const hasForegroundServiceSpecialUsePermission = permissions.some(
+      (perm) => perm.$['android:name'] === 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE'
+    );
+
+    if (!hasForegroundServiceSpecialUsePermission) {
+      permissions.push({
+        $: {
+          'android:name': 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE',
+        },
+      });
+      console.log(`[${PLUGIN_NAME}] Added FOREGROUND_SERVICE_SPECIAL_USE permission`);
+    }
+
+    // Add POST_NOTIFICATIONS permission (Android 13+, required for foreground service notifications)
+    const hasPostNotificationsPermission = permissions.some(
+      (perm) => perm.$['android:name'] === 'android.permission.POST_NOTIFICATIONS'
+    );
+
+    if (!hasPostNotificationsPermission) {
+      permissions.push({
+        $: {
+          'android:name': 'android.permission.POST_NOTIFICATIONS',
+        },
+      });
+      console.log(`[${PLUGIN_NAME}] Added POST_NOTIFICATIONS permission`);
+    }
+
     manifest['uses-permission'] = permissions;
 
     // Add AccessibilityService and InterventionActivity to application
@@ -505,6 +547,22 @@ function withAndroidManifestModifications(config) {
         },
       });
       console.log(`[${PLUGIN_NAME}] Registered SystemBrainService in AndroidManifest.xml`);
+    }
+
+    // Register AppMonitorService (Phase F3.5)
+    const hasAppMonitorService = services.some(
+      (service) => service.$['android:name'] === '.AppMonitorService'
+    );
+
+    if (!hasAppMonitorService) {
+      services.push({
+        $: {
+          'android:name': '.AppMonitorService',
+          'android:exported': 'false',
+          'android:foregroundServiceType': 'specialUse',
+        },
+      });
+      console.log(`[${PLUGIN_NAME}] Registered AppMonitorService in AndroidManifest.xml`);
     }
 
     application.service = services;
@@ -660,6 +718,70 @@ function withStylesXmlModifications(config) {
  * Main plugin function
  * Chains file copying with config modifications
  */
+/**
+ * Configure Kotlin source sets to include src/main/java
+ * This is required because MainApplication.kt is in src/main/java but is a Kotlin file
+ */
+function withKotlinSourceSets(config) {
+  return withAppBuildGradle(config, (config) => {
+    const buildGradle = config.modResults.contents;
+
+    // Check if already applied
+    if (buildGradle.includes("kotlin.srcDirs += 'src/main/java'")) {
+      return config;
+    }
+
+    // Add sourceSets to android block
+    const androidBlockRegex = /android\s*\{/;
+    if (androidBlockRegex.test(buildGradle)) {
+      config.modResults.contents = buildGradle.replace(
+        androidBlockRegex,
+        `android {
+    sourceSets {
+        main {
+            java.srcDirs += 'src/main/java'
+            kotlin.srcDirs += 'src/main/java'
+        }
+    }`
+      );
+      console.log(`[${PLUGIN_NAME}] Added Kotlin sourceSets to android/app/build.gradle`);
+    } else {
+      console.warn(`[${PLUGIN_NAME}] Could not find 'android {' block in build.gradle`);
+    }
+
+    return config;
+  });
+}
+
+/**
+ * Add DataStore dependency for IntentionStore.kt and QuickTaskQuotaStore.kt
+ */
+function withDataStoreDependency(config) {
+  return withAppBuildGradle(config, (config) => {
+    const buildGradle = config.modResults.contents;
+
+    // Check if already applied
+    if (buildGradle.includes("androidx.datastore:datastore-preferences")) {
+      return config;
+    }
+
+    // Add to dependencies block
+    const dependenciesBlockRegex = /dependencies\s*\{/;
+    if (dependenciesBlockRegex.test(buildGradle)) {
+      config.modResults.contents = buildGradle.replace(
+        dependenciesBlockRegex,
+        `dependencies {
+    implementation "androidx.datastore:datastore-preferences:1.0.0"`
+      );
+      console.log(`[${PLUGIN_NAME}] Added DataStore dependency to android/app/build.gradle`);
+    } else {
+      console.warn(`[${PLUGIN_NAME}] Could not find 'dependencies {' block in build.gradle`);
+    }
+
+    return config;
+  });
+}
+
 const withForegroundService = (config) => {
   // Step 1: Copy Kotlin files and XML files using withDangerousMod (runs during prebuild)
   config = withDangerousMod(config, [
@@ -686,6 +808,12 @@ const withForegroundService = (config) => {
 
   // Step 4: Merge styles.xml (Phase F3.5)
   config = withStylesXmlModifications(config);
+
+  // Step 5: Configure Kotlin source sets to fix ClassNotFoundException
+  config = withKotlinSourceSets(config);
+
+  // Step 6: Add DataStore dependency
+  config = withDataStoreDependency(config);
 
   return config;
 };

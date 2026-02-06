@@ -23,7 +23,11 @@ package com.anonymous.breakloopnative
  */
 object NativeBuildCanary {
     // Increment this number to trigger a fresh native build
-    const val BUILD_VERSION = 52
+    const val BUILD_VERSION = 64 // OFFERING vs ACTIVE Lifecycle Refactor
     const val VERSION_NAME = "V3-Native-Authority-Stores"
     // Added debug logs and boot timeout failsafe for SystemSurfaceActivity
+    
+    fun logBuildInfo() {
+        android.util.Log.e("NATIVE_BUILD_CANARY", "🔥 Native build active: $BUILD_VERSION ($VERSION_NAME)")
+    }
 }

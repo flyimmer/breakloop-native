@@ -1,5 +1,4 @@
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
-import { getQuickTaskDurationMs } from '@/src/os/osConfig';
 import { getQuickTaskRemainingForDisplay } from '@/src/systemBrain/publicApi';
 import { setSystemSurfaceActive } from '@/src/systemBrain/stateManager';
 import React, { useEffect, useState } from 'react';
@@ -116,7 +115,7 @@ export default function QuickTaskDialogScreen() {
     }
   };
 
-  const handleQuickTask = async () => {
+  const handleQuickTaskStart = async () => {
     if (isProcessing || !session || session.kind !== 'QUICK_TASK') {
       return;
     }
@@ -124,27 +123,33 @@ export default function QuickTaskDialogScreen() {
     setIsProcessing(true);
 
     try {
-      // PHASE 4.2: Send intent to Native, Native handles everything
-      const durationMs = getQuickTaskDurationMs();
+      // OFFERING → ACTIVE Transition
+      // Native will:
+      // 1. Validate session ID (3-tier guard)
+      // 2. Transition state OFFERING → ACTIVE
+      // 3. Decrement quota (ONCE)
+      // 4. Start timer keyed by (app, sessionId)
+      // 5. Persist state
 
       if (AppMonitorModule) {
         try {
-          // Native will:
-          // 1. Transition state DECISION → ACTIVE
-          // 2. Set expiresAt
-          // 3. Decrement quota
-          // 4. Persist state
-          // 5. Start timer
-          // 6. Emit START_QUICK_TASK_ACTIVE command (silent - no UI)
-          await AppMonitorModule.quickTaskAccept(session.app, durationMs);
-          console.log(`[QT][INTENT] ACCEPT app=${session.app} duration=${durationMs}`);
+          const app = session.app;
+          const sessionId = String(session.sessionId); // Defensive: ensure string for bridge
+
+          // Log UI confirmation BEFORE calling native (with type check)
+          console.log(`[QT_UI] confirm app=${app} sid=${sessionId} typeof=${typeof session.sessionId}`);
+
+          // Call native confirmation (OFFERING → ACTIVE)
+          await AppMonitorModule.quickTaskConfirm(app, sessionId);
+          console.log(`[QT][INTENT] CONFIRMED app=${app} sid=${sessionId}`);
         } catch (error) {
+          console.error('[QT][INTENT] Failed to confirm Quick Task:', error);
           setIsProcessing(false);
           return;
         }
       }
 
-      // PHASE 4.2: ACTIVE phase is silent - close SystemSurface immediately
+      // ACTIVE phase is silent - close SystemSurface immediately
       // User continues using the app, Native enforces timer
 
       // Set transient targetApp for finish-time navigation
@@ -156,6 +161,7 @@ export default function QuickTaskDialogScreen() {
       // Reset isProcessing
       setIsProcessing(false);
     } catch (error) {
+      console.error('[QT] Error in handleQuickTaskStart:', error);
       setIsProcessing(false);
     }
   };
@@ -247,7 +253,7 @@ export default function QuickTaskDialogScreen() {
 
           {/* SECONDARY ACTION: Quick Task */}
           <Pressable
-            onPress={handleQuickTask}
+            onPress={handleQuickTaskStart}
             disabled={isProcessing}
             style={({ pressed }) => [
               styles.secondaryButton,

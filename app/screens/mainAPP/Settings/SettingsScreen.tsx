@@ -95,7 +95,7 @@ const SettingsScreen = () => {
   // Quick Task settings state
   const [quickTaskDuration, setQuickTaskDuration] = useState<number>(3 * 60 * 1000); // Default: 3 minutes in ms
   const [quickTaskUsesPerWindow, setQuickTaskUsesPerWindow] = useState<number>(1); // Default: 1 use
-  const [isPremium, setIsPremium] = useState<boolean>(false); // Default: free
+  const [isPremium, setIsPremium] = useState<boolean>(true); // TEMP: Bypass Premium gate for debugging
 
   // Intervention preferences state
   const [interventionDuration, setInterventionDuration] = useState<number>(5); // Default: 5 seconds
@@ -263,9 +263,9 @@ const SettingsScreen = () => {
       try {
         const { NativeModules, Platform } = require('react-native');
         if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
-            // NEW NATIVE AUTHORITY: Set Max Quota directly
-            console.log(`[SettingsScreen] ⚡ Updating Native Quota Max to ${usesPerWindow}`);
-            await NativeModules.AppMonitorModule.setQuickTaskQuotaPer15m(usesPerWindow);
+          // NEW NATIVE AUTHORITY: Set Max Quota directly
+          console.log(`[SettingsScreen] ⚡ Updating Native Quota Max to ${usesPerWindow}`);
+          await NativeModules.AppMonitorModule.setQuickTaskQuotaPer15m(usesPerWindow);
         }
       } catch (syncError) {
         console.error('[SettingsScreen] ❌ Failed to sync quota to Native:', syncError);

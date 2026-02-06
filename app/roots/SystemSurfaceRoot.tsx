@@ -173,6 +173,10 @@ export default function SystemSurfaceRoot() {
         const extras = await AppMonitorModule.getSystemSurfaceIntentExtras();
         if (extras?.wakeReason) {
           setWakeReason(extras.wakeReason);
+
+          // WAKE REASON LOGGING (Critical for debugging routing)
+          console.log('[WAKE] reason=' + extras.wakeReason + ' app=' + (extras.triggeringApp || 'null'));
+
           if (__DEV__) {
             console.log('[SystemSurfaceRoot] Wake reason loaded:', extras.wakeReason);
           }
@@ -267,14 +271,20 @@ export default function SystemSurfaceRoot() {
           // We have active session, keep it.
           return;
         }
-        console.error('[SystemSurfaceRoot] ❌ No Intent extras - finishing activity', { extras });
+        console.error('[SystemSurfaceRoot] ❌ No Intent extras - finishing activity (Safe Fallback)', { extras });
         setSystemSurfaceActive(false);
-        safeEndSession(true);
+        safeEndSession(false); // Do not launch home, just close overlay
         return;
       }
 
-      const { triggeringApp, wakeReason } = extras;
+      const { triggeringApp, wakeReason, sessionId } = extras;
       setWakeReason(wakeReason);
+
+      // Read native's sessionId (critical for confirmation matching)
+      const nativeSessionId = sessionId ? String(sessionId) : undefined;
+
+      // Log wake reception for debugging
+      console.log(`[WAKE_RECEIVE] wakeReason=${wakeReason || 'NONE'} app=${triggeringApp || 'NONE'} sessionId=${nativeSessionId || 'NONE'}`);
 
       // ✅ CRITICAL: Check for session mismatch
       if (session && session.app !== triggeringApp) {
@@ -286,33 +296,38 @@ export default function SystemSurfaceRoot() {
 
         dispatchSystemEvent({
           type: 'REPLACE_SESSION',
-          newKind: wakeReason === 'SHOW_QUICK_TASK_DIALOG' ? 'QUICK_TASK' : 'INTERVENTION',
+          newKind: wakeReason === 'SHOW_QUICK_TASK' ? 'QUICK_TASK' : 'INTERVENTION',
           app: triggeringApp,
+          sessionId: nativeSessionId,
         });
         return;
       }
 
       // Dispatch session based on wake reason
-      if (wakeReason === 'SHOW_QUICK_TASK_DIALOG') {
-        // ... (Quick task logic)
+      // Canonical reasons (Native \u2192 JS Contract)
+      if (wakeReason === 'SHOW_QUICK_TASK') {
         dispatchSystemEvent({
           type: 'START_QUICK_TASK',
           app: triggeringApp,
+          sessionId: nativeSessionId,
         });
-      } else if (wakeReason === 'START_INTERVENTION_FLOW') {
+      } else if (wakeReason === 'SHOW_INTERVENTION') {
         dispatchSystemEvent({
           type: 'START_INTERVENTION',
           app: triggeringApp,
+          sessionId: nativeSessionId,
         });
-      } else if (wakeReason === 'POST_QUICK_TASK_CHOICE') {
+      } else if (wakeReason === 'SHOW_POST_QUICK_TASK_CHOICE') {
         dispatchSystemEvent({
           type: 'START_POST_QUICK_TASK_CHOICE',
           app: triggeringApp,
+          sessionId: nativeSessionId,
         });
       } else if (wakeReason === 'INTENTION_EXPIRED_FOREGROUND') {
         dispatchSystemEvent({
           type: 'START_INTERVENTION',
           app: triggeringApp,
+          sessionId: nativeSessionId,
         });
       } else if (wakeReason === 'RESUME_PRESERVED_STATE' || extras.resumeMode === 'RESUME') {
         // V3: Resume Logic
@@ -348,7 +363,8 @@ export default function SystemSurfaceRoot() {
                 dispatchSystemEvent({
                   type: 'START_ALTERNATIVE_ACTIVITY',
                   app: triggeringApp,
-                  shouldLaunchHome: false
+                  shouldLaunchHome: false,
+                  sessionId: nativeSessionId,
                 });
                 resumed = true;
 
@@ -374,6 +390,7 @@ export default function SystemSurfaceRoot() {
           dispatchSystemEvent({
             type: 'START_INTERVENTION',
             app: triggeringApp,
+            sessionId: nativeSessionId,
           });
         }
       } else if (wakeReason === 'MONITORED_APP_FOREGROUND') {
@@ -381,12 +398,14 @@ export default function SystemSurfaceRoot() {
         dispatchSystemEvent({
           type: 'START_QUICK_TASK',
           app: triggeringApp,
+          sessionId: nativeSessionId,
         });
       } else {
         // Fallback
         dispatchSystemEvent({
           type: 'START_INTERVENTION',
           app: triggeringApp,
+          sessionId: nativeSessionId,
         });
       }
     } catch (error) {
