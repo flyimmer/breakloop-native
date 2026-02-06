@@ -25,6 +25,14 @@ This is an update from V3 focused on **Quick Task expiry behavior**.
 - **Row 5:** Default "Happy Path" – Emergency allowance available.
 - **Row 6:** Emergency allowance exhausted – Strict intervention.
 
+### n_quickTask quota window (GLOBAL)
+
+- `n_quickTask` is the number of Quick Tasks allowed within a **fixed rolling time window**.
+- Window sizes are user-configurable: **1h, 4h, 12h, 24h**.
+- Window boundaries are **fixed wall-clock buckets**, e.g. for 1h:
+  - 08:00–09:00, 09:00–10:00, 10:00–11:00, ...
+- At the start of each new window, `n_quickTask_remaining` resets to `n_quickTask`.
+- Scope: **GLOBAL** (shared across all monitored apps).
 ---
 
 ## 2. State Transition List
@@ -78,6 +86,9 @@ This is an update from V3 focused on **Quick Task expiry behavior**.
    - **Intervention:** Switching apps during an incomplete intervention MUST clear the state (Reset to start) upon return, unless explicitly preserved.
 4. **No Free Lunch:** `n_quickTask` must decrement immediately upon starting a Quick Task (not upon completion).
 5. **Hard Reset on Quit:** Executing "Quit" must clear any pending Quick Task state (`t_quickTask` = 0).
+6. **Quota Refill Must Not Override Intention Expiry Behavior:**
+   - Refilling `n_quickTask_remaining` during an active `t_intention` must not trigger anything.
+   - When `t_intention` expires while the user is still on the monitored app, the system MUST start **Intervention immediately**, regardless of `n_quickTask_remaining` at that moment.
 
 ---
 
