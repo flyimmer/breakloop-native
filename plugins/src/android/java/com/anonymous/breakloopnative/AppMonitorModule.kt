@@ -660,10 +660,10 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     }
 
     /**
-     * Store intention timer in SharedPreferences
+     * Store intention timer in SharedPreferences AND schedule native timer.
      * 
-     * NOTE: This is kept for backward compatibility but is NO LONGER used by native layer.
-     * JavaScript is the ONLY authority for t_intention (semantic ownership).
+     * CRITICAL: expiresAt is the SINGLE SOURCE OF TRUTH for idempotency.
+     * State update and timer scheduling happen ATOMICALLY via instance method.
      * 
      * @param packageName Package name of the app (e.g., "com.instagram.android")
      * @param expiresAt Timestamp when timer expires (milliseconds since epoch)
@@ -671,25 +671,26 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     @ReactMethod
     fun storeIntentionTimer(packageName: String, expiresAt: Double) {
         try {
+            // 1) Legacy SharedPreferences storage (for backward compat)
             val prefs = reactApplicationContext.getSharedPreferences("intention_timers", android.content.Context.MODE_PRIVATE)
             val key = "intention_timer_$packageName"
             val expiresAtLong = expiresAt.toLong()
-            
             prefs.edit().putLong(key, expiresAtLong).apply()
             
-            val remainingSec = (expiresAtLong - System.currentTimeMillis()) / 1000
-            android.util.Log.i("AppMonitorModule", "Stored intention timer for $packageName (expires in ${remainingSec}s) [Native Wired]")
-            
-            // WIRE NEW NATIVE INTENTION STORE
+            // 2) Calculate duration for logging
             val durationMs = expiresAtLong - System.currentTimeMillis()
-            if (durationMs > 0) {
-                ForegroundDetectionService.setIntention(packageName, durationMs)
-            } else {
-                 ForegroundDetectionService.clearIntention(packageName)
+            val remainingSec = durationMs / 1000
+            android.util.Log.i("AppMonitorModule", "Intention timer for $packageName until=$expiresAtLong (${remainingSec}s)")
+            
+            if (durationMs <= 0) {
+                android.util.Log.w("AppMonitorModule", "Intention already expired for $packageName, clearing")
+                ForegroundDetectionService.clearIntention(packageName)
+                return
             }
-
-            // Emit MECHANICAL event to System Brain JS with explicit timer type
-            emitSystemEventToSystemBrain("TIMER_SET", packageName, System.currentTimeMillis(), expiresAtLong, "INTENTION")
+            
+            // ✅ 3) ATOMIC state update + timer scheduling via companion method
+            ForegroundDetectionService.scheduleIntentionTimer(packageName, expiresAtLong, reactApplicationContext)
+            
         } catch (e: Exception) {
             android.util.Log.e("AppMonitorModule", "Failed to store intention timer", e)
         }

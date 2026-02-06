@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.Application
 import android.content.Intent
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -108,6 +109,10 @@ class ForegroundDetectionService : AccessibilityService() {
         @Volatile private var cachedQuotaState: QuotaState = QuotaState(1L, 0L, 1L)
         @Volatile private var cachedMonitoredApps: Set<String> = emptySet()
         @Volatile private var cachedIntentions: Map<String, Long> = emptyMap()
+        
+        // Intention Timer Management (all access on mainHandler thread)
+        private val activeIntentionTimerRunnablesByApp = mutableMapOf<String, Runnable>()
+        private val lastForcedInterventionAt = mutableMapOf<String, Long>()
         
         @Volatile private var activeQuickTaskSessionId: String? = null // Legacy alias if needed?
         @Volatile private var activeQuickTaskApp: String? = null
@@ -336,26 +341,98 @@ class ForegroundDetectionService : AccessibilityService() {
         }
         
         @JvmStatic
-        fun setIntention(app: String, durationMs: Long) {
-            val now = System.currentTimeMillis()
-            val until = now + durationMs
+        fun setIntentionUntil(app: String, untilMs: Long) {
+            // Thread safety: Must be called on mainHandler OR will post
+            // When called from bridge (off-main), posts to mainHandler
+            // When called from timer scheduling (already on main), executes immediately
+            val updateAction = {
+                setIntentionUntilInternal(app, untilMs)
+            }
             
+            // Execute on main thread (post if not already on main)
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                updateAction()
+            } else {
+                mainHandler.post(updateAction)
+            }
+        }
+        
+        /**
+         * Internal helper: Update intention state synchronously (assumes already on mainHandler).
+         * Used by setIntentionUntil and by setIntentionUntilAndSchedule for atomic execution.
+         */
+        private fun setIntentionUntilInternal(app: String, untilMs: Long) {
+            // Update in-memory cache with canonical timestamp
             val currentMap = HashMap(cachedIntentions)
-            currentMap[app] = until
+            currentMap[app] = untilMs
             cachedIntentions = currentMap
-            Log.e(LogTags.QT_STATE, "[INTENTION] Set for $app duration=${durationMs}ms until=$until")
             
+            val remainingMs = untilMs - System.currentTimeMillis()
+            val remainingSec = remainingMs / 1000
+            Log.e(LogTags.QT_STATE, "[INTENTION] Set for $app until=$untilMs (remaining=${remainingSec}s)")
+            
+            // Persist to store
             serviceInstance?.let { service ->
-                service.serviceScope.launch { service.intentionStore.setIntention(app, until) }
+                service.serviceScope.launch { service.intentionStore.setIntention(app, untilMs) }
             }
         }
         
         @JvmStatic
+        fun setIntention(app: String, durationMs: Long) {
+            val until = System.currentTimeMillis() + durationMs
+            setIntentionUntil(app, until)
+        }
+        
+        /**
+         * Companion method: Schedule intention timer with canonical timestamp.
+         * Bridges to instance method for atomic state update + timer scheduling.
+         * 
+         * @param app Package name
+         * @param untilMs Canonical expiry timestamp from JS
+         * @param context Android context
+         */
+        @JvmStatic
+        fun scheduleIntentionTimer(app: String, untilMs: Long, context: android.content.Context) {
+            val service = serviceRef?.get()
+            if (service == null) {
+                Log.e("INTENTION_TIMER", "[INTENTION_TIMER_ERROR] Service not running, cannot schedule timer for app=$app")
+                return
+            }
+            
+            Log.i("INTENTION_TIMER", "[INTENTION_TIMER_BRIDGE] Scheduling timer for app=$app until=$untilMs")
+            service.setIntentionUntilAndSchedule(app, untilMs, context)
+        }
+        
+        @JvmStatic
         fun clearIntention(app: String) {
+            // Thread safety: Post to mainHandler for consistency
+            mainHandler.post {
+                clearIntentionInternal(app, "USER_CLEARED")
+            }
+        }
+        
+        /**
+         * Internal helper: Clear intention from all stores.
+         * MUST be called on mainHandler thread.
+         * 
+         * @param app Package name
+         * @param reason Why clearing (for logging)
+         */
+        private fun clearIntentionInternal(app: String, reason: String) {
+            // ✅ ALWAYS cancel timer first (even if cache entry gone)
+            activeIntentionTimerRunnablesByApp[app]?.let { runnable ->
+                mainHandler.removeCallbacks(runnable)
+                activeIntentionTimerRunnablesByApp.remove(app)
+                Log.i("INTENTION_TIMER", "[INTENTION_TIMER_CANCEL] app=$app reason=$reason")
+            }
+            
+            // Update cache (already on mainHandler)
             val currentMap = HashMap(cachedIntentions)
             if (currentMap.remove(app) != null) {
                 cachedIntentions = currentMap
-                Log.e(LogTags.QT_STATE, "[INTENTION] Cleared for $app")
+                Log.e(LogTags.QT_STATE, "[INTENTION] Cleared for $app reason=$reason")
+                
+                // Persist to store
                 serviceInstance?.let { service ->
                     service.serviceScope.launch { service.intentionStore.clearIntention(app) }
                 }
@@ -1217,5 +1294,171 @@ class ForegroundDetectionService : AccessibilityService() {
         serviceRef = null
         serviceScope.cancel()
         return super.onUnbind(intent)
+    }
+    
+    // ========================================
+    // Intention Timer Instance Methods
+    // ========================================
+    
+    /**
+     * Instance method: Atomically update intention state and schedule timer.
+     * Called from AppMonitorModule bridge to ensure state+timer happen together.
+     * 
+     * @param app Package name
+     * @param untilMs Canonical expiry timestamp from JS
+     * @param context Android context
+     */
+    fun setIntentionUntilAndSchedule(app: String, untilMs: Long, context: android.content.Context) {
+        mainHandler.post {
+            // Step 1: Update state synchronously (already on mainHandler, use internal helper)
+            setIntentionUntilInternal(app, untilMs)
+            
+            // Step 2: Schedule timer inline (already on mainHandler)
+            scheduleIntentionTimerInline(app, untilMs, context)
+        }
+    }
+    
+    /**
+     * Instance method: Schedule intention timer (inline, assumes already on mainHandler).
+     * 
+     * @param untilMs Canonical expiry timestamp (from JS expiresAt)
+     * @param context Android context for potential intervention trigger
+     */
+    private fun scheduleIntentionTimerInline(app: String, untilMs: Long, context: android.content.Context) {
+        val now = System.currentTimeMillis()
+        val delayMs = untilMs - now
+        
+        if (delayMs <= 0) {
+            // Already expired
+            Log.w("INTENTION_TIMER", "[INTENTION_TIMER] app=$app already expired (untilMs=$untilMs now=$now), clearing")
+            clearIntentionInternal(app, "ALREADY_EXPIRED")
+            return
+        }
+        
+        // Cancel any existing timer for this app
+        activeIntentionTimerRunnablesByApp[app]?.let { oldRunnable ->
+            mainHandler.removeCallbacks(oldRunnable)
+            Log.i("INTENTION_TIMER", "[INTENTION_TIMER_CANCEL] app=$app reason=REPLACE_TIMER")
+        }
+        
+        // Create new runnable with captured untilMs (idempotency)
+        val runnable = Runnable {
+            onIntentionTimerExpired(app, untilMs, context)
+        }
+        
+        // Store runnable
+        activeIntentionTimerRunnablesByApp[app] = runnable
+        
+        // Schedule on main handler
+        val delaySec = delayMs / 1000
+        Log.e("INTENTION_TIMER", "[INTENTION_TIMER_START] app=$app delayMs=$delayMs until=$untilMs (${delaySec}s)")
+        mainHandler.postDelayed(runnable, delayMs)
+    }
+    
+    /**
+     * Instance method: Handle intention timer expiry with foreground gating and idempotency.
+     * 
+     * CRITICAL: Runs on mainHandler thread, so cachedIntentions mutations are immediate (no nested post).
+     * 
+     * @param expectedUntilMs The canonical timestamp this timer was scheduled for
+     */
+    private fun onIntentionTimerExpired(app: String, expectedUntilMs: Long, context: android.content.Context) {
+        // NOTE: Already on mainHandler thread (runnable context)
+        val now = System.currentTimeMillis()
+        
+        // Clean up timer reference (safe, already on mainHandler)
+        activeIntentionTimerRunnablesByApp.remove(app)
+        
+        // ✅ IDEMPOTENCY GUARD: Verify intention actually expired
+        val currentUntil = cachedIntentions[app]
+        if (currentUntil == null) {
+            Log.i("INTENTION_TIMER", "[INTENTION_TIMER_EXPIRED] app=$app - intention already cleared, ignoring")
+            return
+        }
+        
+        if (currentUntil != expectedUntilMs) {
+            Log.i("INTENTION_TIMER", "[INTENTION_TIMER_EXPIRED] app=$app - intention replaced (expected=$expectedUntilMs current=$currentUntil), ignoring")
+            return
+        }
+        
+        if (now < currentUntil) {
+            Log.w("INTENTION_TIMER", "[INTENTION_TIMER_EXPIRED] app=$app - timer fired early (now=$now until=$currentUntil), ignoring")
+            return
+        }
+        
+        // ✅ FOREGROUND GATING: Check if user is still on this app
+        val fg = currentForegroundApp ?: lastWindowStateChangedPkg
+        
+        if (fg == null || fg != app) {
+            // User left the app before timer expired
+            Log.i("INTENTION_TIMER_EXPIRED_AWAY", 
+                "[INTENTION_TIMER_EXPIRED_AWAY] app=$app fg=$fg - user not on app, clearing intention silently")
+            
+            // Use canonical clearing path (no extra post, already on mainHandler)
+            clearIntentionInternal(app, "TIMER_EXPIRED_AWAY")
+            return
+        }
+        
+        // User is STILL on the app - FORCE intervention!
+        Log.e("INTENTION_TIMER_EXPIRED", 
+            "[INTENTION_TIMER_EXPIRED] app=$app fg=$fg - user still on app, forcing intervention")
+        
+        // Use canonical clearing path (no extra post, already on mainHandler)
+        clearIntentionInternal(app, "TIMER_EXPIRED_ON_APP")
+        
+        // ✅ FORCE INTERVENTION with full debounce guardrails
+        forceInterventionOnIntentionExpiry(app, context)
+    }
+    
+    /**
+     * Helper: Force intervention with all existing debounce guardrails.
+     * Centralizes intervention triggering to prevent duplicates.
+     * MUST be called on mainHandler thread.
+     */
+    private fun forceInterventionOnIntentionExpiry(app: String, context: android.content.Context) {
+        // Guard 1: SystemSurface already active
+        if (isSystemSurfaceActive) {
+            Log.w("INTENTION_TIMER_EXPIRED", "[FORCE_INTERVENTION] app=$app - SystemSurface already active, debouncing")
+            return
+        }
+        
+        // Guard 2: Entry in flight (verified exists at line 65)
+        val inFlightMs = inFlightEntry[app] ?: 0L
+        if (System.currentTimeMillis() - inFlightMs < 1000) {
+            Log.w("INTENTION_TIMER_EXPIRED", "[FORCE_INTERVENTION] app=$app - entry in flight, debouncing")
+            return
+        }
+        
+        // Guard 3: Wake suppression (verified exists at line 93)
+        val suppressUntil = suppressWakeUntil[app] ?: 0L
+        if (System.currentTimeMillis() < suppressUntil) {
+            Log.w("INTENTION_TIMER_EXPIRED", "[FORCE_INTERVENTION] app=$app - wake suppressed until $suppressUntil, debouncing")
+            return
+        }
+        
+        // Guard 4: Recent forced intervention (prevent double triggers)
+        val lastForced = lastForcedInterventionAt[app] ?: 0L
+        if (System.currentTimeMillis() - lastForced < 800) {
+            Log.w("INTENTION_TIMER_EXPIRED", "[FORCE_INTERVENTION] app=$app - forced recently, debouncing")
+            return
+        }
+        
+        // ✅ FINAL FOREGROUND RE-CHECK: User could have switched apps between earlier check and now
+        val fg2 = currentForegroundApp ?: lastWindowStateChangedPkg
+        if (fg2 != app) {
+            Log.w("INTENTION_TIMER_EXPIRED", "[FORCE_INTERVENTION] app=$app fg=$fg2 - user switched apps before wake emit, aborting")
+            return
+        }
+        
+        // Generate new session ID
+        val sessionId = java.util.UUID.randomUUID().toString()
+        
+        // Mark forced intervention timestamp
+        lastForcedInterventionAt[app] = System.currentTimeMillis()
+        
+        Log.e("INTENTION_TIMER_EXPIRED", "[FORCE_INTERVENTION] app=$app sessionId=$sessionId - emitting SHOW_INTERVENTION")
+        
+        // Emit intervention command (using existing method)
+        emitQuickTaskCommand("START_INTERVENTION", app, context)
     }
 }
