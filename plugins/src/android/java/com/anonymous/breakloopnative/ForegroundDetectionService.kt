@@ -541,12 +541,24 @@ class ForegroundDetectionService : AccessibilityService() {
         
         @JvmStatic
         fun onSurfaceExit(reason: String, instanceId: Int? = null, triggeringApp: String? = null, overrideApp: String? = null) {
-            val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp
+            val service = serviceInstance
+val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp ?: service?.activeSurfaceApp
             val entry = resolvedApp?.let { quickTaskMap[it] }
             
             // 1. Reset flag
             setSystemSurfaceActive(false, "EXIT_$reason")
-            
+                        
+            // Fix 4: Layer A - Clear OFFERING state on surface destroy
+            resolvedApp?.let { app ->
+                synchronized(qtLock) {
+                    val qtEntry = quickTaskMap[app]
+                    if (qtEntry?.state == QuickTaskState.OFFERING || promptSessionIdByApp[app] != null) {
+                        clearPromptForAppLocked(app, "SURFACE_DESTROY")
+                        Log.i("QT_OFFER_CLEAR", "[SURFACE_DESTROY] Cleared OFFERING for $app")
+                    }
+                }
+            }
+
             // 2. V3: Handle Preservation
             resolvedApp?.let { app ->
                 val preserved = preservedInterventionFlags[app] == true
@@ -849,7 +861,23 @@ class ForegroundDetectionService : AccessibilityService() {
                        // OFFERING State: Show dialog, NO quota decrement, NO timer
                        synchronized(qtLock) {
                             val entry = quickTaskMap.getOrPut(app) { QuickTaskEntry(app, QuickTaskState.IDLE) }
-                            
+                                                         
+                             // Fix 2: Layer B - Orphan cleanup with grace period
+                             // Only cleanup if offer is stale (>2000ms old) to avoid clearing fresh offers
+                             val now = System.currentTimeMillis()
+                             val offerStartedAt = offerStartedAtMsByApp[app]
+                             val offerAge = if (offerStartedAt != null) (now - offerStartedAt) else Long.MAX_VALUE
+                             
+                             if (promptSessionIdByApp[app] != null && offerAge > 2000L) {
+                                 val surfaceApp = serviceInstance?.activeSurfaceApp
+                                 val needsCleanup = !isSystemSurfaceActive || surfaceApp == null || surfaceApp != app
+                                 
+                                 if (needsCleanup) {
+                                     Log.w("ORPHAN_CLEANUP", "[ORPHAN_CLEANUP] app=$app offerAge=${offerAge}ms surfaceActive=$isSystemSurfaceActive surfaceApp=$surfaceApp - clearing stale offer")
+                                     clearPromptForAppLocked(app, "ORPHAN_RECOVERY")
+                                 }
+                             }
+
                             // Belt-and-Suspenders: Skip if already OFFERING or prompt session exists
                             if (entry.state == QuickTaskState.OFFERING || promptSessionIdByApp[app] != null) {
                                  Log.w(LogTags.QT_STATE, "[QT_OFFER_SKIP] app=$app already offering")
