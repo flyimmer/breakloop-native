@@ -1111,6 +1111,40 @@ class ForegroundDetectionService : AccessibilityService() {
             }
         }
         
+        /**
+         * Fix 1 - Layer C: Centralized intervention emitter.
+         * ALWAYS clears OFFERING state before emitting intervention.
+         * This prevents orphaned OFFERING when user ignores QT and intervention triggers.
+         */
+        private fun emitInterventionForApp(app: String, reason: String, context: android.content.Context) {
+            // Layer C: Clear OFFERING state BEFORE any validation or early-return
+            synchronized(qtLock) {
+                if (promptSessionIdByApp[app] != null || quickTaskMap[app]?.state == QuickTaskState.OFFERING) {
+                    clearPromptForAppLocked(app, "SWITCH_TO_INTERVENTION")
+                }
+            }
+            
+            // Foreground validation (defensive)
+            val fg = currentForegroundApp
+            
+            if (fg != null && isLauncherOrSystemUI(fg)) {
+                Log.d("LAUNCHER_IGNORE", "[LAUNCHER_IGNORE] pkg=$fg - not offering Intervention")
+                return
+            }
+            
+            if (fg != null && fg != app) {
+                Log.w("FOREGROUND_MISMATCH", "[FOREGROUND_MISMATCH] want=$app have=$fg at=emit - not offering Intervention")
+                return
+            }
+            
+            if (fg == null) {
+                Log.i("FOREGROUND_UNKNOWN", "[FOREGROUND_UNKNOWN] fg=null at=emit - allowing intervention for app=$app (reason=$reason)")
+            }
+            
+            // Emit intervention wake
+            emitQuickTaskCommand("START_INTERVENTION", app, context)
+        }
+        
         private fun isIgnored(pkg: String, context: android.content.Context): Boolean {
              return IGNORE_LIST_APPS.contains(pkg) // Simplified
         }
@@ -1465,7 +1499,7 @@ class ForegroundDetectionService : AccessibilityService() {
         
         Log.e("INTENTION_TIMER_EXPIRED", "[FORCE_INTERVENTION] app=$app sessionId=$sessionId - emitting SHOW_INTERVENTION")
         
-        // Emit intervention command (using existing method)
-        emitQuickTaskCommand("START_INTERVENTION", app, context)
+        // Emit intervention command (using centralized helper for Layer C cleanup)
+        emitInterventionForApp(app, "INTENTION_EXPIRED", context)
     }
 }
