@@ -401,7 +401,8 @@ class ForegroundDetectionService : AccessibilityService() {
             
             // DIAGNOSTIC: Log delta to detect unit mismatch or past timestamp
             val now = System.currentTimeMillis()
-            Log.i("INTENTION_BRIDGE", "[INTENTION_BRIDGE] app=$app untilMs=$untilMs now=$now deltaMs=${untilMs - now}")
+            val untilIso = java.time.Instant.ofEpochMilli(untilMs).toString()
+            Log.i("INTENTION_BRIDGE", "[INTENTION_BRIDGE] app=$app untilMs=$untilMs untilIso=$untilIso now=$now deltaMs=${untilMs - now}")
             
             Log.i("INTENTION_TIMER", "[INTENTION_TIMER_BRIDGE] Scheduling timer for app=$app until=$untilMs")
             service.setIntentionUntilAndSchedule(app, untilMs, context)
@@ -455,7 +456,8 @@ class ForegroundDetectionService : AccessibilityService() {
             
             // Fix 3: Diagnostic logging when intention is blocking
             if (rem > 0) {
-                Log.i("INTENTION_DEBUG", "[INTENTION_DEBUG] app=$app until=$until rem=${rem}ms")
+                val untilIso = java.time.Instant.ofEpochMilli(until).toString()
+                Log.i("INTENTION_DEBUG", "[INTENTION_DEBUG] app=$app until=$until untilIso=$untilIso rem=${rem}ms")
             }
             
             return rem
@@ -1428,7 +1430,8 @@ val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp ?: service?.acti
         
         // Schedule on main handler
         val delaySec = delayMs / 1000
-        Log.e("INTENTION_TIMER", "[INTENTION_TIMER_START] app=$app delayMs=$delayMs until=$untilMs (${delaySec}s)")
+        val untilIso = java.time.Instant.ofEpochMilli(untilMs).toString()
+        Log.e("INTENTION_TIMER", "[INTENTION_TIMER_START] app=$app delayMs=$delayMs until=$untilMs untilIso=$untilIso (${delaySec}s)")
         mainHandler.postDelayed(runnable, delayMs)
     }
     
