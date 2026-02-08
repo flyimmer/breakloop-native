@@ -443,7 +443,14 @@ class ForegroundDetectionService : AccessibilityService() {
         fun getIntentionRemainingMs(app: String): Long {
             val until = cachedIntentions[app] ?: 0L
             val now = System.currentTimeMillis()
-            return kotlin.math.max(0L, until - now)
+            val rem = kotlin.math.max(0L, until - now)
+            
+            // Fix 3: Diagnostic logging when intention is blocking
+            if (rem > 0) {
+                Log.i("INTENTION_DEBUG", "[INTENTION_DEBUG] app=$app until=$until rem=${rem}ms")
+            }
+            
+            return rem
         }
         
         @JvmStatic
