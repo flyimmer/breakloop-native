@@ -885,12 +885,12 @@ class ForegroundDetectionService : AccessibilityService() {
                        }
                        
                        // fg == null → allow emit, but log it
-                       if (fg == null) {
-                           Log.i("FOREGROUND_UNKNOWN", "[FOREGROUND_UNKNOWN] fg=null at=emit - allowing for app=$app")
-                       }
-                       
-                       emitQuickTaskCommand("START_INTERVENTION", app, context)
-                  }
+                        if (fg == null) {
+                            Log.i("FOREGROUND_UNKNOWN", "[FOREGROUND_UNKNOWN] fg=null at=emit - allowing for app=$app")
+                        }
+                        
+                        emitInterventionForApp(app, "DECISION_GATE", context)  // ← Change this line
+                   }
                   // ShowPostChoice and ForceReEval are NOT in GateAction? Check DecisionGate.kt
              }
         }
