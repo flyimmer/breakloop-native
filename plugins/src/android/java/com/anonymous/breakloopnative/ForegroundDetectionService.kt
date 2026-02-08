@@ -399,6 +399,10 @@ class ForegroundDetectionService : AccessibilityService() {
                 return
             }
             
+            // DIAGNOSTIC: Log delta to detect unit mismatch or past timestamp
+            val now = System.currentTimeMillis()
+            Log.i("INTENTION_BRIDGE", "[INTENTION_BRIDGE] app=$app untilMs=$untilMs now=$now deltaMs=${untilMs - now}")
+            
             Log.i("INTENTION_TIMER", "[INTENTION_TIMER_BRIDGE] Scheduling timer for app=$app until=$untilMs")
             service.setIntentionUntilAndSchedule(app, untilMs, context)
         }
@@ -419,6 +423,10 @@ class ForegroundDetectionService : AccessibilityService() {
          * @param reason Why clearing (for logging)
          */
         private fun clearIntentionInternal(app: String, reason: String) {
+            // DIAGNOSTIC: Log all clear attempts to detect premature clearing
+            val now = System.currentTimeMillis()
+            Log.w("INTENTION_CLEAR", "[INTENTION_CLEAR] app=$app reason=$reason now=$now")
+            
             // ✅ ALWAYS cancel timer first (even if cache entry gone)
             activeIntentionTimerRunnablesByApp[app]?.let { runnable ->
                 mainHandler.removeCallbacks(runnable)

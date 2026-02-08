@@ -671,6 +671,9 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     @ReactMethod
     fun storeIntentionTimer(packageName: String, expiresAt: Double) {
         try {
+            // DIAGNOSTIC: Log raw value to detect unit mismatch
+            android.util.Log.i("INTENTION_BRIDGE_RAW", "[INTENTION_BRIDGE_RAW] pkg=$packageName expiresAtRaw=$expiresAt type=${expiresAt.javaClass.simpleName}")
+            
             // 1) Legacy SharedPreferences storage (for backward compat)
             val prefs = reactApplicationContext.getSharedPreferences("intention_timers", android.content.Context.MODE_PRIVATE)
             val key = "intention_timer_$packageName"
