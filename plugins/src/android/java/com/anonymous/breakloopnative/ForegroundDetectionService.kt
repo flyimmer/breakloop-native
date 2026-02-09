@@ -132,6 +132,10 @@ class ForegroundDetectionService : AccessibilityService() {
         @Volatile private var currentForegroundApp: String? = null
         @Volatile private var lastWindowStateChangedPkg: String? = null
         
+        // Last real foreground app (excludes system/launcher) for expiry fallback
+        @Volatile private var lastRealForegroundPkg: String? = null
+        @Volatile private var lastRealForegroundAtMs: Long = 0L
+        
         private val surfaceRecoveryHandler = Handler(Looper.getMainLooper())
         private var surfaceRecoveryRunnable: Runnable? = null
         
@@ -1066,40 +1070,36 @@ val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp ?: service?.acti
                     return
                 }
                 
-                // TASK 3 FIX: Snapshot ground truth foreground at expiry time
+                // TASK 1: Snapshot foreground signals at expiry time
+                val now = System.currentTimeMillis()
                 val fgNow = serviceInstance?.rootInActiveWindow?.packageName?.toString()
                 val fgCached = currentForegroundApp
                 val lastWsc = lastWindowStateChangedPkg
                 val surfaceActive = isSystemSurfaceActive
                 val surfaceApp = serviceInstance?.activeSurfaceApp
+                val lastReal = lastRealForegroundPkg
+                val lastRealAge = now - lastRealForegroundAtMs
                 
                 // Comprehensive diagnostic log
-                Log.i("QT_EXPIRE_FG", 
-                    "[QT_EXPIRE_FG] app=$app fgNow=$fgNow fgCached=$fgCached lastWsc=$lastWsc surfaceActive=$surfaceActive surfaceApp=$surfaceApp")
+                Log.i("QT_EXPIRE_FG",
+                    "[QT_EXPIRE_FG] app=$app fgNow=$fgNow fgCached=$fgCached lastWsc=$lastWsc surfaceActive=$surfaceActive surfaceApp=$surfaceApp lastReal=$lastReal lastRealAgeMs=$lastRealAge")
                 
-                // NEW: Robust cascading fallback (handles case where lastWsc is ALSO SystemUI)
-                var fgCandidate = fgNow
-                
-                // Fallback cascade if fgNow is unreliable
+                // TASK 3: Determine effective foreground using lastRealForegroundPkg fallback
                 val selfPkg = serviceInstance?.applicationContext?.packageName
-                if (fgCandidate == null || 
-                    fgCandidate == selfPkg || 
-                    isLauncherOrSystemUI(fgCandidate)) {
-                    
-                    // Try lastWsc, but ONLY if it's also not unreliable
-                    val lw = lastWsc
-                    fgCandidate = if (lw != null &&
-                        lw != selfPkg &&
-                        !isLauncherOrSystemUI(lw)
-                    ) {
-                        lw  // lastWsc is valid
-                    } else {
-                        // Final fallback: activeSurfaceApp (only if surface is/was relevant)
-                        if (surfaceActive) surfaceApp else null
-                    }
+                
+                // Helper: is package usable (not null, not self, not system/launcher)?
+                fun fgUsable(pkg: String?): Boolean {
+                    return pkg != null && pkg != selfPkg && !isLauncherOrSystemUI(pkg)
                 }
                 
-                val fg = fgCandidate
+                // Cascading fallback with 30s age check
+                val fgEffective = when {
+                    fgUsable(fgNow) -> fgNow
+                    fgUsable(lastReal) && lastRealAge < 30_000L -> lastReal
+                    else -> null
+                }
+                
+                val fg = fgEffective
                 
                 // Case 2: User NOT on app when timer expires
                 if (fg == null || fg != app) {
@@ -1386,6 +1386,13 @@ val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp ?: service?.acti
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val packageName = event.packageName?.toString() ?: return
             if (packageName == applicationContext.packageName) return
+            
+            // Track last real foreground app (excludes system/launcher)
+            if (!isLauncherOrSystemUI(packageName)) {
+                lastRealForegroundPkg = packageName
+                lastRealForegroundAtMs = System.currentTimeMillis()
+                Log.e("FG_RAW", "[FG_RAW] lastRealForegroundPkg=$packageName")
+            }
             
             // Raw detection
             val isRawChange = (packageName != lastWindowStateChangedPkg)

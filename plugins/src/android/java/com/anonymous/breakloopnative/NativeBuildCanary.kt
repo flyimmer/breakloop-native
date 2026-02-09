@@ -23,9 +23,9 @@ package com.anonymous.breakloopnative
  */
 object NativeBuildCanary {
     // Increment this number to trigger a fresh native build
-    const val BUILD_VERSION = 67 // Quick Task expiry foreground detection fix (cascading fallback)
+    const val BUILD_VERSION = 68 // Quick Task expiry fix: lastRealForegroundPkg tracking
     const val VERSION_NAME = "V3-Native-Authority-Stores"
-    // Added AccessibilityService ground truth + cascading fallback (fgNow → lastWsc → surfaceApp)
+    // Added lastRealForegroundPkg fallback with 30s age check + comprehensive QT_EXPIRE_FG diagnostic
     
     fun logBuildInfo() {
         android.util.Log.e("NATIVE_BUILD_CANARY", "🔥 Native build active: $BUILD_VERSION ($VERSION_NAME)")
