@@ -23,9 +23,9 @@ package com.anonymous.breakloopnative
  */
 object NativeBuildCanary {
     // Increment this number to trigger a fresh native build
-    const val BUILD_VERSION = 65 // Intention timer diagnostic logs (unit mismatch, delta, clear path)
+    const val BUILD_VERSION = 67 // Quick Task expiry foreground detection fix (cascading fallback)
     const val VERSION_NAME = "V3-Native-Authority-Stores"
-    // Added INTENTION_BRIDGE_RAW, INTENTION_BRIDGE, INTENTION_CLEAR diagnostic logs
+    // Added AccessibilityService ground truth + cascading fallback (fgNow → lastWsc → surfaceApp)
     
     fun logBuildInfo() {
         android.util.Log.e("NATIVE_BUILD_CANARY", "🔥 Native build active: $BUILD_VERSION ($VERSION_NAME)")

@@ -1066,8 +1066,39 @@ val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp ?: service?.acti
                     return
                 }
                 
-                // Determine foreground (TASK 3: Foreground gating)
-                val fg = currentForegroundApp ?: lastWindowStateChangedPkg
+                // TASK 3 FIX: Snapshot ground truth foreground at expiry time
+                val fgNow = serviceInstance?.rootInActiveWindow?.packageName?.toString()
+                val fgCached = currentForegroundApp
+                val lastWsc = lastWindowStateChangedPkg
+                val surfaceActive = isSystemSurfaceActive
+                val surfaceApp = serviceInstance?.activeSurfaceApp
+                
+                // Comprehensive diagnostic log
+                Log.i("QT_EXPIRE_FG", 
+                    "[QT_EXPIRE_FG] app=$app fgNow=$fgNow fgCached=$fgCached lastWsc=$lastWsc surfaceActive=$surfaceActive surfaceApp=$surfaceApp")
+                
+                // NEW: Robust cascading fallback (handles case where lastWsc is ALSO SystemUI)
+                var fgCandidate = fgNow
+                
+                // Fallback cascade if fgNow is unreliable
+                if (fgCandidate == null || 
+                    fgCandidate == applicationContext.packageName || 
+                    isLauncherOrSystemUI(fgCandidate)) {
+                    
+                    // Try lastWsc, but ONLY if it's also not unreliable
+                    val lw = lastWsc
+                    fgCandidate = if (lw != null &&
+                        lw != applicationContext.packageName &&
+                        !isLauncherOrSystemUI(lw)
+                    ) {
+                        lw  // lastWsc is valid
+                    } else {
+                        // Final fallback: activeSurfaceApp (only if surface is/was relevant)
+                        if (surfaceActive) surfaceApp else null
+                    }
+                }
+                
+                val fg = fgCandidate
                 
                 // Case 2: User NOT on app when timer expires
                 if (fg == null || fg != app) {
