@@ -102,6 +102,10 @@ class ForegroundDetectionService : AccessibilityService() {
         // Protected by qtLock for consistent invariants with other state maps
         private val qtProtectedUntilMsByApp = mutableMapOf<String, Long>()
         
+        // PR3: In-flight decision gating (prevents duplicate triggers during surface handoff)
+        // Protected by qtLock
+        private val decisionInFlightUntilMsByApp = mutableMapOf<String, Long>()
+        
         // Per-app duration cache (protected by qtLock)
         private val cachedQuickTaskDurationMsByApp = mutableMapOf<String, Long>()
         
@@ -554,41 +558,41 @@ class ForegroundDetectionService : AccessibilityService() {
         }
         
         @JvmStatic
-        fun onSurfaceExit(reason: String, instanceId: Int? = null, triggeringApp: String? = null, overrideApp: String? = null) {
+        fun onSurfaceExit(
+            reason: String,
+            instanceId: Int? = null,
+            surfaceApp: String? = null,
+            surfaceSessionId: String? = null,
+            surfaceWakeReason: String? = null
+        ) {
+            // PR1: Derive surface kind from wakeReason for diagnostic logging
+            val surfaceKind = when (surfaceWakeReason) {
+                SystemSurfaceActivity.WAKE_REASON_SHOW_QUICK_TASK -> "QUICK_TASK_OFFER"
+                SystemSurfaceActivity.WAKE_REASON_SHOW_POST_QUICK_TASK_CHOICE -> "POST_CHOICE"
+                SystemSurfaceActivity.WAKE_REASON_SHOW_INTERVENTION -> "INTERVENTION"
+                null -> "UNKNOWN_NULL"
+                else -> "UNKNOWN_$surfaceWakeReason"
+            }
+            
+            // PR1: Entry point diagnostic (with kind for verification)
+            Log.i("SURFACE_DESTROY", "[EXIT_CB] reason=$reason app=$surfaceApp sid=$surfaceSessionId wake=$surfaceWakeReason kind=$surfaceKind instance=$instanceId")
+            
             val service = serviceInstance
-val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp ?: service?.activeSurfaceApp
+            // PR1: Use surfaceApp if available, otherwise fallback to resolvedApp
+            val resolvedApp = surfaceApp ?: service?.activeSurfaceApp
             val entry = resolvedApp?.let { quickTaskMap[it] }
             
             // 1. Reset flag
             setSystemSurfaceActive(false, "EXIT_$reason")
                         
-            // Fix 4: Layer A - Clear OFFERING state on surface destroy (session-aware)
-            resolvedApp?.let { app ->
-                synchronized(qtLock) {
-                    val qtEntry = quickTaskMap[app]
-                    val currentOfferSid = promptSessionIdByApp[app]
-                    val offerStartedAt = offerStartedAtMsByApp[app]
-                    val now = System.currentTimeMillis()
-                    
-                    // FIX B: Age-based guard - don't clear fresh offers
-                    if (currentOfferSid != null && offerStartedAt != null) {
-                        val offerAge = now - offerStartedAt
-                        
-                        if (offerAge < 1500L) {
-                            // Offer is fresh (< 1.5s) - do NOT clear
-                            // (likely PostChoice surface closing, new offer just created)
-                            Log.i("SURFACE_DESTROY", 
-                                "[SURFACE_DESTROY] NOT clearing fresh offering app=$app offerAge=${offerAge}ms offerSid=$currentOfferSid action=KEEP")
-                            return@let  // Skip clearing
-                        }
-                    }
-                    
-                    // Offer is old or doesn't exist - safe to clear
-                    if (qtEntry?.state == QuickTaskState.OFFERING || currentOfferSid != null) {
-                        clearPromptForAppLocked(app, "SURFACE_DESTROY")
-                        Log.i("SURFACE_DESTROY", "[SURFACE_DESTROY] CLEARED offering app=$app offerAge=${if (offerStartedAt != null) now - offerStartedAt else null}ms")
-                    }
-                }
+            // PR2: OFFERING cleanup (deterministic SID-based)
+            if (surfaceApp != null && surfaceSessionId != null) {
+                // PRIMARY PATH: have surface metadata → deterministic cleanup
+                performSessionAwareCleanup(surfaceApp, surfaceSessionId, surfaceKind, instanceId)
+            } else if (resolvedApp != null) {
+                // FALLBACK PATH: missing metadata → conservative (do NOT clear offering)
+                Log.w("SURFACE_DESTROY",
+                    "[SURFACE_DESTROY] Missing surface metadata app=$surfaceApp sid=$surfaceSessionId - SKIPPING offering cleanup (conservative)")
             }
 
             // 2. V3: Handle Preservation
@@ -610,6 +614,207 @@ val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp ?: service?.acti
             underlyingApp = null
         }
         
+        /**
+         * PR2: Deterministic session-aware cleanup for OFFERING state
+         * 
+         * This is the SINGLE AUTHORITY for clearing promptSessionIdByApp.
+         * Decision based on:
+         * 1. Surface kind (derived from wakeReason)
+         * 2. Session ID matching (surfaceSessionId vs currentOfferSid)
+         * 
+         * Rules:
+         * - QUICK_TASK_OFFER + SID match → CLEAR (surface owns the offer)
+         * - QUICK_TASK_OFFER + SID mismatch → KEEP (new offer already created)
+         * - POST_CHOICE → ALWAYS KEEP (PostChoice never owns offers)
+         * - INTERVENTION → No offering cleanup
+         * - UNKNOWN → KEEP (conservative, avoid breaking valid flows)
+         */
+        private fun performSessionAwareCleanup(
+            surfaceApp: String,
+            surfaceSessionId: String,
+            surfaceKind: String,
+            instanceId: Int?
+        ) {
+            synchronized(qtLock) {
+                val currentOfferSid = promptSessionIdByApp[surfaceApp]
+                
+                when (surfaceKind) {
+                    "QUICK_TASK_OFFER" -> {
+                        if (surfaceSessionId == currentOfferSid) {
+                            // This surface OWNS the current offer → CLEAR
+                            clearPromptForAppLocked(surfaceApp, "SURFACE_DESTROY_OFFER_MATCH")
+                            Log.i("SURFACE_DESTROY",
+                                "[SURFACE_DESTROY] CLEARED offering app=$surfaceApp surfaceSid=$surfaceSessionId currentOfferSid=$currentOfferSid kind=$surfaceKind action=CLEAR reason=SID_MATCH instance=$instanceId")
+                        } else {
+                            // Different session → KEEP (new offer already created)
+                            Log.i("SURFACE_DESTROY",
+                                "[SURFACE_DESTROY] NOT clearing offering app=$surfaceApp surfaceSid=$surfaceSessionId currentOfferSid=$currentOfferSid kind=$surfaceKind action=KEEP reason=SID_MISMATCH instance=$instanceId")
+                        }
+                    }
+                    
+                    "POST_CHOICE" -> {
+                        // PostChoice surface NEVER owns offers → ALWAYS KEEP
+                        Log.i("SURFACE_DESTROY",
+                            "[SURFACE_DESTROY] NOT clearing offering app=$surfaceApp surfaceSid=$surfaceSessionId currentOfferSid=$currentOfferSid kind=$surfaceKind action=KEEP reason=POST_CHOICE_NO_OWNERSHIP instance=$instanceId")
+                    }
+                    
+                    "INTERVENTION" -> {
+                        // Intervention doesn't affect QuickTask offering state
+                        Log.i("SURFACE_DESTROY",
+                            "[SURFACE_DESTROY] No offering cleanup app=$surfaceApp kind=$surfaceKind instance=$instanceId")
+                    }
+                    
+                    else -> {
+                        // CONSERVATIVE: do NOT clear offering for unknown surface types
+                        Log.w("SURFACE_DESTROY",
+                            "[SURFACE_DESTROY] UNKNOWN kind=$surfaceKind - NOT clearing offering app=$surfaceApp surfaceSid=$surfaceSessionId currentOfferSid=$currentOfferSid action=KEEP reason=UNKNOWN_CONSERVATIVE instance=$instanceId")
+                    }
+                }
+            }
+        }
+        
+        /**
+         * PR3: Coordinator for QuickTask decision requests
+         * 
+         * Single entry point for all QuickTask offer creation (except timer expiry).
+         * Provides:
+         * - In-flight gating (prevents duplicate triggers during surface handoff)
+         * - Consistent sessionId allocation
+         * - Single WAKE_EMIT authority
+         * 
+         * @param app Package name
+         * @param source Source of the request (for logging)
+         * @param force If true, bypasses cooldowns (used for CONTINUE)
+         * @return true if surface was emitted, false if suppressed
+         */
+        private fun requestQuickTaskDecision(
+            app: String,
+            source: String,
+            force: Boolean = false
+        ): Boolean {
+            // 1. Compute decision + allocate SID + update state (INSIDE qtLock)
+            val outcome = synchronized(qtLock) {
+                val now = System.currentTimeMillis()
+                
+                // In-flight gating
+                val inflightUntil = decisionInFlightUntilMsByApp[app]
+                if (inflightUntil != null && now < inflightUntil) {
+                    Log.i("DECISION_INFLIGHT",
+                        "[DECISION_INFLIGHT] app=$app source=$source action=SKIP remainingMs=${inflightUntil - now}")
+                    return@synchronized Outcome(null, null)
+                }
+                
+                // Check if we should start QuickTask
+                // For now, simple logic: if force=true or not in cooldown, start QT
+                val shouldStart = if (force) {
+                    true
+                } else {
+                    // Check cooldown
+                    val lastPostChoice = postChoiceCompletedAtMsByApp[app]
+                    val cooldownExpired = lastPostChoice == null || (now - lastPostChoice) > 2000L
+                    cooldownExpired
+                }
+                
+                if (shouldStart) {
+                    val sid = java.util.UUID.randomUUID().toString()
+                    promptSessionIdByApp[app] = sid
+                    offerStartedAtMsByApp[app] = now
+                    
+                    val entry = quickTaskMap.getOrPut(app) { QuickTaskEntry(app, QuickTaskState.IDLE) }
+                    entry.state = QuickTaskState.OFFERING
+                    
+                    decisionInFlightUntilMsByApp[app] = now + 800L
+                    
+                    Log.i("DECISION_GATE", "[DECISION_GATE] app=$app result=StartQuickTask sid=$sid source=$source force=$force")
+                    Outcome("START_QUICK_TASK_ACTIVE", sid)
+                } else {
+                    Log.i("DECISION_GATE", "[DECISION_GATE] app=$app result=Suppressed source=$source (cooldown)")
+                    Outcome(null, null)
+                }
+            }
+            
+            // 2. Emit OUTSIDE lock (PR3a: comprehensive diagnostics)
+            if (outcome.cmd != null && outcome.sid != null) {
+                // Check context availability BEFORE attempting emission
+                val svcInstance = serviceInstance
+                val context = svcInstance?.applicationContext
+                val threadName = Thread.currentThread().name
+                val svcHash = if (svcInstance != null) System.identityHashCode(svcInstance) else null
+                
+                if (svcInstance == null) {
+                    Log.e("DECISION_EMIT_FAIL", "[DECISION_EMIT_FAIL] app=$app sid=${outcome.sid} reason=NO_SERVICE_INSTANCE thread=$threadName")
+                    
+                    // PR3b: Rollback zombie OFFERING state
+                    val rollbackResult = synchronized(qtLock) {
+                        val currentSid = promptSessionIdByApp[app]
+                        val entry = quickTaskMap[app]
+                        val stateBefore = entry?.state
+                        
+                        val didRollback = if (currentSid == outcome.sid) {
+                            promptSessionIdByApp.remove(app)
+                            offerStartedAtMsByApp.remove(app)
+                            decisionInFlightUntilMsByApp.remove(app)
+                            if (entry?.state == QuickTaskState.OFFERING) {
+                                entry.state = QuickTaskState.IDLE
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                        
+                        val stateAfter = entry?.state
+                        val promptSidNow = promptSessionIdByApp[app]
+                        Triple(didRollback, stateBefore, stateAfter to promptSidNow)
+                    }
+                    
+                    Log.w("DECISION_EMIT_ROLLBACK", "[DECISION_EMIT_ROLLBACK] app=$app sid=${outcome.sid} didRollback=${rollbackResult.first} stateBefore=${rollbackResult.second} stateAfter=${rollbackResult.third.first} promptSidNow=${rollbackResult.third.second}")
+                    return false
+                }
+                
+                if (context == null) {
+                    Log.e("DECISION_EMIT_FAIL", "[DECISION_EMIT_FAIL] app=$app sid=${outcome.sid} reason=NO_CONTEXT svcHash=$svcHash thread=$threadName")
+                    
+                    // PR3b: Rollback zombie OFFERING state
+                    val rollbackResult = synchronized(qtLock) {
+                        val currentSid = promptSessionIdByApp[app]
+                        val entry = quickTaskMap[app]
+                        val stateBefore = entry?.state
+                        
+                        val didRollback = if (currentSid == outcome.sid) {
+                            promptSessionIdByApp.remove(app)
+                            offerStartedAtMsByApp.remove(app)
+                            decisionInFlightUntilMsByApp.remove(app)
+                            if (entry?.state == QuickTaskState.OFFERING) {
+                                entry.state = QuickTaskState.IDLE
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                        
+                        val stateAfter = entry?.state
+                        val promptSidNow = promptSessionIdByApp[app]
+                        Triple(didRollback, stateBefore, stateAfter to promptSidNow)
+                    }
+                    
+                    Log.w("DECISION_EMIT_ROLLBACK", "[DECISION_EMIT_ROLLBACK] app=$app sid=${outcome.sid} didRollback=${rollbackResult.first} stateBefore=${rollbackResult.second} stateAfter=${rollbackResult.third.first} promptSidNow=${rollbackResult.third.second}")
+                    return false
+                }
+                
+                Log.i("DECISION_EMIT_BEGIN", "[DECISION_EMIT_BEGIN] app=$app sid=${outcome.sid} cmd=${outcome.cmd} svcHash=$svcHash thread=$threadName")
+                emitQuickTaskCommand(outcome.cmd, app, context, outcome.sid)
+                Log.i("DECISION_EMIT_DONE", "[DECISION_EMIT_DONE] app=$app sid=${outcome.sid}")
+                return true
+            }
+            return false
+        }
+        
+        /**
+         * Data class for coordinator outcome
+         */
+        private data class Outcome(val cmd: String?, val sid: String?)
+        
+
         @JvmStatic
         fun onSessionClosed(session: SessionManager.Session, reason: String) {
             val app = session.pkg
@@ -635,15 +840,14 @@ val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp ?: service?.acti
                 }
                 
                 val now = System.currentTimeMillis()
-                if (choice == "QUIT") {
-                    quitSuppressionUntil[app] = now + 1500
-                    Log.e(LogTags.QT_FINISH, "[POST_CHOICE] QUIT -> Suppressing")
-                    suppressWakeUntil.remove(app)
-                } else {
-                    suppressWakeUntil[app] = now + 30000
-                    Log.e(LogTags.QT_FINISH, "[POST_CHOICE] CONTINUE -> Wake Suppressing")
-                }
-                
+            if (choice == "QUIT") {
+                quitSuppressionUntil[app] = now + 1500
+                Log.e(LogTags.QT_FINISH, "[POST_CHOICE] QUIT -> Suppressing")
+                suppressWakeUntil.remove(app)
+            } else { // CONTINUE
+                suppressWakeUntil.remove(app) // allow immediate re-offer; in-flight gating handles noise
+                Log.e(LogTags.QT_FINISH, "[POST_CHOICE] CONTINUE -> Wake Suppression CLEARED (PR4)")
+            }    
                 clearActiveForAppLocked(app, "POST_CHOICE_$choice")
             }
             emitFinishSystemSurface(context)
@@ -668,12 +872,12 @@ val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp ?: service?.acti
                 entry.expiresAt = null
                 synchronized(qtLock) { cancelNativeTimerLocked(app) }
             } else if (entry.state == QuickTaskState.POST_CHOICE) {
-                suppressWakeUntil[app] = System.currentTimeMillis() + 30000
-                entry.state = QuickTaskState.IDLE
-                entry.postChoiceShown = false
-                entry.expiresAt = null
-            }
-        }
+            suppressWakeUntil.remove(app) // PR4: never suppress wakes due to PostChoice cleanup
+            entry.state = QuickTaskState.IDLE
+            entry.postChoiceShown = false
+            entry.expiresAt = null
+            Log.w("QT_CLEANUP", "[QT_CLEANUP] POST_CHOICE -> cleared suppressWakeUntil (PR4)")
+        }    }
         
         private fun cancelNativeTimerLocked(app: String) {
             activeTimerRunnablesByApp.remove(app)?.let {
@@ -971,7 +1175,10 @@ val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp ?: service?.acti
         }
 
         @JvmStatic
-        fun onSystemSurfaceDestroyed(app: String?, sessionId: String?, instanceId: Int) {
+        fun onSystemSurfaceDestroyed(app: String?, sessionId: String?, wakeReason: String?, instanceId: Int) {
+            // PR1: Entry point diagnostic
+            Log.i("SURFACE_DESTROY", "[DESTROY_CB] app=$app sid=$sessionId wake=$wakeReason instance=$instanceId")
+            
             val service = serviceInstance
             
             // 1. Global Surface Cleanup (ALWAYS ATTEMPT - Keyed by InstanceID)
@@ -989,29 +1196,16 @@ val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp ?: service?.acti
             }
             
             // 2. Per-App State Cleanup (Best-Effort)
-            // Resolve app: use provided app or fallback to activeSurfaceApp
-            val resolvedApp = app ?: service?.activeSurfaceApp
-            
-            if (resolvedApp != null) {
-                synchronized(qtLock) {
-                    val entry = quickTaskMap[resolvedApp]
-                    
-                    when (entry?.state) {
-                        QuickTaskState.OFFERING -> {
-                            // OFFERING: Clear prompt session (user declined by leaving)
-                            clearPromptForAppLocked(resolvedApp, "SURFACE_DESTROY")
-                        }
-                        QuickTaskState.ACTIVE -> {
-                            // ACTIVE: Timer continues in background, do NOT clear
-                            Log.i("QT_ACTIVE_PERSIST", "[QT_ACTIVE_PERSIST] app=$resolvedApp reason=SURFACE_DESTROY (timer continues)")
-                        }
-                        else -> {
-                            // Other states: no action needed
-                        }
-                    }
-                }
-            }
+            // PR1: Thread wakeReason to onSurfaceExit
+            onSurfaceExit(
+                reason = "ON_DESTROY",
+                instanceId = instanceId,
+                surfaceApp = app,
+                surfaceSessionId = sessionId,
+                surfaceWakeReason = wakeReason
+            )
         }
+        
         
         /**
          * Clear OFFERING session (prompt shown, no timer/quota consumed)
@@ -1353,30 +1547,22 @@ val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp ?: service?.acti
                     Log.i("QUIT_SUPPRESS", "[QUIT_SUPPRESS] app=$app until=${now + 2000L}")
                     Log.i("POST_CHOICE_COOLDOWN", "[POST_CHOICE_COOLDOWN] app=$app at=$now")
                 } else if (choice == "CONTINUE") {
-                    // FIX A: Set post-choice cooldown to prevent immediate re-offer
-                    postChoiceCompletedAtMsByApp[app] = now
+                    // PR3: NO cooldown for CONTINUE (immediate re-offer)
                     quitSuppressedUntilMsByApp.remove(app)
                     shouldTriggerContinue = true
-                    Log.i("POST_CHOICE_COOLDOWN", "[POST_CHOICE_COOLDOWN] app=$app at=$now (CONTINUE)")
                 }
 
                 Log.e("POST_CHOICE_COMPLETE", "[POST_CHOICE_COMPLETE] app=$app sid=$sessionId choice=$choice")
             }
         }
 
-        // Schedule OUTSIDE lock
+        // PR3: CONTINUE immediate transition (OUTSIDE lock)
         if (shouldTriggerContinue) {
-            Log.i("POST_CONTINUE_TRIGGER", "[POST_CONTINUE_TRIGGER] app=$app scheduling re-eval")
-            mainHandler.postDelayed({
-                // Direct instance call with applicationContext
-                handleMonitoredAppEntry(
-                    app = app,
-                    context = applicationContext,
-                    source = "POST_CONTINUE",
-                    force = true,
-                    isRawChange = false
-                )
-            }, 100L)
+            val emitted = requestQuickTaskDecision(app, source="POST_CONTINUE_IMMEDIATE", force=true)
+            
+            if (!emitted) {
+                Log.w("POST_CONTINUE", "[POST_CONTINUE] No surface emitted app=$app (see DECISION_GATE/DECISION_EMIT_FAIL for reason)")
+            }
         }
     }
 

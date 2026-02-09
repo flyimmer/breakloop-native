@@ -90,6 +90,8 @@ class SystemSurfaceActivity : ReactActivity() {
     
     // Lifecycle Tracking
     private var currentSessionId: String? = null
+    private var currentWakeReason: String? = null  // PR1: Stable wakeReason tracking
+    private var currentApp: String? = null         // PR1: Stable app tracking
     private var finishReason: String = "ACTIVITY_DESTROYED" // Default reason
     private var isClosing: Boolean = false // M4 Hardening: Loop prevention
 
@@ -160,7 +162,10 @@ class SystemSurfaceActivity : ReactActivity() {
 
         Log.i(TAG, "🎯 SystemSurfaceActivity created")
         
+        // PR1: Store fields for stable access in onDestroy (avoid stale intent)
         currentSessionId = sessionId
+        currentWakeReason = wakeReason
+        currentApp = triggeringApp
         
         // Register with Manager
         SystemSurfaceManager.register(this, sessionId)
@@ -196,7 +201,10 @@ class SystemSurfaceActivity : ReactActivity() {
         val instanceId = System.identityHashCode(this)
         val intentNonce = System.currentTimeMillis() // Simple monotonic nonce
         
-        currentSessionId = sessionId // Update tracking for unregister
+        // PR1: Update stored fields (NOT reading from stale intent in onDestroy)
+        currentSessionId = sessionId
+        currentWakeReason = wakeReason
+        currentApp = triggeringApp
         
         // INTENT LOGGING (Critical for debugging wake reason routing)
         Log.e("INTENT", "[INTENT] wakeReason=$wakeReason app=$triggeringApp sessionId=$sessionId instanceId=$instanceId")
@@ -292,11 +300,15 @@ class SystemSurfaceActivity : ReactActivity() {
         Log.i(TAG, "[LIFE] onDestroy reason=$finishReason isFinishing=$isFinishing")
         
         // Always notify service of destruction (Ghost Busting)
-        // Pass triggeringApp, currentSessionId, and instanceId.
-        val triggeringAppLocal = intent?.getStringExtra(EXTRA_TRIGGERING_APP)
+        // PR1: Use stored fields (stable, not stale intent)
         val instanceId = System.identityHashCode(this)
         
-        ForegroundDetectionService.onSystemSurfaceDestroyed(triggeringAppLocal, currentSessionId, instanceId)
+        ForegroundDetectionService.onSystemSurfaceDestroyed(
+            app = currentApp,
+            sessionId = currentSessionId,
+            wakeReason = currentWakeReason,
+            instanceId = instanceId
+        )
     }
 
     override fun onResume() {

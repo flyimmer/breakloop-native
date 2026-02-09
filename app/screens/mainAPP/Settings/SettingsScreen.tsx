@@ -205,6 +205,31 @@ const SettingsScreen = () => {
     }
   };
 
+  // Helper: Sync Quick Task settings to Native
+  // This ensures Native cache is populated with current settings
+  const syncQuickTaskSettingsToNative = async (durationMs: number, usesPerWindow: number) => {
+    try {
+      const { NativeModules, Platform } = require('react-native');
+      if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
+        // Set Max Quota
+        console.log(`[SettingsScreen] ⚡ Syncing to Native: Quota Max=${usesPerWindow}`);
+        await NativeModules.AppMonitorModule.setQuickTaskQuotaPer15m(usesPerWindow);
+
+        // Set duration for each monitored app (in milliseconds)
+        const monitoredApps = await NativeModules.AppMonitorModule.getMonitoredApps();
+        console.log(`[SettingsScreen] ⏱️ Syncing to Native: Duration=${durationMs}ms for ${monitoredApps.length} apps`);
+
+        for (const app of monitoredApps) {
+          await NativeModules.AppMonitorModule.setQuickTaskDurationForApp(app, durationMs);
+        }
+        console.log('[SettingsScreen] ✅ Native sync complete');
+      }
+    } catch (syncError) {
+      console.error('[SettingsScreen] ❌ Failed to sync to Native:', syncError);
+      // Non-critical error - settings are still loaded/saved
+    }
+  };
+
   // Load Quick Task settings from storage
   const loadQuickTaskSettings = async () => {
     try {
@@ -220,6 +245,8 @@ const SettingsScreen = () => {
         setIsPremium(isPremiumCustomer);
         // Update osConfig with loaded settings
         setQuickTaskConfig(durationMs, usesPerWindow, isPremiumCustomer);
+        // FIX: Sync to Native on load (not just on save)
+        await syncQuickTaskSettingsToNative(durationMs, usesPerWindow);
       } else {
         // Load from osConfig defaults
         const durationMs = getQuickTaskDurationMs();
@@ -229,6 +256,8 @@ const SettingsScreen = () => {
         setQuickTaskUsesPerWindow(usesPerWindow);
         setIsPremium(isPremiumCustomer);
         console.log('[SettingsScreen] ℹ️ No Quick Task settings in storage, using osConfig defaults');
+        // FIX: Sync defaults to Native on fresh install
+        await syncQuickTaskSettingsToNative(durationMs, usesPerWindow);
       }
     } catch (error) {
       console.error('[SettingsScreen] ❌ Failed to load Quick Task settings:', error);
@@ -239,6 +268,8 @@ const SettingsScreen = () => {
       setQuickTaskDuration(durationMs);
       setQuickTaskUsesPerWindow(usesPerWindow);
       setIsPremium(isPremiumCustomer);
+      // FIX: Sync defaults to Native even on error
+      await syncQuickTaskSettingsToNative(durationMs, usesPerWindow);
     }
   };
 
@@ -258,27 +289,8 @@ const SettingsScreen = () => {
       setQuickTaskConfig(durationMs, usesPerWindow, isPremium);
       console.log('[SettingsScreen] ✅ Successfully saved Quick Task settings (applied immediately)');
 
-      // PHASE 4.1 FIX: Sync quota to Native after settings change
-      // Native needs updated quota cache for entry decisions
-      try {
-        const { NativeModules, Platform } = require('react-native');
-        if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
-          // NEW NATIVE AUTHORITY: Set Max Quota directly
-          console.log(`[SettingsScreen] ⚡ Updating Native Quota Max to ${usesPerWindow}`);
-          await NativeModules.AppMonitorModule.setQuickTaskQuotaPer15m(usesPerWindow);
-
-          // Set duration for each monitored app (in milliseconds)
-          const monitoredApps = await NativeModules.AppMonitorModule.getMonitoredApps();
-          console.log(`[SettingsScreen] ⏱️ Setting duration ${durationMs}ms for ${monitoredApps.length} monitored apps`);
-
-          for (const app of monitoredApps) {
-            await NativeModules.AppMonitorModule.setQuickTaskDurationForApp(app, durationMs);
-          }
-        }
-      } catch (syncError) {
-        console.error('[SettingsScreen] ❌ Failed to sync quota to Native:', syncError);
-        // Non-critical error - settings are still saved
-      }
+      // Sync to Native after saving
+      await syncQuickTaskSettingsToNative(durationMs, usesPerWindow);
     } catch (error) {
       console.error('[SettingsScreen] ❌ Failed to save Quick Task settings:', error);
       Alert.alert('Error', 'Failed to save Quick Task settings. Please try again.');

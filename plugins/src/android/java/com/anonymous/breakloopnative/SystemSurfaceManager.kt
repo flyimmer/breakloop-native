@@ -160,7 +160,7 @@ object SystemSurfaceManager {
                     Log.e(TAG, "❌ Error finishing activity: ${e.message}")
                 } finally {
                     // Unified state cleanup on finish
-                    ForegroundDetectionService.onSurfaceExit("FINISH_EXEC_$reason", instanceId, triggeringApp = currentApp)
+                    ForegroundDetectionService.onSurfaceExit("FINISH_EXEC_$reason", instanceId, surfaceApp = currentApp)
                     
                      // Explicit session close (backup for unregister)
                      val sid = SessionManager.getCurrentSessionId()
@@ -173,10 +173,10 @@ object SystemSurfaceManager {
         } else {
             if (activity == null) {
                 Log.w(TAG, "⚠️ finish($reason) ignored - Activity is null")
-                ForegroundDetectionService.onSurfaceExit("FINISH_NULL_$reason", instanceId, triggeringApp = currentApp)
+                ForegroundDetectionService.onSurfaceExit("FINISH_NULL_$reason", instanceId, surfaceApp = currentApp)
             } else {
                 Log.w(TAG, "⚠️ finish($reason) ignored - Activity already finishing")
-                ForegroundDetectionService.onSurfaceExit("FINISH_ALREADY_$reason", instanceId, triggeringApp = currentApp)
+                ForegroundDetectionService.onSurfaceExit("FINISH_ALREADY_$reason", instanceId, surfaceApp = currentApp)
             }
             return false
         }

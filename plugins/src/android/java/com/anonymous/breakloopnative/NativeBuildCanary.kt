@@ -21,9 +21,11 @@ package com.anonymous.breakloopnative
  *
  * This is for development only.
  */
-object NativeBuildCanary {
-    // Increment this number to trigger a fresh native build
-    const val BUILD_VERSION = 69 // POST_CONTINUE loop fix: cooldown + session-aware SURFACE_DESTROY
+object NativeBuildCanary { // BUILD VERSION (increment for each native code change)
+    // This helps verify that the latest native code is actually running on device
+    // v69: POST_CONTINUE loop fixes (cooldown + session-aware SURFACE_DESTROY age guard)
+    // v70: PR1 - Activity field tracking (currentWakeReason/currentApp) + metadata threading
+    const val BUILD_VERSION = 77
     const val VERSION_NAME = "V3-Native-Authority-Stores"
     // Fix A: Set postChoiceCompletedAtMsByApp for CONTINUE. Fix B: Age guard for SURFACE_DESTROY
     
