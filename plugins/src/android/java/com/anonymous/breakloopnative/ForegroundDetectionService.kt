@@ -78,6 +78,9 @@ class ForegroundDetectionService : AccessibilityService() {
         // PR5: Stable applicationContext for reliable emission from any thread
         @Volatile private var cachedAppContext: android.content.Context? = null
         
+        // PR7: Track last surface-close recheck time per app (anti-loop guard)
+        private val lastSurfaceCloseRecheckByApp = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        
         private fun withService(block: (ForegroundDetectionService) -> Unit) {
             val svc = serviceRef?.get()
             if (svc == null) {
@@ -656,6 +659,42 @@ class ForegroundDetectionService : AccessibilityService() {
                 }
             }
             underlyingApp = null
+            
+            // PR7: Surface-close recheck trigger
+            // Problem: If surface closes while user stays in monitored app,
+            // no TYPE_WINDOW_STATE_CHANGED event fires → no new decision.
+            // Solution: Explicitly trigger recheck using currentForegroundApp.
+            val fg = currentForegroundApp
+            if (fg != null && MONITORED_APPS.contains(fg)) {
+                // Anti-loop guard: cooldown per app (1000ms)
+                val now = System.currentTimeMillis()
+                val lastRecheckAt = lastSurfaceCloseRecheckByApp[fg] ?: 0L
+                val recheckAge = now - lastRecheckAt
+                
+                if (recheckAge > 1000L) {
+                    Log.i("PR7_RECHECK", "[PR7_RECHECK] TRIGGERED fg=$fg surfaceReason=$reason recheckAge=${recheckAge}ms source=SURFACE_CLOSED_RECHECK_$reason")
+                    
+                    // Update cooldown timestamp (thread-safe via ConcurrentHashMap)
+                    lastSurfaceCloseRecheckByApp[fg] = now
+                    
+                    // Post to main handler to ensure outside qtLock
+                    mainHandler.post {
+                        requestQuickTaskDecision(
+                            app = fg,
+                            source = "SURFACE_CLOSED_RECHECK_$reason",
+                            force = false
+                        )
+                    }
+                } else {
+                    Log.d("PR7_RECHECK", "[PR7_RECHECK] BLOCKED fg=$fg reason=COOLDOWN_ACTIVE recheckAge=${recheckAge}ms cooldownMs=1000")
+                }
+            } else {
+                if (fg == null) {
+                    Log.d("PR7_RECHECK", "[PR7_RECHECK] SKIPPED reason=CURRENT_FG_NULL")
+                } else {
+                    Log.d("PR7_RECHECK", "[PR7_RECHECK] SKIPPED currentFg=$fg reason=NOT_MONITORED")
+                }
+            }
         }
         
         /**
