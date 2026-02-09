@@ -23,9 +23,9 @@ package com.anonymous.breakloopnative
  */
 object NativeBuildCanary {
     // Increment this number to trigger a fresh native build
-    const val BUILD_VERSION = 68 // Quick Task expiry fix: lastRealForegroundPkg tracking
+    const val BUILD_VERSION = 69 // POST_CONTINUE loop fix: cooldown + session-aware SURFACE_DESTROY
     const val VERSION_NAME = "V3-Native-Authority-Stores"
-    // Added lastRealForegroundPkg fallback with 30s age check + comprehensive QT_EXPIRE_FG diagnostic
+    // Fix A: Set postChoiceCompletedAtMsByApp for CONTINUE. Fix B: Age guard for SURFACE_DESTROY
     
     fun logBuildInfo() {
         android.util.Log.e("NATIVE_BUILD_CANARY", "🔥 Native build active: $BUILD_VERSION ($VERSION_NAME)")

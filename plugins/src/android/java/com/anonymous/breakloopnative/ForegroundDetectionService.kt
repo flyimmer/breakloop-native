@@ -562,13 +562,31 @@ val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp ?: service?.acti
             // 1. Reset flag
             setSystemSurfaceActive(false, "EXIT_$reason")
                         
-            // Fix 4: Layer A - Clear OFFERING state on surface destroy
+            // Fix 4: Layer A - Clear OFFERING state on surface destroy (session-aware)
             resolvedApp?.let { app ->
                 synchronized(qtLock) {
                     val qtEntry = quickTaskMap[app]
-                    if (qtEntry?.state == QuickTaskState.OFFERING || promptSessionIdByApp[app] != null) {
+                    val currentOfferSid = promptSessionIdByApp[app]
+                    val offerStartedAt = offerStartedAtMsByApp[app]
+                    val now = System.currentTimeMillis()
+                    
+                    // FIX B: Age-based guard - don't clear fresh offers
+                    if (currentOfferSid != null && offerStartedAt != null) {
+                        val offerAge = now - offerStartedAt
+                        
+                        if (offerAge < 1500L) {
+                            // Offer is fresh (< 1.5s) - do NOT clear
+                            // (likely PostChoice surface closing, new offer just created)
+                            Log.i("SURFACE_DESTROY", 
+                                "[SURFACE_DESTROY] NOT clearing fresh offering app=$app offerAge=${offerAge}ms offerSid=$currentOfferSid action=KEEP")
+                            return@let  // Skip clearing
+                        }
+                    }
+                    
+                    // Offer is old or doesn't exist - safe to clear
+                    if (qtEntry?.state == QuickTaskState.OFFERING || currentOfferSid != null) {
                         clearPromptForAppLocked(app, "SURFACE_DESTROY")
-                        Log.i("QT_OFFER_CLEAR", "[SURFACE_DESTROY] Cleared OFFERING for $app")
+                        Log.i("SURFACE_DESTROY", "[SURFACE_DESTROY] CLEARED offering app=$app offerAge=${if (offerStartedAt != null) now - offerStartedAt else null}ms")
                     }
                 }
             }
@@ -1335,10 +1353,11 @@ val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp ?: service?.acti
                     Log.i("QUIT_SUPPRESS", "[QUIT_SUPPRESS] app=$app until=${now + 2000L}")
                     Log.i("POST_CHOICE_COOLDOWN", "[POST_CHOICE_COOLDOWN] app=$app at=$now")
                 } else if (choice == "CONTINUE") {
-                    // CONTINUE: Remove shields, trigger re-eval
-                    postChoiceCompletedAtMsByApp.remove(app)
+                    // FIX A: Set post-choice cooldown to prevent immediate re-offer
+                    postChoiceCompletedAtMsByApp[app] = now
                     quitSuppressedUntilMsByApp.remove(app)
                     shouldTriggerContinue = true
+                    Log.i("POST_CHOICE_COOLDOWN", "[POST_CHOICE_COOLDOWN] app=$app at=$now (CONTINUE)")
                 }
 
                 Log.e("POST_CHOICE_COMPLETE", "[POST_CHOICE_COMPLETE] app=$app sid=$sessionId choice=$choice")
