@@ -75,6 +75,9 @@ class ForegroundDetectionService : AccessibilityService() {
         
         @Volatile private var serviceRef: WeakReference<ForegroundDetectionService>? = null
         
+        // PR5: Stable applicationContext for reliable emission from any thread
+        @Volatile private var cachedAppContext: android.content.Context? = null
+        
         private fun withService(block: (ForegroundDetectionService) -> Unit) {
             val svc = serviceRef?.get()
             if (svc == null) {
@@ -589,10 +592,51 @@ class ForegroundDetectionService : AccessibilityService() {
             if (surfaceApp != null && surfaceSessionId != null) {
                 // PRIMARY PATH: have surface metadata → deterministic cleanup
                 performSessionAwareCleanup(surfaceApp, surfaceSessionId, surfaceKind, instanceId)
-            } else if (resolvedApp != null) {
-                // FALLBACK PATH: missing metadata → conservative (do NOT clear offering)
-                Log.w("SURFACE_DESTROY",
-                    "[SURFACE_DESTROY] Missing surface metadata app=$surfaceApp sid=$surfaceSessionId - SKIPPING offering cleanup (conservative)")
+            } else {
+                // FALLBACK PATH: missing metadata → defensive cleanup (PR7)
+                // Use currentForegroundApp as source of truth (not resolvedApp which may be stale)
+                val fg = currentForegroundApp
+                
+                if (fg != null && MONITORED_APPS.contains(fg)) {
+                    Log.w("SURFACE_DESTROY",
+                        "[SURFACE_DESTROY] Missing surface metadata (app=$surfaceApp sid=$surfaceSessionId) - attempting defensive cleanup for currentFg=$fg (PR7)")
+                    
+                    synchronized(qtLock) {
+                        val entry = quickTaskMap[fg]
+                        val currentOfferSid = promptSessionIdByApp[fg]
+                        val offerStartedAt = offerStartedAtMsByApp[fg]
+                        val now = System.currentTimeMillis()
+                        val offerAge = if (offerStartedAt != null) now - offerStartedAt else null
+                        
+                        // ONLY clear if ALL conditions met:
+                        // 1. promptSid exists (something to clear)
+                        // 2. State is OFFERING (not ACTIVE/POST_CHOICE)
+                        // 3. Offer is recent (within last 10 seconds)
+                        val shouldClear = currentOfferSid != null &&
+                                         entry?.state == QuickTaskState.OFFERING && 
+                                         offerAge != null && 
+                                         offerAge < 10_000L
+                        
+                        if (shouldClear) {
+                            clearPromptForAppLocked(fg, "SURFACE_DESTROY_MISSING_METADATA_DEFENSIVE")
+                            Log.i("PR7_DEFENSIVE_CLEAR",
+                                "[PR7_DEFENSIVE_CLEAR] CLEARED fg=$fg sid=$currentOfferSid state=${entry?.state} offerAge=${offerAge}ms reason=ALL_CONDITIONS_MET")
+                        } else {
+                            // Log specific skip reason for diagnostics
+                            val skipReason = when {
+                                currentOfferSid == null -> "NO_PROMPT_SID"
+                                entry?.state != QuickTaskState.OFFERING -> "NOT_OFFERING"
+                                offerAge == null || offerAge >= 10_000L -> "OFFER_TOO_OLD"
+                                else -> "UNKNOWN"
+                            }
+                            Log.d("PR7_DEFENSIVE_CLEAR",
+                                "[PR7_DEFENSIVE_CLEAR] SKIPPED fg=$fg hasSid=${currentOfferSid != null} state=${entry?.state} offerAge=${offerAge}ms reason=$skipReason")
+                        }
+                    }
+                } else {
+                    Log.d("PR7_DEFENSIVE_CLEAR",
+                        "[PR7_DEFENSIVE_CLEAR] SKIPPED currentFg=$fg reason=NOT_MONITORED")
+                }
             }
 
             // 2. V3: Handle Preservation
@@ -733,46 +777,14 @@ class ForegroundDetectionService : AccessibilityService() {
                 }
             }
             
-            // 2. Emit OUTSIDE lock (PR3a: comprehensive diagnostics)
+            // 2. Emit OUTSIDE lock (PR5: use stable cached context)
             if (outcome.cmd != null && outcome.sid != null) {
-                // Check context availability BEFORE attempting emission
-                val svcInstance = serviceInstance
-                val context = svcInstance?.applicationContext
+                // PR5: Use cached applicationContext (stable, set in onServiceConnected)
+                val context = cachedAppContext
                 val threadName = Thread.currentThread().name
-                val svcHash = if (svcInstance != null) System.identityHashCode(svcInstance) else null
-                
-                if (svcInstance == null) {
-                    Log.e("DECISION_EMIT_FAIL", "[DECISION_EMIT_FAIL] app=$app sid=${outcome.sid} reason=NO_SERVICE_INSTANCE thread=$threadName")
-                    
-                    // PR3b: Rollback zombie OFFERING state
-                    val rollbackResult = synchronized(qtLock) {
-                        val currentSid = promptSessionIdByApp[app]
-                        val entry = quickTaskMap[app]
-                        val stateBefore = entry?.state
-                        
-                        val didRollback = if (currentSid == outcome.sid) {
-                            promptSessionIdByApp.remove(app)
-                            offerStartedAtMsByApp.remove(app)
-                            decisionInFlightUntilMsByApp.remove(app)
-                            if (entry?.state == QuickTaskState.OFFERING) {
-                                entry.state = QuickTaskState.IDLE
-                            }
-                            true
-                        } else {
-                            false
-                        }
-                        
-                        val stateAfter = entry?.state
-                        val promptSidNow = promptSessionIdByApp[app]
-                        Triple(didRollback, stateBefore, stateAfter to promptSidNow)
-                    }
-                    
-                    Log.w("DECISION_EMIT_ROLLBACK", "[DECISION_EMIT_ROLLBACK] app=$app sid=${outcome.sid} didRollback=${rollbackResult.first} stateBefore=${rollbackResult.second} stateAfter=${rollbackResult.third.first} promptSidNow=${rollbackResult.third.second}")
-                    return false
-                }
                 
                 if (context == null) {
-                    Log.e("DECISION_EMIT_FAIL", "[DECISION_EMIT_FAIL] app=$app sid=${outcome.sid} reason=NO_CONTEXT svcHash=$svcHash thread=$threadName")
+                    Log.e("DECISION_EMIT_FAIL", "[DECISION_EMIT_FAIL] app=$app sid=${outcome.sid} reason=NO_CONTEXT_STABLE_MISSING thread=$threadName")
                     
                     // PR3b: Rollback zombie OFFERING state
                     val rollbackResult = synchronized(qtLock) {
@@ -801,7 +813,7 @@ class ForegroundDetectionService : AccessibilityService() {
                     return false
                 }
                 
-                Log.i("DECISION_EMIT_BEGIN", "[DECISION_EMIT_BEGIN] app=$app sid=${outcome.sid} cmd=${outcome.cmd} svcHash=$svcHash thread=$threadName")
+                Log.i("DECISION_EMIT_BEGIN", "[DECISION_EMIT_BEGIN] app=$app sid=${outcome.sid} cmd=${outcome.cmd} thread=$threadName")
                 emitQuickTaskCommand(outcome.cmd, app, context, outcome.sid)
                 Log.i("DECISION_EMIT_DONE", "[DECISION_EMIT_DONE] app=$app sid=${outcome.sid}")
                 return true
@@ -1584,6 +1596,8 @@ class ForegroundDetectionService : AccessibilityService() {
         // Restore State logic could go here
         isServiceConnected = true
         serviceRef = WeakReference(this) // Publish instance for companion object access
+        cachedAppContext = applicationContext // PR5: cache for reliable emission
+        Log.i("PR5_CONTEXT", "[PR5_CONTEXT] Cached applicationContext for stable emission")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
