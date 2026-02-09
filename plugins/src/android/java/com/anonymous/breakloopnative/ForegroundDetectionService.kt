@@ -1081,14 +1081,15 @@ val resolvedApp = overrideApp ?: underlyingApp ?: triggeringApp ?: service?.acti
                 var fgCandidate = fgNow
                 
                 // Fallback cascade if fgNow is unreliable
+                val selfPkg = serviceInstance?.applicationContext?.packageName
                 if (fgCandidate == null || 
-                    fgCandidate == applicationContext.packageName || 
+                    fgCandidate == selfPkg || 
                     isLauncherOrSystemUI(fgCandidate)) {
                     
                     // Try lastWsc, but ONLY if it's also not unreliable
                     val lw = lastWsc
                     fgCandidate = if (lw != null &&
-                        lw != applicationContext.packageName &&
+                        lw != selfPkg &&
                         !isLauncherOrSystemUI(lw)
                     ) {
                         lw  // lastWsc is valid
