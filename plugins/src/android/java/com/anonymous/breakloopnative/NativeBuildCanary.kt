@@ -25,7 +25,9 @@ object NativeBuildCanary { // BUILD VERSION (increment for each native code chan
     // This helps verify that the latest native code is actually running on device
     // v69: POST_CONTINUE loop fixes (cooldown + session-aware SURFACE_DESTROY age guard)
     // v70: PR1 - Activity field tracking (currentWakeReason/currentApp) + metadata threading
-    const val BUILD_VERSION = 77
+    // v81: PR9: POST_CHOICE persistence (visibility tracking, watchdog, offering gate, QUIT no-suppression)
+    // v82: PR9 bridge fix: route QUIT/CONTINUE to new handlers
+    const val BUILD_VERSION = 82
     const val VERSION_NAME = "V3-Native-Authority-Stores"
     // Fix A: Set postChoiceCompletedAtMsByApp for CONTINUE. Fix B: Age guard for SURFACE_DESTROY
     

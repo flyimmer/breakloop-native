@@ -81,6 +81,21 @@ class ForegroundDetectionService : AccessibilityService() {
         // PR7: Track last surface-close recheck time per app (anti-loop guard)
         private val lastSurfaceCloseRecheckByApp = java.util.concurrent.ConcurrentHashMap<String, Long>()
         
+        // PR8: Grace recheck tracking (mandatory 1.5s recheck before EXPIRED_AWAY)
+        private val pendingExpirySidByApp = java.util.concurrent.ConcurrentHashMap<String, String>()
+        private val pendingExpiryAtMsByApp = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        
+        // PR8: Store confirmed duration for expiry logs
+        private val activeDurationMsByApp = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        
+        // PR9: POST_CHOICE visibility tracking
+        private val postChoiceSurfaceVisibleByApp = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+        private val postChoiceLastVisibilityChangeAtMsByApp = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        private val postChoiceReemitInFlightUntilMsByApp = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        
+        // PR9: Watchdog scheduling (prevent double-scheduling storms)
+        private val postChoiceWatchdogPendingUntilMsByApp = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        
         private fun withService(block: (ForegroundDetectionService) -> Unit) {
             val svc = serviceRef?.get()
             if (svc == null) {
@@ -294,14 +309,26 @@ class ForegroundDetectionService : AccessibilityService() {
         }
 
         /**
-         * Called from JS via AppMonitorModule when Post-QT completes.
-         * Wrapper using withService pattern.
+         * PR9: Called from JS via AppMonitorModule when Post-QT completes.
+         * Routes to appropriate PR9 handler based on choice.
          */
         @JvmStatic
         fun onPostQuickTaskChoiceCompletedFromJs(app: String, sessionId: String, choice: String) {
             Log.d("POST_CHOICE_BRIDGE", "[POST_CHOICE_BRIDGE] app=$app sid=$sessionId choice=$choice")
-            withService { svc ->
-                svc.onPostQuickTaskChoiceCompleted(app, sessionId, choice)
+            
+            // PR9: Route to correct handler based on choice
+            val context = cachedAppContext
+            if (context == null) {
+                Log.e("POST_CHOICE_BRIDGE", "[POST_CHOICE_BRIDGE] app=$app sid=$sessionId choice=$choice - NO CONTEXT")
+                return
+            }
+            
+            when (choice.uppercase()) {
+                "QUIT" -> onPostChoiceQuit(app, sessionId, context)
+                "CONTINUE" -> onPostChoiceContinue(app, sessionId, context)
+                else -> {
+                    Log.e("POST_CHOICE_BRIDGE", "[POST_CHOICE_BRIDGE] app=$app sid=$sessionId choice=$choice - UNKNOWN CHOICE")
+                }
             }
         }
 
@@ -316,14 +343,110 @@ class ForegroundDetectionService : AccessibilityService() {
             }
         }
         
+        /**
+         * PR9: QUIT handler - navigate to HOME with NO suppression
+         * User can immediately re-enter app for normal reevaluation
+         */
         @JvmStatic
         fun onPostChoiceQuit(app: String, sessionId: String, context: android.content.Context) {
-             onPostChoiceResult(app, sessionId, "QUIT", context)
+            var shouldNavigateHome = false
+            var contextSnapshot: android.content.Context? = null
+            
+            synchronized(qtLock) {
+                val entry = quickTaskMap[app]
+                val postSid = postChoiceSessionIdByApp[app]
+                
+                if (entry?.state != QuickTaskState.POST_CHOICE) {
+                    Log.w("QT_POST_QUIT", 
+                        "[QT_POST_QUIT] app=$app sid=$postSid state=${entry?.state} - INVALID STATE")
+                    return
+                }
+                
+                // Verify session match
+                if (postSid != sessionId) {
+                    Log.w("QT_POST_QUIT", 
+                        "[QT_POST_QUIT] app=$app sid=$sessionId postSid=$postSid - SESSION MISMATCH")
+                    return
+                }
+                
+                // Clear POST_CHOICE state
+                entry.state = QuickTaskState.IDLE
+                postChoiceSessionIdByApp.remove(app)
+                
+                // Clear visibility tracking
+                postChoiceSurfaceVisibleByApp.remove(app)
+                postChoiceLastVisibilityChangeAtMsByApp.remove(app)
+                postChoiceReemitInFlightUntilMsByApp.remove(app)
+                postChoiceWatchdogPendingUntilMsByApp.remove(app)
+                
+                // CRITICAL GUARD: NO reads or writes to qtProtectedUntilMsByApp
+                // No protection window created - user can immediately re-enter
+                // Suppression is IGNORED by QUIT spec
+                
+                shouldNavigateHome = true
+                contextSnapshot = serviceRef?.get()?.applicationContext
+                
+                Log.i("QT_POST_QUIT", 
+                    "[QT_POST_QUIT] app=$app sid=$postSid -> HOME noSuppression=true protectedUntil=IGNORED_BY_SPEC")
+            }  // End qtLock
+            
+            // CRITICAL: Navigate to HOME OUTSIDE lock
+            if (shouldNavigateHome && contextSnapshot != null) {
+                // Navigate to home screen
+                val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_HOME)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                contextSnapshot.startActivity(homeIntent)
+                Log.d("QT_POST_QUIT", "[QT_POST_QUIT] app=$app - navigated to HOME")
+            }
+            
+            // Close SystemSurface
+            emitFinishSystemSurface(context)
         }
         
+        /**
+         * PR9: CONTINUE handler - clear POST_CHOICE state and visibility tracking
+         */
         @JvmStatic
         fun onPostChoiceContinue(app: String, sessionId: String, context: android.content.Context) {
-             onPostChoiceResult(app, sessionId, "CONTINUE", context)
+            synchronized(qtLock) {
+                val entry = quickTaskMap[app]
+                val postSid = postChoiceSessionIdByApp[app]
+                
+                if (entry?.state != QuickTaskState.POST_CHOICE) {
+                    Log.w("QT_POST_CONTINUE", 
+                        "[QT_POST_CONTINUE] app=$app sid=$postSid state=${entry?.state} - INVALID STATE")
+                    return
+                }
+                
+                // Verify session match
+                if (postSid != sessionId) {
+                    Log.w("QT_POST_CONTINUE", 
+                        "[QT_POST_CONTINUE] app=$app sid=$sessionId postSid=$postSid - SESSION MISMATCH")
+                    return
+                }
+                
+                // Clear POST_CHOICE state
+                entry.state = QuickTaskState.IDLE
+                postChoiceSessionIdByApp.remove(app)
+                
+                // Clear visibility tracking
+                postChoiceSurfaceVisibleByApp.remove(app)
+                postChoiceLastVisibilityChangeAtMsByApp.remove(app)
+                postChoiceReemitInFlightUntilMsByApp.remove(app)
+                postChoiceWatchdogPendingUntilMsByApp.remove(app)
+                
+                Log.i("QT_POST_CONTINUE", 
+                    "[QT_POST_CONTINUE] app=$app sid=$postSid action=CONTINUE")
+                
+                // Follow existing spec path for CONTINUE
+                // (e.g., allow user to continue using app)
+                // Do NOT apply suppression unless spec explicitly says so
+            }
+            
+            // Close SystemSurface
+            emitFinishSystemSurface(context)
         }
 
         @JvmStatic
@@ -334,6 +457,18 @@ class ForegroundDetectionService : AccessibilityService() {
                 lastForegroundChangeTime = System.currentTimeMillis()
             }
             currentForegroundApp = app
+            
+            // PR8: Update lastRealForegroundPkg ONLY for "real" user apps
+            val selfPkg = serviceInstance?.applicationContext?.packageName
+            val isReal = app != null && 
+                         app != selfPkg &&  // Excludes our own package (SystemSurface)
+                         !isLauncherOrSystemUI(app)  // Excludes launcher/systemUI
+            
+            if (isReal) {
+                lastRealForegroundPkg = app
+                lastRealForegroundAtMs = System.currentTimeMillis()
+                Log.d("LAST_REAL_UPDATE", "[LAST_REAL_UPDATE] pkg=$app")
+            }
         }
         
         @JvmStatic
@@ -520,6 +655,77 @@ class ForegroundDetectionService : AccessibilityService() {
             return cachedQuotaState
         }
         
+        /**
+         * PR8: Resolve QuickTask duration for app
+         * Priority: per-app cache (PRIMARY) → AsyncStorage (diagnostic only) → 10s default + SEVERE log
+         */
+        @JvmStatic
+        fun resolveQuickTaskDurationMs(app: String, context: android.content.Context): Long {
+            val source: String
+            val rawDuration: Long
+            var storageRef = ""
+            
+            // Priority 1: Per-app cache (set by RN via bridge) - PRIMARY SOURCE
+            val cached = cachedQuickTaskDurationMsByApp[app]
+            if (cached != null) {
+                source = "CACHE_PER_APP"
+                rawDuration = cached
+                storageRef = "cachedQuickTaskDurationMsByApp[$app]=$cached"
+                
+                Log.d("QT_DURATION_CACHE_HIT", 
+                    "[QT_DURATION_CACHE_HIT] app=$app durationMs=$rawDuration source=$source")
+            } else {
+                // Cache missing - this is an ERROR state
+                // Optional: Read AsyncStorage as diagnostic ONLY (not usable as fallback!)
+                
+                val prefs = context.getSharedPreferences("RCTAsyncLocalStorage_V1", android.content.Context.MODE_PRIVATE)
+                val storageKey = "quick_task_settings_v1"
+                val storedJson = prefs.getString(storageKey, null)
+                
+                storageRef = "AsyncStorage['$storageKey']"
+                
+                // Best-effort diagnostic read (log what we find, but cannot use it)
+                if (storedJson != null) {
+                    try {
+                        val json = org.json.JSONObject(storedJson)
+                        val globalDuration = json.optLong("durationMs", -1L)
+                        
+                        Log.w("QT_DURATION_STORAGE_DIAGNOSTIC", 
+                            "[QT_DURATION_STORAGE_DIAGNOSTIC] app=$app storageRef=$storageRef globalDuration=$globalDuration - GLOBAL durationMs found; cannot map to per-app t_quickTask")
+                    } catch (e: Exception) {
+                        Log.w("QT_DURATION_STORAGE_DIAGNOSTIC", 
+                            "[QT_DURATION_STORAGE_DIAGNOSTIC] app=$app storageRef=$storageRef error=${e.message}")
+                    }
+                } else {
+                    Log.w("QT_DURATION_STORAGE_DIAGNOSTIC", 
+                        "[QT_DURATION_STORAGE_DIAGNOSTIC] app=$app storageRef=$storageRef - storage empty")
+                }
+                
+                // Fallback: Use 10s default and log SEVERE with full context
+                source = "DEFAULT"
+                rawDuration = 10_000L
+                
+                // Track if RN has ever sent config (helps diagnose timing vs. missing config)
+                val hasReceivedQtConfigFromRn = cachedQuickTaskDurationMsByApp.isNotEmpty()
+                
+                Log.e("QT_DURATION_FALLBACK_USED", 
+                    "[QT_DURATION_FALLBACK_USED] app=$app durationMs=$rawDuration cacheSnapshot=${cachedQuickTaskDurationMsByApp[app]} hasReceivedQtConfigFromRn=$hasReceivedQtConfigFromRn - MISSING PER-APP CACHE")
+            }
+            
+            // Sanity clamp
+            val clampedDuration = rawDuration.coerceIn(1_000L, 300_000L)
+            
+            if (clampedDuration != rawDuration) {
+                Log.w("QT_DURATION_CLAMP", 
+                    "[QT_DURATION_CLAMP] app=$app raw=$rawDuration clamped=$clampedDuration")
+            }
+            
+            Log.i("QT_DURATION_RESOLVE", 
+                "[QT_DURATION_RESOLVE] app=$app durationMs=$clampedDuration source=$source storageRef=$storageRef")
+            
+            return clampedDuration
+        }
+        
         @JvmStatic
         fun setQuickTaskDurationForApp(app: String, durationMs: Long) {
             synchronized(qtLock) {
@@ -582,6 +788,19 @@ class ForegroundDetectionService : AccessibilityService() {
             
             // PR1: Entry point diagnostic (with kind for verification)
             Log.i("SURFACE_DESTROY", "[EXIT_CB] reason=$reason app=$surfaceApp sid=$surfaceSessionId wake=$surfaceWakeReason kind=$surfaceKind instance=$instanceId")
+            
+            // PR9: Track POST_CHOICE surface visibility (Phase A.2)
+            if (surfaceKind == "POST_CHOICE" && surfaceApp != null && instanceId != null) {
+                withService { service ->
+                    service.handlePostChoiceSurfaceClosed(
+                        app = surfaceApp,
+                        reason = reason,
+                        sessionId = surfaceSessionId,
+                        instanceId = instanceId,
+                        isPostChoiceSurface = true
+                    )
+                }
+            }
             
             val service = serviceInstance
             // PR1: Use surfaceApp if available, otherwise fallback to resolvedApp
@@ -787,6 +1006,48 @@ class ForegroundDetectionService : AccessibilityService() {
                     return@synchronized Outcome(null, null)
                 }
                 
+                // PR9: POST_CHOICE offering gate (Phase C)
+                // Block new offerings while ACTIVE or POST_CHOICE is pending
+                val entry = quickTaskMap[app]
+                val state = entry?.state
+                
+                when (state) {
+                    QuickTaskState.ACTIVE -> {
+                        val activeSid = activeQuickTaskSessionIdByApp[app]
+                        Log.w("QT_OFFER_SUPPRESSED_STATE",
+                            "[QT_OFFER_SUPPRESSED_STATE] app=$app state=ACTIVE sidActive=$activeSid source=$source")
+                        return@synchronized Outcome(null, null)
+                    }
+                    QuickTaskState.POST_CHOICE -> {
+                        val postSid = postChoiceSessionIdByApp[app]
+                        val isVisible = postChoiceSurfaceVisibleByApp[app] ?: false
+                        
+                        Log.w("QT_OFFER_SUPPRESSED_STATE",
+                            "[QT_OFFER_SUPPRESSED_STATE] app=$app state=POST_CHOICE sidPost=$postSid visible=$isVisible source=$source")
+                        
+                        // If UI not visible, trigger re-emit instead (OUTSIDE lock)
+                        // Set flag here, emit after synchronized block
+                        if (!isVisible) {
+                            // Check debounce before re-emit
+                            val debounceUntil = postChoiceReemitInFlightUntilMsByApp[app] ?: 0L
+                            
+                            if (now >= debounceUntil) {
+                                postChoiceReemitInFlightUntilMsByApp[app] = now + 2000L
+                                
+                                Log.i("QT_POST_REEMIT_GATE",
+                                    "[QT_POST_REEMIT_GATE] app=$app sid=$postSid reason=OFFERING_BLOCKED source=$source")
+                                
+                                // Return special outcome to trigger re-emit outside lock
+                                return@synchronized Outcome("REEMIT_POST_CHOICE", postSid)
+                            }
+                        }
+                        return@synchronized Outcome(null, null)
+                    }
+                    else -> {
+                        // IDLE or OFFERING - allowed to proceed
+                    }
+                }
+                
                 // Check if we should start QuickTask
                 // For now, simple logic: if force=true or not in cooldown, start QT
                 val shouldStart = if (force) {
@@ -818,6 +1079,21 @@ class ForegroundDetectionService : AccessibilityService() {
             
             // 2. Emit OUTSIDE lock (PR5: use stable cached context)
             if (outcome.cmd != null && outcome.sid != null) {
+                // PR9: Handle POST_CHOICE re-emit (Phase C)
+                if (outcome.cmd == "REEMIT_POST_CHOICE") {
+                    val context = cachedAppContext
+                    if (context != null) {
+                        Log.i("QT_POST_REEMIT_GATE_EMIT",
+                            "[QT_POST_REEMIT_GATE_EMIT] app=$app sid=${outcome.sid} - emitting SHOW_POST_QUICK_TASK_CHOICE")
+                        emitQuickTaskCommand("SHOW_POST_QUICK_TASK_CHOICE", app, context, outcome.sid)
+                        return true
+                    } else {
+                        Log.e("QT_POST_REEMIT_ERR",
+                            "[QT_POST_REEMIT_ERR] app=$app sid=${outcome.sid} reason=NULL_CONTEXT")
+                        return false
+                    }
+                }
+                
                 // PR5: Use cached applicationContext (stable, set in onServiceConnected)
                 val context = cachedAppContext
                 val threadName = Thread.currentThread().name
@@ -1347,7 +1623,7 @@ class ForegroundDetectionService : AccessibilityService() {
                 Log.i("QT_EXPIRE_FG",
                     "[QT_EXPIRE_FG] app=$app fgNow=$fgNow fgCached=$fgCached lastWsc=$lastWsc surfaceActive=$surfaceActive surfaceApp=$surfaceApp lastReal=$lastReal lastRealAgeMs=$lastRealAge")
                 
-                // TASK 3: Determine effective foreground using lastRealForegroundPkg fallback
+                // PR8: Determine effective foreground using 3-tier fallback
                 val selfPkg = serviceInstance?.applicationContext?.packageName
                 
                 // Helper: is package usable (not null, not self, not system/launcher)?
@@ -1355,30 +1631,69 @@ class ForegroundDetectionService : AccessibilityService() {
                     return pkg != null && pkg != selfPkg && !isLauncherOrSystemUI(pkg)
                 }
                 
-                // Cascading fallback with 30s age check
-                val fgEffective = when {
-                    fgUsable(fgNow) -> fgNow
-                    fgUsable(lastReal) && lastRealAge < 30_000L -> lastReal
-                    else -> null
+                // PR8: QuickTask-expiry-specific staleness tolerance (NOT global or session-based)
+                // Condition: (now - lastRealForegroundAtMs) < 30s; evaluated at expiry and recheck
+                val ageThreshold = 30_000L  // QuickTask-expiry-specific only
+                
+                val fgEffective: String?
+                val fgSource: String
+                
+                when {
+                    fgUsable(fgNow) -> {
+                        fgEffective = fgNow
+                        fgSource = "FG_NOW_PRIMARY"
+                        Log.d("QT_EXPIRE_FG_SOURCE", 
+                            "[QT_EXPIRE_FG_SOURCE] app=$app source=$fgSource fgEffective=$fgEffective")
+                    }
+                    fgUsable(fgCached) -> {
+                        fgEffective = fgCached
+                        fgSource = "FG_CACHED_SECONDARY"
+                        Log.d("QT_EXPIRE_FG_SOURCE", 
+                            "[QT_EXPIRE_FG_SOURCE] app=$app source=$fgSource fgEffective=$fgEffective")
+                    }
+                    fgUsable(lastReal) && lastRealAge < ageThreshold -> {
+                        fgEffective = lastReal
+                        fgSource = "LAST_REAL_TERTIARY"
+                        Log.i("QT_EXPIRE_FG_SOURCE", 
+                            "[QT_EXPIRE_FG_SOURCE] app=$app source=$fgSource fgEffective=$fgEffective lastRealAge=${lastRealAge}ms threshold=${ageThreshold}ms")
+                    }
+                    else -> {
+                        fgEffective = null
+                        fgSource = "NONE_FALLBACK_FAILED"
+                        Log.w("QT_EXPIRE_FG_SOURCE", 
+                            "[QT_EXPIRE_FG_SOURCE] app=$app source=$fgSource fgNow=$fgNow fgCached=$fgCached lastReal=$lastReal lastRealAge=${lastRealAge}ms threshold=${ageThreshold}ms")
+                    }
                 }
                 
-                val fg = fgEffective
-                
                 // Case 2: User NOT on app when timer expires
-                if (fg == null || fg != app) {
-                    Log.i("QT_TIMER_EXPIRED_AWAY", "[QT_TIMER_EXPIRED_AWAY] app=$app fg=$fg - clearing ACTIVE state, NO Post-QT")
-                    entry.state = QuickTaskState.IDLE
-                    activeQuickTaskSessionIdByApp.remove(app)
-                    postChoiceSessionIdByApp.remove(app)
-                    cancelNativeTimerLocked(app, "EXPIRED_AWAY")
-                    // ✅ CRITICAL: Do NOT remove qtProtectedUntilMsByApp[app]
-                    // Protection map remains unchanged (may still be in future, may already be expired)
-                    // Next entry will check protection via pre-gate check
-                    return
+                // PR8: MANDATORY grace recheck (primary safety net)
+                if (fgEffective == null || fgEffective != app) {
+                    val alreadyPending = pendingExpirySidByApp[app]
+                    
+                    if (alreadyPending == null) {
+                        // First detection of "away" - start MANDATORY grace period
+                        Log.i("QT_TIMER_EXPIRE_CHECK", 
+                            "[QT_TIMER_EXPIRE_CHECK] app=$app sid=$sessionId fgEffective=$fgEffective fgSource=$fgSource decision=DEFER_1500MS_MANDATORY")
+                        
+                        pendingExpirySidByApp[app] = sessionId
+                        pendingExpiryAtMsByApp[app] = now
+                        
+                        // Post delayed recheck (1500ms grace - MANDATORY)
+                        mainHandler.postDelayed({
+                            onQuickTaskTimerExpiredRecheck(app, sessionId, context)
+                        }, 1500L)
+                        
+                        return  // Don't clear ACTIVE yet, wait for recheck
+                    } else {
+                        // Recheck already pending - skip (defensive)
+                        Log.w("QT_TIMER_EXPIRE_CHECK", 
+                            "[QT_TIMER_EXPIRE_CHECK] app=$app sid=$sessionId decision=SKIP_ALREADY_PENDING")
+                        return
+                    }
                 }
                 
                 // Case 1: User still on app - prepare to show Post-QT
-                Log.i("QT_TIMER_EXPIRED", "[QT_TIMER_EXPIRED] app=$app fg=$fg - showing Post-QT")
+                Log.i("QT_TIMER_EXPIRED", "[QT_TIMER_EXPIRED] app=$app fgEffective=$fgEffective - showing Post-QT")
 
                 // Stop timer tracking (prevent double fire)
                 cancelNativeTimerLocked(app, "TIMER_EXPIRED")
@@ -1396,6 +1711,145 @@ class ForegroundDetectionService : AccessibilityService() {
 
             if (shouldEmitPostQT) {
                 emitQuickTaskCommand("SHOW_POST_QUICK_TASK_CHOICE", app, context, sessionId)
+            }
+        }
+
+        /**
+         * PR8: MANDATORY grace recheck (1.5s after initial "away" detection)
+         * Re-evaluates foreground state with fresh signals before final EXPIRED_AWAY
+         * 
+         * Includes stale-pending deadman switch: if pending age > 10s, clear pending + ACTIVE + runnable
+         */
+        private fun onQuickTaskTimerExpiredRecheck(app: String, sessionId: String, context: android.content.Context) {
+            var shouldEmitPostQT = false  // MUST emit outside qtLock
+            
+            synchronized(qtLock) {
+                val entry = quickTaskMap[app]
+                val activeSid = activeQuickTaskSessionIdByApp[app]
+                val pendingSid = pendingExpirySidByApp[app]
+                val pendingAt = pendingExpiryAtMsByApp[app]
+                
+                // Validate still in ACTIVE state with matching session
+                if (entry?.state != QuickTaskState.ACTIVE || activeSid != sessionId || pendingSid != sessionId) {
+                    Log.w("QT_TIMER_RECHECK_SKIP", 
+                        "[QT_TIMER_RECHECK_SKIP] app=$app sid=$sessionId state=${entry?.state} activeSid=$activeSid pendingSid=$pendingSid")
+                    // Clear pending on mismatch
+                    pendingExpirySidByApp.remove(app)
+                    pendingExpiryAtMsByApp.remove(app)
+                    return
+                }
+                
+                // Stale-pending deadman switch: if pending for > 10s, force cleanup (prevents stuck state)
+                val now = System.currentTimeMillis()
+                val pendingAge = if (pendingAt != null) now - pendingAt else 0L
+                
+                if (pendingAge > 10_000L) {
+                    // Deadman switch activated - snapshot before clearing for better logs
+                    val runnablePresent = activeTimerRunnablesByApp[app] != null
+                    val sidSnapshot = activeQuickTaskSessionIdByApp[app]
+                    val stateSnapshot = entry?.state
+                    
+                    Log.e("QT_TIMER_RECHECK_STALE", 
+                        "[QT_TIMER_RECHECK_STALE] app=$app sid=$sidSnapshot pendingAge=${pendingAge}ms state=$stateSnapshot runnablePresent=$runnablePresent - DEADMAN SWITCH ACTIVATED")
+                    
+                    // Clear pending state
+                    pendingExpirySidByApp.remove(app)
+                    pendingExpiryAtMsByApp.remove(app)
+                    
+                    // Clear ACTIVE state (cancel removes runnable)
+                    cancelNativeTimerLocked(app, "EXPIRED_STALE_PENDING")
+                    entry.state = QuickTaskState.IDLE
+                    activeQuickTaskSessionIdByApp.remove(app)
+                    postChoiceSessionIdByApp.remove(app)
+                    activeDurationMsByApp.remove(app)
+                    
+                    Log.e("QT_TIMER_EXPIRED_STALE_FINAL", 
+                        "[QT_TIMER_EXPIRED_STALE_FINAL] app=$app sid=$sidSnapshot pendingAge=${pendingAge}ms state=$stateSnapshot")
+                    return
+                }
+                
+                // Re-snapshot foreground signals (FRESH after 1.5s)
+                val fgNow = serviceInstance?.rootInActiveWindow?.packageName?.toString()
+                val fgCached = currentForegroundApp
+                val lastReal = lastRealForegroundPkg
+                val lastRealAge = now - lastRealForegroundAtMs
+                
+                val selfPkg = serviceInstance?.applicationContext?.packageName
+                fun fgUsable(pkg: String?): Boolean {
+                    return pkg != null && pkg != selfPkg && !isLauncherOrSystemUI(pkg)
+                }
+                
+                // Same QuickTask-expiry-specific threshold (30s, evaluated at recheck ~T=11.5s)
+                val ageThreshold = 30_000L
+                
+                val fgEffective: String?
+                val fgSource: String
+                
+                when {
+                    fgUsable(fgNow) -> {
+                        fgEffective = fgNow
+                        fgSource = "FG_NOW_PRIMARY"
+                    }
+                    fgUsable(fgCached) -> {
+                        fgEffective = fgCached
+                        fgSource = "FG_CACHED_SECONDARY"
+                    }
+                    fgUsable(lastReal) && lastRealAge < ageThreshold -> {
+                        fgEffective = lastReal
+                        fgSource = "LAST_REAL_TERTIARY"
+                    }
+                    else -> {
+                        fgEffective = null
+                        fgSource = "NONE_FALLBACK_FAILED"
+                    }
+                }
+                
+                Log.i("QT_EXPIRE_RECHECK_FG",
+                    "[QT_EXPIRE_RECHECK_FG] app=$app fgEffective=$fgEffective fgSource=$fgSource fgNow=$fgNow fgCached=$fgCached lastReal=$lastReal lastRealAge=${lastRealAge}ms threshold=${ageThreshold}ms")
+                
+                // Clear pending state (always)
+                pendingExpirySidByApp.remove(app)
+                pendingExpiryAtMsByApp.remove(app)
+                
+                if (fgEffective == app) {
+                    // User IS on app after grace → Show PostChoice
+                    Log.i("QT_TIMER_EXPIRE_RECHECK", 
+                        "[QT_TIMER_EXPIRE_RECHECK] app=$app sid=$sessionId fgEffective=$fgEffective fgSource=$fgSource decision=SHOW_POST_QT")
+                    
+                    val remaining = cachedQuotaState.remaining
+                    if (remaining > 0) {
+                        entry.state = QuickTaskState.POST_CHOICE
+                        postChoiceSessionIdByApp[app] = sessionId
+                        Log.i("QT_EXPIRE", "[QT_EXPIRE] app=$app sid=$sessionId -> POST_CHOICE (grace recheck confirmed ON_APP)")
+                        shouldEmitPostQT = true  // Set flag, emit outside lock
+                    } else {
+                        Log.w("QT_EXPIRE", "[QT_EXPIRE] app=$app sid=$sessionId quota=0 - clearing ACTIVE")
+                        // Pending already cleared above, safe to return
+                        clearActiveForAppLocked(app, "TIMER_QUOTA_ZERO")
+                        return
+                    }
+                } else {
+                    // Still away after grace → Final EXPIRED_AWAY
+                    Log.i("QT_TIMER_EXPIRE_RECHECK", 
+                        "[QT_TIMER_EXPIRE_RECHECK] app=$app sid=$sessionId fgEffective=$fgEffective fgSource=$fgSource decision=EXPIRED_AWAY_FINAL")
+                    
+                    // Fix log ordering: cancel timer BEFORE mutating state
+                    cancelNativeTimerLocked(app, "EXPIRED_AWAY")  // ← Logs state=ACTIVE sid=<real>
+                    
+                    entry.state = QuickTaskState.IDLE
+                    activeQuickTaskSessionIdByApp.remove(app)
+                    postChoiceSessionIdByApp.remove(app)
+                    activeDurationMsByApp.remove(app)
+                    
+                    Log.i("QT_TIMER_EXPIRED_AWAY_FINAL", 
+                        "[QT_TIMER_EXPIRED_AWAY_FINAL] app=$app originalSid=$sessionId fgEffective=$fgEffective fgSource=$fgSource")
+                    return
+                }
+            }  // Lock released here
+            
+            // MUST emit OUTSIDE lock to avoid qtLock contention/deadlock
+            if (shouldEmitPostQT) {
+                emitQuickTaskCommand("SHOW_POST_QUICK_TASK_CHOICE", app, context)
             }
         }
 
@@ -1517,8 +1971,12 @@ class ForegroundDetectionService : AccessibilityService() {
                 return@synchronized null
             }
 
-            // Get per-app duration (default 2 minutes if not set)
-            val durationMs = cachedQuickTaskDurationMsByApp[app] ?: 120_000L
+            // PR8: Per-app resolution with investigation logging
+            val durationMs = resolveQuickTaskDurationMs(app, context)
+            
+            // Investigation log to trace why 120s appears
+            Log.i("QT_CONFIRM_DURATION_DEBUG", 
+                "[QT_CONFIRM_DURATION_DEBUG] app=$app resolvedDuration=$durationMs cacheSnapshot=${cachedQuickTaskDurationMsByApp[app]}")
 
             // Clear OFFERING
             promptSessionIdByApp.remove(app)
@@ -1531,6 +1989,9 @@ class ForegroundDetectionService : AccessibilityService() {
             // Set protection window
             qtProtectedUntilMsByApp[app] = now + durationMs
             Log.e("QT_PROTECT", "[QT_PROTECT_SET] app=$app until=${now + durationMs} durationMs=$durationMs")
+            
+            // PR8: Store duration for expiry logs
+            activeDurationMsByApp[app] = durationMs
 
             // Defensive: cancel any old runnable for this app
             cancelNativeTimerLocked(app, "REPLACE_TIMER_ON_CONFIRM")
@@ -1837,5 +2298,181 @@ class ForegroundDetectionService : AccessibilityService() {
         
         // Emit intervention command (using centralized helper for Layer C cleanup)
         emitInterventionForApp(app, "INTENTION_EXPIRED", context)
+    }
+    
+    // ============================================================================
+    // PR9: POST_CHOICE Persistence Watchdog
+    // ============================================================================
+    
+    /**
+     * PR9 Phase A.2: Handle POST_CHOICE surface closed event
+     * Called from onSurfaceExit when POST_CHOICE surface is destroyed
+     * 
+     * Validates surface is actually Post-QT, marks invisible, schedules watchdog
+     */
+    private fun handlePostChoiceSurfaceClosed(
+        app: String,
+        reason: String,
+        sessionId: String?,
+        instanceId: Int,
+        isPostChoiceSurface: Boolean
+    ) {
+        synchronized(qtLock) {
+            val entry = quickTaskMap[app]
+            val postSid = postChoiceSessionIdByApp[app]
+            
+            // CRITICAL: Verify this is actually a Post-QT surface via explicit discriminator
+            if (!isPostChoiceSurface) {
+                Log.d("QT_POST_VISIBLE",
+                    "[QT_POST_VISIBLE] app=$app instanceId=$instanceId - NOT Post-QT, ignoring")
+                return
+            }
+            
+            // Verify state consistency
+            if (entry?.state != QuickTaskState.POST_CHOICE) {
+                Log.w("QT_POST_VISIBLE",
+                    "[QT_POST_VISIBLE] app=$app sid=$postSid instanceId=$instanceId state=${entry?.state} - STATE MISMATCH")
+                return
+            }
+            
+            // Mark surface as no longer visible
+            postChoiceSurfaceVisibleByApp[app] = false
+            postChoiceLastVisibilityChangeAtMsByApp[app] = System.currentTimeMillis()
+            
+            Log.i("QT_POST_VISIBLE",
+                "[QT_POST_VISIBLE] app=$app sid=$postSid visible=false reason=$reason surfaceKind=POST_CHOICE instanceId=$instanceId")
+            
+            // Schedule persistence watchdog (Phase B) - with double-schedule protection
+            schedulePostChoicePersistenceCheck(app, postSid, reason)
+        }
+    }
+    
+    /**
+     * PR9 Phase B.1: Schedule delayed check for POST_CHOICE persistence
+     * Triggered when Post-QT surface closes
+     * Delay: 2000ms (2 seconds)
+     * 
+     * Double-schedule protection: At most ONE pending watchdog per app at a time
+     */
+    private fun schedulePostChoicePersistenceCheck(app: String, sessionId: String?, reason: String) {
+        // Already inside qtLock from handlePostChoiceSurfaceClosed
+        
+        val now = System.currentTimeMillis()
+        val pendingUntil = postChoiceWatchdogPendingUntilMsByApp[app] ?: 0L
+        
+        // Skip if watchdog already pending
+        if (now < pendingUntil) {
+            Log.d("QT_POST_WATCHDOG_SKIP", 
+                "[QT_POST_WATCHDOG_SKIP] app=$app sid=$sessionId reason=$reason pendingUntilMs=$pendingUntil remainingMs=${pendingUntil - now}")
+            return
+        }
+        
+        // Mark watchdog as pending
+        postChoiceWatchdogPendingUntilMsByApp[app] = now + 2000L
+        
+        // Schedule check on main handler (service instance)
+        mainHandler.postDelayed({
+            onPostChoicePersistenceCheck(app, sessionId, reason)
+        }, 2000L)
+        
+        Log.d("QT_POST_WATCHDOG_SCHEDULED", 
+            "[QT_POST_WATCHDOG_SCHEDULED] app=$app sid=$sessionId reason=$reason delayMs=2000")
+    }
+    
+    /**
+     * PR9 Phase B.2: Persistence check handler
+     * Instance-level method (uses instance fields: currentForegroundApp, lastRealForegroundPkg, etc.)
+     * 
+     * Re-evaluates foreground state after 2s delay:
+     * - If user still on app && UI not visible → re-emit Post-QT
+     * - If user left app → clear POST_CHOICE to IDLE (no suppression)
+     */
+    private fun onPostChoicePersistenceCheck(app: String, sessionId: String?, reason: String) {
+        var shouldReemit = false
+        var contextSnapshot: android.content.Context? = null
+        
+        synchronized(qtLock) {
+            // Clear watchdog pending flag
+            postChoiceWatchdogPendingUntilMsByApp.remove(app)
+            val entry = quickTaskMap[app]
+            val postSid = postChoiceSessionIdByApp[app]
+            val isVisible = postChoiceSurfaceVisibleByApp[app] ?: false
+            val debounceUntil = postChoiceReemitInFlightUntilMsByApp[app] ?: 0L
+            val now = System.currentTimeMillis()
+            
+            // Validate still in POST_CHOICE
+            if (entry?.state != QuickTaskState.POST_CHOICE) {
+                Log.d("QT_POST_REEMIT_SKIP", 
+                    "[QT_POST_REEMIT_SKIP] app=$app reason=NOT_POST_CHOICE state=${entry?.state}")
+                return
+            }
+            
+            // If UI is visible, nothing to do
+            if (isVisible) {
+                Log.d("QT_POST_REEMIT_SKIP_VISIBLE", 
+                    "[QT_POST_REEMIT_SKIP_VISIBLE] app=$app sid=$postSid reason=$reason visible=true")
+                return
+            }
+            
+            // Check debounce
+            if (now < debounceUntil) {
+                Log.d("QT_POST_REEMIT_SKIP", 
+                    "[QT_POST_REEMIT_SKIP] app=$app reason=DEBOUNCE remainingMs=${debounceUntil - now}")
+                return
+            }
+            
+            // Check if user is still on app (use 3-tier fallback)
+            // Use instance access (this is an instance method)
+            val fgNow = this.rootInActiveWindow?.packageName?.toString()
+            val fgCached = currentForegroundApp
+            val lastReal = lastRealForegroundPkg
+            val lastRealAge = now - lastRealForegroundAtMs
+            
+            val selfPkg = this.applicationContext.packageName
+            fun fgUsable(pkg: String?): Boolean {
+                return pkg != null && pkg != selfPkg && !isLauncherOrSystemUI(pkg)
+            }
+            
+            val ageThreshold = 30_000L
+            val fgEffective: String? = when {
+                fgUsable(fgNow) -> fgNow
+                fgUsable(fgCached) -> fgCached
+                fgUsable(lastReal) && lastRealAge < ageThreshold -> lastReal
+                else -> null
+            }
+            
+            if (fgEffective == app) {
+                // User still on app, UI not visible → re-emit
+                shouldReemit = true
+                postChoiceReemitInFlightUntilMsByApp[app] = now + 2000L
+                
+                // Snapshot context inside lock (for use outside lock)
+                // Use service applicationContext (always available, never null)
+                contextSnapshot = this.applicationContext
+                
+                Log.i("QT_POST_REEMIT", 
+                    "[QT_POST_REEMIT] app=$app sid=$postSid reason=$reason delayMs=2000 fg=$fgEffective visible=false")
+            } else {
+                // User left app → clear POST_CHOICE (no suppression)
+                entry.state = QuickTaskState.IDLE
+                postChoiceSessionIdByApp.remove(app)
+                postChoiceSurfaceVisibleByApp.remove(app)
+                postChoiceLastVisibilityChangeAtMsByApp.remove(app)
+                postChoiceReemitInFlightUntilMsByApp.remove(app)
+                
+                Log.i("QT_POST_CLEAR_AWAY", 
+                    "[QT_POST_CLEAR_AWAY] app=$app sid=$postSid reason=$reason fg=$fgEffective")
+            }
+        }  // End qtLock
+        
+        // CRITICAL: Emit OUTSIDE lock to avoid deadlocks
+        if (shouldReemit) {
+            if (contextSnapshot != null) {
+                emitQuickTaskCommand("SHOW_POST_QUICK_TASK_CHOICE", app, contextSnapshot)
+            } else {
+                Log.e("QT_POST_REEMIT_ERR", 
+                    "[QT_POST_REEMIT_ERR] app=$app reason=NULL_CONTEXT")
+            }
+        }
     }
 }
