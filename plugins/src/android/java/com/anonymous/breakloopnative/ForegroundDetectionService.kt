@@ -1936,18 +1936,49 @@ class ForegroundDetectionService : AccessibilityService() {
              return IGNORE_LIST_APPS.contains(pkg) // Simplified
         }
         
-        private val launcherPackages = setOf(
-            "com.google.android.apps.nexuslauncher",
-            "com.android.launcher3",
-            "com.sec.android.app.launcher", // Samsung
-            "com.miui.home", // Xiaomi
-        )
+        // Dynamic launcher detection (replaces hardcoded list)
+        @Volatile private var cachedLauncherPackages: Set<String>? = null
+        
+        private fun getLauncherPackages(context: android.content.Context): Set<String> {
+            // Return cached if available (refresh if null)
+            cachedLauncherPackages?.let { return it }
+            
+            // Resolve all launcher apps
+            val intent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+                addCategory(android.content.Intent.CATEGORY_HOME)
+            }
+            
+            val packageManager = context.packageManager
+            val resolveInfos = packageManager.queryIntentActivities(
+                intent, 
+                android.content.pm.PackageManager.MATCH_DEFAULT_ONLY
+            )
+            
+            val launchers = resolveInfos.mapNotNull { it.activityInfo?.packageName }.toSet()
+            
+            Log.i("LAUNCHER_DETECT", "[LAUNCHER_DETECT] Resolved launcher packages: $launchers")
+            
+            // Cache result
+            cachedLauncherPackages = launchers
+            return launchers
+        }
         
         private fun isLauncherOrSystemUI(pkg: String?): Boolean {
             if (pkg == null) return false
-            return pkg.startsWith("com.android.systemui") ||
-                   pkg.startsWith("com.google.android.launcher") ||
-                   launcherPackages.contains(pkg)
+            
+            // System UI check (keep as-is)
+            if (pkg.startsWith("com.android.systemui")) return true
+            
+            // Dynamic launcher detection using cached context (with null-safety)
+            val context = cachedAppContext ?: serviceRef?.get()?.applicationContext
+            if (context != null) {
+                val launchers = getLauncherPackages(context)
+                return launchers.contains(pkg)
+            }
+            
+            // Fallback: if no context, assume not launcher (safe default)
+            Log.w("LAUNCHER_DETECT", "[LAUNCHER_DETECT] No context available for launcher detection, assuming pkg=$pkg is NOT launcher")
+            return false
         }
         
         
@@ -2104,13 +2135,21 @@ class ForegroundDetectionService : AccessibilityService() {
         if (event == null) return
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val packageName = event.packageName?.toString() ?: return
+            
+            // Filter 1: Self package (already exists)
             if (packageName == applicationContext.packageName) return
             
+            // Filter 2: Google Search Box (system-ish overlay)
+            if (packageName == "com.google.android.googlequicksearchbox") return
+            
+            // Filter 3: Launcher/SystemUI (using updated detection)
             // Track last real foreground app (excludes system/launcher)
             if (!isLauncherOrSystemUI(packageName)) {
                 lastRealForegroundPkg = packageName
                 lastRealForegroundAtMs = System.currentTimeMillis()
-                Log.e("FG_RAW", "[FG_RAW] lastRealForegroundPkg=$packageName")
+                Log.d("FG_LAST_REAL_UPDATE", "[FG_LAST_REAL_UPDATE] pkg=$packageName")
+            } else {
+                Log.d("FG_LAST_REAL_SKIP", "[FG_LAST_REAL_SKIP] pkg=$packageName reason=LAUNCHER_OR_SYSTEMUI")
             }
             
             // Raw detection
