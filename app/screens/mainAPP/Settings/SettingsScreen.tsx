@@ -1,6 +1,6 @@
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/native-modules/AppMonitorModule';
-import { getInterventionDurationSec, getIsPremiumCustomer, getQuickTaskDurationMs, getQuickTaskUsesPerWindow, setInterventionPreferences, setQuickTaskConfig, setMonitoredApps as updateOsConfigMonitoredApps } from '@/src/os/osConfig';
+import { getInterventionDurationSec, getIsPremiumCustomer, getQuickTaskDurationMs, getQuickTaskUsesPerWindow, getQuickTaskWindowDurationMs, setInterventionPreferences, setQuickTaskConfig, setMonitoredApps as updateOsConfigMonitoredApps } from '@/src/os/osConfig';
 import { completeInterventionDEV } from '@/src/os/osTriggerBrain';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -95,6 +95,7 @@ const SettingsScreen = () => {
   // Quick Task settings state
   const [quickTaskDuration, setQuickTaskDuration] = useState<number>(3 * 60 * 1000); // Default: 3 minutes in ms
   const [quickTaskUsesPerWindow, setQuickTaskUsesPerWindow] = useState<number>(1); // Default: 1 use
+  const [quickTaskWindowDuration, setQuickTaskWindowDuration] = useState<number>(15 * 60 * 1000); // Default: 15 minutes
   const [isPremium, setIsPremium] = useState<boolean>(true); // TEMP: Bypass Premium gate for debugging
 
   // Intervention preferences state
@@ -207,13 +208,17 @@ const SettingsScreen = () => {
 
   // Helper: Sync Quick Task settings to Native
   // This ensures Native cache is populated with current settings
-  const syncQuickTaskSettingsToNative = async (durationMs: number, usesPerWindow: number) => {
+  const syncQuickTaskSettingsToNative = async (durationMs: number, usesPerWindow: number, windowDurationMs: number) => {
     try {
       const { NativeModules, Platform } = require('react-native');
       if (Platform.OS === 'android' && NativeModules.AppMonitorModule) {
         // Set Max Quota
         console.log(`[SettingsScreen] ⚡ Syncing to Native: Quota Max=${usesPerWindow}`);
         await NativeModules.AppMonitorModule.setQuickTaskQuotaPer15m(usesPerWindow);
+
+        // Set Window Duration
+        console.log(`[SettingsScreen] 🕐 Syncing to Native: Window Duration=${windowDurationMs}ms`);
+        await NativeModules.AppMonitorModule.setQuickTaskWindowDuration(windowDurationMs);
 
         // Set duration for each monitored app (in milliseconds)
         const monitoredApps = await NativeModules.AppMonitorModule.getMonitoredApps();
@@ -239,58 +244,67 @@ const SettingsScreen = () => {
         console.log('[SettingsScreen] 📥 Loaded Quick Task settings from storage:', settings);
         const durationMs = settings.durationMs || getQuickTaskDurationMs();
         const usesPerWindow = settings.usesPerWindow || getQuickTaskUsesPerWindow();
+        const windowDurationMs = settings.windowDurationMs || getQuickTaskWindowDurationMs();
         const isPremiumCustomer = settings.isPremium !== undefined ? settings.isPremium : getIsPremiumCustomer();
         setQuickTaskDuration(durationMs);
         setQuickTaskUsesPerWindow(usesPerWindow);
+        setQuickTaskWindowDuration(windowDurationMs);
         setIsPremium(isPremiumCustomer);
         // Update osConfig with loaded settings
         setQuickTaskConfig(durationMs, usesPerWindow, isPremiumCustomer);
+        setQuickTaskWindowDuration(windowDurationMs);
         // FIX: Sync to Native on load (not just on save)
-        await syncQuickTaskSettingsToNative(durationMs, usesPerWindow);
+        await syncQuickTaskSettingsToNative(durationMs, usesPerWindow, windowDurationMs);
       } else {
         // Load from osConfig defaults
         const durationMs = getQuickTaskDurationMs();
         const usesPerWindow = getQuickTaskUsesPerWindow();
+        const windowDurationMs = getQuickTaskWindowDurationMs();
         const isPremiumCustomer = getIsPremiumCustomer();
         setQuickTaskDuration(durationMs);
         setQuickTaskUsesPerWindow(usesPerWindow);
+        setQuickTaskWindowDuration(windowDurationMs);
         setIsPremium(isPremiumCustomer);
         console.log('[SettingsScreen] ℹ️ No Quick Task settings in storage, using osConfig defaults');
         // FIX: Sync defaults to Native on fresh install
-        await syncQuickTaskSettingsToNative(durationMs, usesPerWindow);
+        await syncQuickTaskSettingsToNative(durationMs, usesPerWindow, windowDurationMs);
       }
     } catch (error) {
       console.error('[SettingsScreen] ❌ Failed to load Quick Task settings:', error);
       // Use osConfig defaults
       const durationMs = getQuickTaskDurationMs();
       const usesPerWindow = getQuickTaskUsesPerWindow();
+      const windowDurationMs = getQuickTaskWindowDurationMs();
       const isPremiumCustomer = getIsPremiumCustomer();
       setQuickTaskDuration(durationMs);
       setQuickTaskUsesPerWindow(usesPerWindow);
+      setQuickTaskWindowDuration(windowDurationMs);
       setIsPremium(isPremiumCustomer);
       // FIX: Sync defaults to Native even on error
-      await syncQuickTaskSettingsToNative(durationMs, usesPerWindow);
+      await syncQuickTaskSettingsToNative(durationMs, usesPerWindow, windowDurationMs);
     }
   };
 
   // Save Quick Task settings to storage
   // NOTE: Changes apply immediately - setQuickTaskConfig() updates in-memory config
   // The next Quick Task availability check will use the new value
-  const saveQuickTaskSettings = async (durationMs: number, usesPerWindow: number, isPremium: boolean) => {
+  const saveQuickTaskSettings = async (durationMs: number, usesPerWindow: number, windowDurationMs: number, isPremium: boolean) => {
     try {
       const settings = {
         durationMs,
         usesPerWindow,
+        windowDurationMs,
         isPremium,
       };
       console.log('[SettingsScreen] 💾 Saving Quick Task settings:', settings);
       await AsyncStorage.setItem(QUICK_TASK_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
       // Update osConfig immediately - applies to next Quick Task check
       setQuickTaskConfig(durationMs, usesPerWindow, isPremium);
+      setQuickTaskWindowDuration(windowDurationMs);
       console.log('[SettingsScreen] ✅ Successfully saved Quick Task settings (applied immediately)');
 
       // Sync to Native after saving
-      await syncQuickTaskSettingsToNative(durationMs, usesPerWindow);
+      await syncQuickTaskSettingsToNative(durationMs, usesPerWindow, windowDurationMs);
     } catch (error) {
       console.error('[SettingsScreen] ❌ Failed to save Quick Task settings:', error);
       Alert.alert('Error', 'Failed to save Quick Task settings. Please try again.');
@@ -347,7 +361,7 @@ const SettingsScreen = () => {
       return;
     }
     setQuickTaskDuration(durationMs);
-    saveQuickTaskSettings(durationMs, quickTaskUsesPerWindow, isPremium);
+    saveQuickTaskSettings(durationMs, quickTaskUsesPerWindow, quickTaskWindowDuration, isPremium);
   };
 
   // Handle uses per window selection
@@ -361,7 +375,13 @@ const SettingsScreen = () => {
     setQuickTaskUsesPerWindow(uses);
     // This updates the in-memory config immediately via setQuickTaskConfig()
     // The next Quick Task check will use the new value
-    saveQuickTaskSettings(quickTaskDuration, uses, isPremium);
+    saveQuickTaskSettings(quickTaskDuration, uses, quickTaskWindowDuration, isPremium);
+  };
+
+  // Handle window duration selection
+  const handleWindowDurationSelect = (durationMs: number) => {
+    setQuickTaskWindowDuration(durationMs);
+    saveQuickTaskSettings(quickTaskDuration, quickTaskUsesPerWindow, durationMs, isPremium);
   };
 
   // Format duration for display
@@ -1048,6 +1068,107 @@ const SettingsScreen = () => {
                       ]}
                     >
                       100
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Window Duration Selection */}
+                <Text style={[styles.quickTaskLabel, { marginTop: 20 }]}>Quota refill period</Text>
+                <View style={styles.quickTaskButtonRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.quickTaskButton,
+                      quickTaskWindowDuration === 15 * 60 * 1000 && styles.quickTaskButtonSelected,
+                    ]}
+                    onPress={() => handleWindowDurationSelect(15 * 60 * 1000)}
+                  >
+                    <Text
+                      style={[
+                        styles.quickTaskButtonText,
+                        quickTaskWindowDuration === 15 * 60 * 1000 && styles.quickTaskButtonTextSelected,
+                      ]}
+                    >
+                      15m
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.quickTaskButton,
+                      quickTaskWindowDuration === 60 * 60 * 1000 && styles.quickTaskButtonSelected,
+                    ]}
+                    onPress={() => handleWindowDurationSelect(60 * 60 * 1000)}
+                  >
+                    <Text
+                      style={[
+                        styles.quickTaskButtonText,
+                        quickTaskWindowDuration === 60 * 60 * 1000 && styles.quickTaskButtonTextSelected,
+                      ]}
+                    >
+                      1h
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.quickTaskButton,
+                      quickTaskWindowDuration === 2 * 60 * 60 * 1000 && styles.quickTaskButtonSelected,
+                    ]}
+                    onPress={() => handleWindowDurationSelect(2 * 60 * 60 * 1000)}
+                  >
+                    <Text
+                      style={[
+                        styles.quickTaskButtonText,
+                        quickTaskWindowDuration === 2 * 60 * 60 * 1000 && styles.quickTaskButtonTextSelected,
+                      ]}
+                    >
+                      2h
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.quickTaskButton,
+                      quickTaskWindowDuration === 4 * 60 * 60 * 1000 && styles.quickTaskButtonSelected,
+                    ]}
+                    onPress={() => handleWindowDurationSelect(4 * 60 * 60 * 1000)}
+                  >
+                    <Text
+                      style={[
+                        styles.quickTaskButtonText,
+                        quickTaskWindowDuration === 4 * 60 * 60 * 1000 && styles.quickTaskButtonTextSelected,
+                      ]}
+                    >
+                      4h
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.quickTaskButton,
+                      quickTaskWindowDuration === 8 * 60 * 60 * 1000 && styles.quickTaskButtonSelected,
+                    ]}
+                    onPress={() => handleWindowDurationSelect(8 * 60 * 60 * 1000)}
+                  >
+                    <Text
+                      style={[
+                        styles.quickTaskButtonText,
+                        quickTaskWindowDuration === 8 * 60 * 60 * 1000 && styles.quickTaskButtonTextSelected,
+                      ]}
+                    >
+                      8h
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.quickTaskButton,
+                      quickTaskWindowDuration === 24 * 60 * 60 * 1000 && styles.quickTaskButtonSelected,
+                    ]}
+                    onPress={() => handleWindowDurationSelect(24 * 60 * 60 * 1000)}
+                  >
+                    <Text
+                      style={[
+                        styles.quickTaskButtonText,
+                        quickTaskWindowDuration === 24 * 60 * 60 * 1000 && styles.quickTaskButtonTextSelected,
+                      ]}
+                    >
+                      24h
                     </Text>
                   </TouchableOpacity>
                 </View>

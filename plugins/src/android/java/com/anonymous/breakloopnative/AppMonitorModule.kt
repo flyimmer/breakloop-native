@@ -619,13 +619,28 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     }
 
     @ReactMethod
+    fun setQuickTaskWindowDuration(durationMs: Int, promise: Promise) {
+        try {
+            android.util.Log.i("AppMonitorModule", "setQuickTaskWindowDuration: $durationMs")
+             
+            ForegroundDetectionService.setQuickTaskWindowDuration(durationMs.toLong())
+            promise.resolve(true)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed to set quick task window duration", e)
+            promise.reject("SET_WINDOW_DURATION_FAILED", e.message, e)
+        }
+    }
+
+    @ReactMethod
     fun getQuickTaskQuota(promise: Promise) {
         try {
             val state = ForegroundDetectionService.getCachedQuotaState()
             val map = com.facebook.react.bridge.Arguments.createMap().apply {
-                putDouble("max", state.maxPer15m.toDouble())
+                putDouble("max", state.maxPerWindow.toDouble())
                 putDouble("remaining", state.remaining.toDouble())
-                putDouble("windowStart", state.windowStartMs.toDouble())
+                putDouble("windowStartMs", state.windowStartMs.toDouble())
+                putDouble("windowEndMs", state.windowEndMs.toDouble())
+                putDouble("windowDurationMs", state.windowDurationMs.toDouble())
             }
             promise.resolve(map)
         } catch (e: Exception) {

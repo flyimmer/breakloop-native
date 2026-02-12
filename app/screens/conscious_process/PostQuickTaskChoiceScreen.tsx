@@ -92,16 +92,18 @@ export default function PostQuickTaskChoiceScreen() {
     if (isProcessing || appPackageName === 'Unknown') return;
     setIsProcessing(true);
 
-    if (AppMonitorModule && session?.sessionId) {
-      try {
+    try {
+      if (AppMonitorModule && session?.sessionId) {
         await AppMonitorModule.quickTaskPostContinue(appPackageName, session.sessionId);
         console.log(`[QT][INTENT] POST_CONTINUE app=${appPackageName} sid=${session.sessionId}`);
-      } catch (error) {
-        console.error('[QT] Failed to post continue:', error);
       }
+    } catch (error) {
+      console.error('[QT] Failed to post continue:', error);
+    } finally {
+      setIsProcessing(false);
+      // ✅ FIX: End session and return to underlying app (false = don't launch home)
+      safeEndSession(false);
     }
-
-    setIsProcessing(false);
   };
 
   return (

@@ -23,7 +23,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  */
 export interface QuickTaskDisplayInfo {
   remaining: number;      // Number of uses remaining
-  windowMinutes: number;  // Window duration in minutes
+  resetAtMs: number;      // Timestamp when quota resets (milliseconds since epoch)
 }
 
 /**
@@ -33,50 +33,37 @@ export interface QuickTaskDisplayInfo {
  * SystemSurface must NOT make semantic decisions based on this value.
  * System Brain has already decided to show the Quick Task dialog.
  * 
- * This function abstracts away System Brain's internal storage format,
- * providing a stable interface that won't break if System Brain refactors.
+ * This function reads quota state directly from Native (single source of truth).
  * 
- * @returns DTO with remaining uses and window duration
+ * @returns DTO with remaining uses and reset timestamp
  */
 export async function getQuickTaskRemainingForDisplay(): Promise<QuickTaskDisplayInfo> {
   try {
-    // Load Quick Task config
-    const configJson = await AsyncStorage.getItem('quick_task_settings_v1');
-    let maxUses = 1; // Default
-    const windowMs = 15 * 60 * 1000; // 15 minutes
+    // Import NativeModules dynamically to avoid circular dependencies
+    const { NativeModules, Platform } = require('react-native');
+    const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
-    if (configJson) {
-      const config = JSON.parse(configJson);
-      maxUses = config.usesPerWindow ?? 1;
+    if (!AppMonitorModule) {
+      // Fallback for non-Android platforms
+      return {
+        remaining: 1,
+        resetAtMs: Date.now() + (15 * 60 * 1000),
+      };
     }
 
-    // Load System Brain state (internal format hidden from caller)
-    const stateJson = await AsyncStorage.getItem('system_brain_state_v1');
-    let usageHistory: number[] = [];
+    // Fetch quota state from Native (single source of truth)
+    const quotaState = await AppMonitorModule.getQuickTaskQuota();
 
-    if (stateJson) {
-      const state = JSON.parse(stateJson);
-      usageHistory = state.quickTaskUsageHistory || [];
-    }
-
-    // Calculate remaining uses
-    const currentTimestamp = Date.now();
-    const recentUsages = usageHistory.filter(
-      ts => currentTimestamp - ts < windowMs
-    );
-    const remaining = Math.max(0, maxUses - recentUsages.length);
-    const windowMinutes = Math.round(windowMs / (60 * 1000));
-
-    // Return simple DTO (no internal details exposed)
     return {
-      remaining,
-      windowMinutes,
+      remaining: Math.round(quotaState.remaining),
+      resetAtMs: Math.round(quotaState.windowEndMs),
     };
   } catch (e) {
+    console.error('[QuickTaskDialog] Failed to get quota from native:', e);
     // Fallback DTO
     return {
       remaining: 1,
-      windowMinutes: 15,
+      resetAtMs: Date.now() + (15 * 60 * 1000),
     };
   }
 }

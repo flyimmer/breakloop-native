@@ -36,7 +36,7 @@ const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorMod
 export default function QuickTaskDialogScreen() {
   const { session, dispatchSystemEvent, safeEndSession, setTransientTargetApp } = useSystemSession();
   const [isProcessing, setIsProcessing] = useState(false);
-  const [displayInfo, setDisplayInfo] = useState<{ remaining: number; windowMinutes: number } | null>(null);
+  const [displayInfo, setDisplayInfo] = useState<{ remaining: number; resetAtMs: number } | null>(null);
 
   // Get app from session
   const targetApp = session?.kind === 'QUICK_TASK' ? session.app : null;
@@ -50,6 +50,14 @@ export default function QuickTaskDialogScreen() {
     }
     loadRemaining();
   }, []);
+
+  // Format reset time as HH:MM
+  const formatResetTime = (resetAtMs: number): string => {
+    const date = new Date(resetAtMs);
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
+  };
 
   // Disable Android hardware back button during Quick Task decision
   useEffect(() => {
@@ -231,7 +239,7 @@ export default function QuickTaskDialogScreen() {
         <View style={styles.infoSection}>
           <Text style={styles.infoText}>
             {displayInfo
-              ? `${displayInfo.remaining} left in this ${displayInfo.windowMinutes}-minute window.`
+              ? `${displayInfo.remaining} quota left until ${formatResetTime(displayInfo.resetAtMs)}.`
               : 'Loading...'}
           </Text>
         </View>

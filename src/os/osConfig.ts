@@ -29,14 +29,14 @@ let INTERVENTION_DURATION_SEC = 5; // 5 seconds
  * TEMPORARY: Set to 2 minutes for testing
  * Current value: 2 minutes
  */
-const INTENTION_TIMER_DURATION_MS = 2* 60 * 1000; // 2 minutes
+const INTENTION_TIMER_DURATION_MS = 2 * 60 * 1000; // 2 minutes
 
 /**
  * Quick Task feature configuration
  */
 let QUICK_TASK_DURATION_MS = 3 * 60 * 1000; // Default: 3 minutes
 let QUICK_TASK_USES_PER_WINDOW = 1; // Default: 1 use per window
-const QUICK_TASK_WINDOW_MS = 15 * 60 * 1000; // Fixed: 15 minutes
+let QUICK_TASK_WINDOW_DURATION_MS = 15 * 60 * 1000; // Default: 15 minutes (configurable: 15m, 1h, 2h, 4h, 8h, 24h)
 let IS_PREMIUM_CUSTOMER = true; // Default: true (for now, assume premium)
 
 // ============================================================================
@@ -142,10 +142,22 @@ export function getQuickTaskUsesPerWindow(): number {
 /**
  * Get the Quick Task window duration in milliseconds.
  * 
- * @returns Window duration in milliseconds (fixed: 15 minutes)
+ * @returns Window duration in milliseconds (default: 15 minutes, configurable)
  */
-export function getQuickTaskWindowMs(): number {
-  return QUICK_TASK_WINDOW_MS;
+export function getQuickTaskWindowDurationMs(): number {
+  return QUICK_TASK_WINDOW_DURATION_MS;
+}
+
+/**
+ * Set the Quick Task window duration.
+ * 
+ * @param durationMs - Window duration in milliseconds (15m, 1h, 2h, 4h, 8h, or 24h)
+ */
+export function setQuickTaskWindowDuration(durationMs: number): void {
+  QUICK_TASK_WINDOW_DURATION_MS = durationMs;
+  if (__DEV__) {
+    console.log('[osConfig] Updated Quick Task Window Duration:', durationMs);
+  }
 }
 
 /**

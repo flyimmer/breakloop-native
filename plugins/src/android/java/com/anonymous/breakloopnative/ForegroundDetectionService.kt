@@ -131,7 +131,7 @@ class ForegroundDetectionService : AccessibilityService() {
         private val cachedQuickTaskDurationMsByApp = mutableMapOf<String, Long>()
         
         // Caches (Updated via Setters/Stores)
-        @Volatile private var cachedQuotaState: QuotaState = QuotaState(1L, 0L, 1L)
+        @Volatile private var cachedQuotaState: QuotaState = QuotaState(1L, 0L, 15 * 60 * 1000L, 15 * 60 * 1000L, 1L)
         @Volatile private var cachedMonitoredApps: Set<String> = emptySet()
         @Volatile private var cachedIntentions: Map<String, Long> = emptyMap()
         
@@ -294,7 +294,7 @@ class ForegroundDetectionService : AccessibilityService() {
                 quickTaskMap[app]?.state = QuickTaskState.IDLE
                 activeQuickTaskSessionIdByApp.remove(app)
             }
-            emitFinishSystemSurface(context)
+            emitFinishSystemSurface(app, context)
         }
 
         /**
@@ -402,7 +402,7 @@ class ForegroundDetectionService : AccessibilityService() {
             }
             
             // Close SystemSurface
-            emitFinishSystemSurface(context)
+            emitFinishSystemSurface(app, context)
         }
         
         /**
@@ -446,7 +446,7 @@ class ForegroundDetectionService : AccessibilityService() {
             }
             
             // Close SystemSurface
-            emitFinishSystemSurface(context)
+            emitFinishSystemSurface(app, context)
         }
 
         @JvmStatic
@@ -642,12 +642,30 @@ class ForegroundDetectionService : AccessibilityService() {
                     try {
                         val newState = it.quotaStore.setMaxQuota(max.toLong())
                         cachedQuotaState = newState
-                        Log.e(LogTags.QT_STATE, "[CONFIG] Updated Max Quota: max=${newState.maxPer15m} remaining=${newState.remaining}")
+                        Log.e(LogTags.QT_STATE, "[CONFIG] Updated Max Quota: max=${newState.maxPerWindow} remaining=${newState.remaining}")
                     } catch (e: Exception) {
                         Log.e("AppMonitorModule", "[ERROR] Failed to update quota", e)
                     }
                 }
             } ?: Log.e("AppMonitorModule", "[ERROR] serviceRef is null, cannot update quota")
+        }
+
+        @JvmStatic
+        fun setQuickTaskWindowDuration(durationMs: Long) {
+            val service = serviceRef?.get()
+            Log.i("QT_WINDOW", "[QT_WINDOW] setQuickTaskWindowDuration called with durationMs=$durationMs, serviceRef=${service != null}")
+            
+            service?.let {
+                it.serviceScope.launch {
+                    try {
+                        val newState = it.quotaStore.updateWindowDuration(durationMs)
+                        cachedQuotaState = newState
+                        Log.i("QT_WINDOW", "[CONFIG] Updated Window Duration: duration=${newState.windowDurationMs}ms remaining=${newState.remaining}")
+                    } catch (e: Exception) {
+                        Log.e("QT_WINDOW", "[ERROR] Failed to update window duration", e)
+                    }
+                }
+            } ?: Log.e("QT_WINDOW", "[ERROR] serviceRef is null, cannot update window duration")
         }
 
         @JvmStatic
@@ -1177,16 +1195,22 @@ class ForegroundDetectionService : AccessibilityService() {
             }    
                 clearActiveForAppLocked(app, "POST_CHOICE_$choice")
             }
-            emitFinishSystemSurface(context)
+            emitFinishSystemSurface(app, context)
         }
 
-        private fun emitFinishSystemSurface(context: android.content.Context) {
+        private fun emitFinishSystemSurface(underlyingApp: String, context: android.content.Context) {
             if (!isSystemSurfaceActive) {
                 SystemSurfaceManager.finish(SystemSurfaceManager.REASON_NATIVE_DECISION)
                 return
             }
+            
+            // ✅ FIX: Use underlyingApp (preferred) or activeSurfaceApp as fallback
+            val app = underlyingApp.ifEmpty {
+                serviceInstance?.activeSurfaceApp ?: ""
+            }
+            
             finishRequestedAt = System.currentTimeMillis()
-            emitQuickTaskCommand("FINISH_SYSTEM_SURFACE", "", context)
+            emitQuickTaskCommand("FINISH_SYSTEM_SURFACE", app, context)
             SystemSurfaceManager.finish(SystemSurfaceManager.REASON_NATIVE_DECISION)
         }
 
@@ -1361,9 +1385,23 @@ class ForegroundDetectionService : AccessibilityService() {
                          Log.e("QT_PROTECT", "[QT_PROTECT_BLOCK] app=$app remainingMs=$remainingMs - blocking QT re-offer")
                          return  // NoAction - still within protection window
                      } else {
-                         // Protection expired, remove it
+                // Protection expired, remove it
                          qtProtectedUntilMsByApp.remove(app)
                          Log.i("QT_PROTECT", "[QT_PROTECT_EXPIRED] app=$app - protection window ended")
+                     }
+                 }
+             }
+             
+             // ✅ REFILL CHECK: Check and refill quota at window boundary (before DecisionGate)
+             serviceInstance?.let { service ->
+                 runBlocking {
+                     try {
+                         val timezone = java.util.TimeZone.getDefault()
+                         val refreshedState = service.quotaStore.checkAndRefillQuota(now, timezone)
+                         cachedQuotaState = refreshedState
+                         Log.d("QT_WINDOW", "[QT_REFILL_CHECK] app=$app remaining=${refreshedState.remaining}")
+                     } catch (e: Exception) {
+                         Log.e("QT_WINDOW", "[QT_REFILL_CHECK_ERROR] app=$app error=${e.message}", e)
                      }
                  }
              }
@@ -1861,7 +1899,7 @@ class ForegroundDetectionService : AccessibilityService() {
                 "START_QUICK_TASK_ACTIVE" -> SystemSurfaceActivity.WAKE_REASON_SHOW_QUICK_TASK
                 "START_INTERVENTION" -> SystemSurfaceActivity.WAKE_REASON_SHOW_INTERVENTION
                 "SHOW_POST_QUICK_TASK_CHOICE" -> SystemSurfaceActivity.WAKE_REASON_SHOW_POST_QUICK_TASK_CHOICE
-                "FINISH_SYSTEM_SURFACE" -> null // No wake reason for finish
+                "FINISH_SYSTEM_SURFACE" -> "FINISH_SYSTEM_SURFACE"
                 else -> {
                     Log.w(LogTags.QT_STATE, "[WAKE_EMIT] Unknown command: $cmd, using as-is")
                     cmd
@@ -2024,21 +2062,25 @@ class ForegroundDetectionService : AccessibilityService() {
             // PR8: Store duration for expiry logs
             activeDurationMsByApp[app] = durationMs
 
+
             // Defensive: cancel any old runnable for this app
             cancelNativeTimerLocked(app, "REPLACE_TIMER_ON_CONFIRM")
 
             // ✅ Quota decrement: idempotent check
             val alreadyConfirmed = confirmedSessionIdByApp[app]
-            if (alreadyConfirmed == sessionId) {
-                Log.w("QT_QUOTA", "[QT_QUOTA] app=$app sid=$sessionId DUPLICATE_CONFIRM - skipping decrement")
-            } else {
-                // Decrement in-memory immediately (clamped at 0)
-                val before = cachedQuotaState.remaining
-                val after = maxOf(0, before - 1)
-                cachedQuotaState = cachedQuotaState.copy(remaining = after)
+            if (alreadyConfirmed != sessionId) {
                 confirmedSessionIdByApp[app] = sessionId
                 
-                Log.e("QT_QUOTA", "[QT_QUOTA] app=$app sid=$sessionId before=$before after=$after")
+                // ✅ FIX: Persist to DataStore AND update cache
+                serviceScope.launch {
+                    val before = cachedQuotaState.remaining
+                    val newState = quotaStore.decrementQuota()
+                    cachedQuotaState = newState
+                    
+                    Log.e("QT_QUOTA", "[QT_QUOTA] app=$app sid=$sessionId before=$before after=${newState.remaining} (persisted)")
+                }
+            } else {
+                Log.w("QT_QUOTA", "[QT_QUOTA] app=$app sid=$sessionId DUPLICATE_CONFIRM - skipping decrement")
             }
 
             durationMs // Return duration for use outside lock
@@ -2126,6 +2168,7 @@ class ForegroundDetectionService : AccessibilityService() {
         
         // Restore State logic could go here
         isServiceConnected = true
+        serviceInstance = this // ✅ FIX: Assign serviceInstance for refill check access
         serviceRef = WeakReference(this) // Publish instance for companion object access
         cachedAppContext = applicationContext // PR5: cache for reliable emission
         Log.i("PR5_CONTEXT", "[PR5_CONTEXT] Cached applicationContext for stable emission")
@@ -2166,6 +2209,7 @@ class ForegroundDetectionService : AccessibilityService() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         isServiceConnected = false
+        serviceInstance = null // ✅ FIX: Clear serviceInstance reference
         serviceRef?.clear()
         serviceRef = null
         serviceScope.cancel()

@@ -400,13 +400,20 @@ export default function SystemSurfaceRoot() {
           app: triggeringApp,
           sessionId: nativeSessionId,
         });
+      } else if (wakeReason === 'FINISH_SYSTEM_SURFACE') {
+        console.log('[SystemSurfaceRoot] FINISH_SYSTEM_SURFACE received - finishing surface');
+        setSystemSurfaceActive(false);
+        safeEndSession(false);
+        return;
       } else {
-        // Fallback
-        dispatchSystemEvent({
-          type: 'START_INTERVENTION',
+        console.warn('[SystemSurfaceRoot] ⚠️ Unknown wakeReason - finishing surface', {
+          wakeReason,
           app: triggeringApp,
           sessionId: nativeSessionId,
         });
+        setSystemSurfaceActive(false);
+        safeEndSession(false);
+        return;
       }
     } catch (error) {
       console.error('[SystemSurfaceRoot] ❌ Bootstrap initialization failed:', error);
