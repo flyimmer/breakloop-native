@@ -190,6 +190,12 @@ interface IAppMonitorModule {
   finishSystemSurfaceActivity(): void;
 
   /**
+   * Notify native that intervention completed for an app.
+   * Must be called BEFORE surface close to ensure atomic state cleanup.
+   */
+  onInterventionCompleted(app: string, sessionId: string): void;
+
+  /**
    * Launch a specific app by package name
    * 
    * @param packageName - Package name to launch

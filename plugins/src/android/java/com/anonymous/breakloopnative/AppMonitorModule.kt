@@ -521,6 +521,20 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     }
     
     /**
+     * Notify native that intervention completed for an app.
+     * Must be called BEFORE surface close to ensure atomic state cleanup.
+     */
+    @ReactMethod
+    fun onInterventionCompleted(app: String, sessionId: String) {
+        try {
+            android.util.Log.i("INT_COMPLETED", "[INT_COMPLETED_BRIDGE] app=$app sid=$sessionId")
+            ForegroundDetectionService.onInterventionCompleted(app, sessionId, reactApplicationContext)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed: onInterventionCompleted", e)
+        }
+    }
+    
+    /**
      * Launch SystemSurfaceActivity from System Brain JS.
      * 
      * This allows the event-driven headless runtime to trigger UI when needed.

@@ -21,6 +21,7 @@ import { setSystemSurfaceActive } from '@/src/systemBrain/stateManager';
 import { DarkTheme, DefaultTheme, NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import React, { useEffect, useRef } from 'react';
+import { NativeModules, Platform } from 'react-native';
 import ActionConfirmationScreen from '../screens/conscious_process/ActionConfirmationScreen';
 import ActivityTimerScreen from '../screens/conscious_process/ActivityTimerScreen';
 import AlternativesScreen from '../screens/conscious_process/AlternativesScreen';
@@ -175,6 +176,21 @@ export default function InterventionFlow({ app, sessionId }: InterventionFlowPro
           });
         }
 
+        // CRITICAL: Notify native BEFORE surface close (atomic cleanup + deterministic reevaluation)
+        let nativeOwnsFinish = false;
+        if (Platform.OS === 'android' && app && NativeModules.AppMonitorModule?.onInterventionCompleted) {
+          try {
+            const sid = sessionId?.toString() ?? '';
+            NativeModules.AppMonitorModule.onInterventionCompleted(app, sid);
+            nativeOwnsFinish = true;
+            if (__DEV__) {
+              console.log('[InterventionFlow] onInterventionCompleted sent to native');
+            }
+          } catch (e) {
+            console.error('[InterventionFlow] onInterventionCompleted failed', e);
+          }
+        }
+
         // Set lastIntervenedApp flag if user is returning to the app (not going home)
         // Fire-and-forget - no await, END_SESSION must happen immediately
         if (!shouldLaunchHome && app) {
@@ -184,14 +200,24 @@ export default function InterventionFlow({ app, sessionId }: InterventionFlowPro
           }
         }
 
-        // Notify native that SystemSurface is finishing
-        setSystemSurfaceActive(false);
-        if (__DEV__) {
-          console.log('[InterventionFlow] Notified native: SystemSurface finishing');
+        if (nativeOwnsFinish) {
+          // Fallback timeout: if native FINISH doesn't close surface within 500ms, JS closes it
+          setTimeout(() => {
+            // Check if session still exists (native may have already closed it)
+            if (__DEV__) {
+              console.log('[InterventionFlow] Fallback timeout fired - closing surface if still active');
+            }
+            setSystemSurfaceActive(false);
+            safeEndSession(shouldLaunchHome);
+          }, 500);
+        } else {
+          // Non-Android or bridge unavailable: JS closes surface directly
+          setSystemSurfaceActive(false);
+          if (__DEV__) {
+            console.log('[InterventionFlow] Notified native: SystemSurface finishing');
+          }
+          safeEndSession(shouldLaunchHome);
         }
-
-        // End session immediately (idempotent, no blocking)
-        safeEndSession(shouldLaunchHome);
         break;
     }
   }, [state, targetApp, app]);

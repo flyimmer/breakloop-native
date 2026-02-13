@@ -147,10 +147,19 @@ Remove-Item -Recurse -Force android/app/build
 Remove-Item -Recurse -Force android/app/.cxx
 Remove-Item -Recurse -Force android/.gradle
 
-# 3. Full rebuild
+# 3. Delete GLOBAL Gradle build cache (critical!)
+# This cache persists across ALL project-level cleans and is used by --build-cache flag
+Remove-Item -Recurse -Force "$env:USERPROFILE\.gradle\caches\build-cache-1" -ErrorAction SilentlyContinue
+
+# 4. Full rebuild
 npx expo prebuild --platform android --clean
 npm run android
 ```
+
+> **WARNING:** If the build still reports errors for code that no longer exists in the file,
+> the global Gradle build cache at `~/.gradle/caches/build-cache-1/` is almost certainly the cause.
+> The `--build-cache` flag (used by Expo's default build command) stores compiled Kotlin outputs globally,
+> and these persist even after `./gradlew clean`, deleting `kotlin-classes`, and `expo prebuild --clean`.
 
 #### Native Code Verification Protocol (MANDATORY)
 
@@ -336,7 +345,55 @@ This is the EXACT symptom we had today. Follow this checklist:
 - Cache issue → Shake device → Reload
 - Persistent cache → Clear Metro cache: `npx expo start --clear`
 
-### 4. Common Issues and Quick Fixes
+### 4. Kotlin Companion Object Pitfall
+
+#### Issue: `withService` used for companion object functions
+
+**Symptom:** Build error like `No parameter with name 'X' found` or `Unresolved reference` when calling a function via `svc.someFunction(...)` inside `withService { svc -> ... }`.
+
+**Root Cause:** `withService` gives you a service **instance**. If the function is defined in the `companion object`, it is NOT an instance method and cannot be called via `svc.functionName()`.
+
+**Rule of thumb:**
+- **Companion functions** (e.g. `requestQuickTaskDecision`, `onSurfaceExit`) → call directly: `requestQuickTaskDecision(...)`
+- **Instance methods** (e.g. `handleInterventionCompletionReevaluation`) → use `withService`: `withService { svc -> svc.handleMethod(...) }`
+
+**How to tell:** Check the function definition:
+- Inside `companion object { ... }` block → companion function
+- Directly in the `class` body → instance method
+
+```kotlin
+// WRONG: calling companion function via instance
+withService { svc -> svc.requestQuickTaskDecision(app = fg, source = "X") }
+
+// RIGHT: call companion function directly
+requestQuickTaskDecision(app = fg, source = "X")
+
+// RIGHT: call instance method via withService
+withService { svc -> svc.handleInterventionCompletionReevaluation(app, qt) }
+```
+
+#### Issue: Stale build errors for code that no longer exists
+
+**Symptom:** Kotlin compiler reports errors (e.g. `No parameter with name 'context' found`) for code you already fixed. File content verified correct via `Get-Content`, `Select-String`, and MD5 hash comparison, but compiler still sees old code.
+
+**Root Cause:** Gradle's **global build cache** at `~/.gradle/caches/build-cache-1/` stores compiled Kotlin outputs. The `--build-cache` flag (used by Expo's default build command) reuses these stale cached results even after:
+- `./gradlew clean`
+- Deleting `kotlin-classes` and `intermediates/classes`
+- `expo prebuild --clean`
+- Stopping Gradle daemon
+
+**Fix:**
+```bash
+# Delete the global Gradle build cache
+Remove-Item -Recurse -Force "$env:USERPROFILE\.gradle\caches\build-cache-1" -ErrorAction SilentlyContinue
+
+# Then rebuild
+npm run android
+```
+
+**Prevention:** When debugging build errors, always verify the reported error matches actual file content. If the error references code that doesn't exist, it's a cache problem.
+
+### 5. Common Issues and Quick Fixes
 
 #### Issue: "Native module not found"
 

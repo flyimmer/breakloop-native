@@ -30,9 +30,10 @@ object NativeBuildCanary { // BUILD VERSION (increment for each native code chan
     // v83: Launcher detection fix: dynamic Intent resolution (fixes Honor launcher tracking bug)
     // v84: Fixed Window Refill: wall-clock aligned quota windows with configurable duration (15m-24h)
     // v85: Fixed Window Refill: quota display fix - read from native instead of AsyncStorage
-    const val BUILD_VERSION = 85
-    const val VERSION_NAME = "V3-Fixed-Window-Refill"
-    // Fix A: Set postChoiceCompletedAtMsByApp for CONTINUE. Fix B: Age guard for SURFACE_DESTROY
+    // v86: Intervention Completion Fix: native-authoritative completion with atomic cleanup + deterministic reevaluation
+    // v87: Intention Timer FG Fix + FINISH Cleanup: 3-tier fallback (120s threshold) + FINISH_COMMAND guarded cleanup
+    const val BUILD_VERSION = 87
+    const val VERSION_NAME = "V3-Intention-Timer-FG-FINISH-Cleanup"
     
     fun logBuildInfo() {
         android.util.Log.e("NATIVE_BUILD_CANARY", "🔥 Native build active: $BUILD_VERSION ($VERSION_NAME)")

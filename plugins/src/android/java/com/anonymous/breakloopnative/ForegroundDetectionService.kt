@@ -68,8 +68,13 @@ class ForegroundDetectionService : AccessibilityService() {
         // H1.3 Constants
         private const val DEBOUNCE_MS = 300L
         private const val DUP_COLLAPSE_MS = 400L
-
-        // Global Locks & State
+        
+        // Command constants
+        private const val CMD_FINISH_SYSTEM_SURFACE = "FINISH_SYSTEM_SURFACE"
+        
+        // FINISH timestamp tracking (thread-safe for companion static methods)
+        private val finishEmittedAtMsByApp = java.util.concurrent.ConcurrentHashMap<String, Long>()
+          // Global Locks & State
         private val qtLock = Any()
         private val mainHandler = Handler(Looper.getMainLooper())
         
@@ -142,7 +147,6 @@ class ForegroundDetectionService : AccessibilityService() {
         
         // Intention Timer Management (all access on mainHandler thread)
         private val activeIntentionTimerRunnablesByApp = mutableMapOf<String, Runnable>()
-        private val lastForcedInterventionAt = mutableMapOf<String, Long>()
         
         @Volatile private var activeQuickTaskSessionId: String? = null // Legacy alias if needed?
         @Volatile private var activeQuickTaskApp: String? = null
@@ -474,9 +478,51 @@ class ForegroundDetectionService : AccessibilityService() {
                 
                 mainHandler.postDelayed({
                     withService { svc ->
-                        svc.handlePostContinueReevaluation(app, qtRemainingSnapshot)
+                        svc.handlePostContinueReevaluation(app)
                     }
                 }, delayMs)
+            }
+        }
+
+        /**
+         * Intervention Completion Handler - atomic cleanup + deterministic reevaluation
+         * Called from RN when intervention flow completes (breathing → idle)
+         */
+        @JvmStatic
+        fun onInterventionCompleted(app: String, sessionId: String, context: android.content.Context) {
+            var shouldScheduleReeval = false
+            var qtRemainingSnapshot = 0L
+
+            synchronized(qtLock) {
+                val entry = quickTaskMap[app]
+                if (entry?.state != QuickTaskState.INTERVENTION_ACTIVE) {
+                    Log.w("INT_COMPLETED", "[INT_COMPLETED_NATIVE] SKIP app=$app state=${entry?.state}")
+                    return
+                }
+
+                // Atomic cleanup under qtLock
+                entry.state = QuickTaskState.IDLE
+                entry.expiresAt = null
+                preservedInterventionFlags.remove(app)
+
+                // Snapshot quota
+                qtRemainingSnapshot = qtRemainingInMemory
+                shouldScheduleReeval = true
+
+                Log.i("INT_COMPLETED", "[INT_CLEANUP] app=$app cleared=INTERVENTION_ACTIVE,preserved sid=$sessionId qtRemaining=$qtRemainingSnapshot")
+            }
+
+            // Close surface using canonical helper (same as POST_CONTINUE line 467)
+            emitFinishSystemSurface(app, context)
+
+            // Schedule reevaluation (same pattern as POST_CONTINUE)
+            if (shouldScheduleReeval) {
+                Log.i("INT_COMPLETED", "[INT_REEVAL_SCHEDULED] app=$app delayMs=150")
+                mainHandler.postDelayed({
+                    withService { svc ->
+                        svc.handleInterventionCompletionReevaluation(app)
+                    }
+                }, 150L)
             }
         }
 
@@ -845,6 +891,10 @@ class ForegroundDetectionService : AccessibilityService() {
                 SystemSurfaceActivity.WAKE_REASON_SHOW_QUICK_TASK -> "QUICK_TASK_OFFER"
                 SystemSurfaceActivity.WAKE_REASON_SHOW_POST_QUICK_TASK_CHOICE -> "POST_CHOICE"
                 SystemSurfaceActivity.WAKE_REASON_SHOW_INTERVENTION -> "INTERVENTION"
+                // Although CMD_FINISH_SYSTEM_SURFACE is a command (not a wake reason),
+                // it is stored in EXTRA_WAKE_REASON by emitQuickTaskCommand, so it
+                // appears as surfaceWakeReason on destroy.
+                CMD_FINISH_SYSTEM_SURFACE -> "FINISH_COMMAND"
                 null -> "UNKNOWN_NULL"
                 else -> "UNKNOWN_$surfaceWakeReason"
             }
@@ -954,6 +1004,24 @@ class ForegroundDetectionService : AccessibilityService() {
                 val recheckAge = now - lastRecheckAt
                 
                 if (recheckAge > 1000L) {
+                    // Safety net: skip immediate recheck if INTERVENTION_ACTIVE
+                    // (onInterventionCompleted handles reevaluation deterministically)
+                    val intEntry = synchronized(qtLock) { quickTaskMap[fg] }
+                    if (intEntry?.state == QuickTaskState.INTERVENTION_ACTIVE) {
+                        Log.i("PR7_RECHECK", "[PR7_RECHECK] SKIPPED fg=$fg reason=INTERVENTION_ACTIVE_PENDING_COMPLETION")
+                        
+                        // Backstop: if INTERVENTION_ACTIVE persists 2s after surface close,
+                        // schedule forced reevaluation (RN may have failed to call completion)
+                        mainHandler.postDelayed({
+                            val stillActive = synchronized(qtLock) { quickTaskMap[fg]?.state == QuickTaskState.INTERVENTION_ACTIVE }
+                            if (stillActive) {
+                                Log.w("PR7_RECHECK", "[PR7_BACKSTOP] app=$fg INTERVENTION_ACTIVE stuck 2s after surface close, forcing recheck")
+                                requestQuickTaskDecision(app = fg, source = "PR7_BACKSTOP")
+                            }
+                        }, 2000L)
+                        return
+                    }
+                    
                     Log.i("PR7_RECHECK", "[PR7_RECHECK] TRIGGERED fg=$fg surfaceReason=$reason recheckAge=${recheckAge}ms source=SURFACE_CLOSED_RECHECK_$reason")
                     
                     // Update cooldown timestamp (thread-safe via ConcurrentHashMap)
@@ -1027,6 +1095,44 @@ class ForegroundDetectionService : AccessibilityService() {
                         // Intervention doesn't affect QuickTask offering state
                         Log.i("SURFACE_DESTROY",
                             "[SURFACE_DESTROY] No offering cleanup app=$surfaceApp kind=$surfaceKind instance=$instanceId")
+                    }
+                    
+                    "FINISH_COMMAND" -> {
+                        // Surface was closed by native command (FINISH_SYSTEM_SURFACE)
+                        // Guard: only clear if ALL conditions are met (under qtLock):
+                        //   1. There IS a current offering (currentOfferSid != null)
+                        //   2. The offering is OLDER than the FINISH (offerAt <= finishAt)
+                        //   3. The FINISH is recent (finishAge < 2000ms)
+                        //   4. The current offering SID still matches (prevents clearing a newer offer
+                        //      that was created between FINISH emit and destroy callback)
+                        val finishAt = finishEmittedAtMsByApp[surfaceApp] ?: 0L
+                        val offerAt = offerStartedAtMsByApp[surfaceApp] ?: 0L
+                        val finishAge = System.currentTimeMillis() - finishAt
+                        
+                        if (currentOfferSid != null
+                            && offerAt <= finishAt
+                            && finishAge < 2000L
+                            && currentOfferSid == promptSessionIdByApp[surfaceApp]  // SID still matches
+                        ) {
+                            clearPromptForAppLocked(surfaceApp, "SURFACE_DESTROY_FINISH_COMMAND")
+                            Log.i("SURFACE_DESTROY",
+                                "[SURFACE_DESTROY] CLEARED offering app=$surfaceApp kind=$surfaceKind " +
+                                "action=CLEAR reason=FINISH_COMMAND " +
+                                "offerAt=$offerAt finishAt=$finishAt finishAge=${finishAge}ms " +
+                                "currentOfferSid=$currentOfferSid")
+                            finishEmittedAtMsByApp.remove(surfaceApp)
+                        } else {
+                            Log.i("SURFACE_DESTROY",
+                                "[SURFACE_DESTROY] KEPT offering app=$surfaceApp kind=$surfaceKind " +
+                                "action=KEEP reason=FINISH_GUARD_FAILED " +
+                                "currentOfferSid=$currentOfferSid promptSid=${promptSessionIdByApp[surfaceApp]} " +
+                                "offerAt=$offerAt finishAt=$finishAt finishAge=${finishAge}ms")
+                            // Stale cleanup: if FINISH is old (>= 2000ms), remove to prevent
+                            // lingering timestamps from influencing future FINISH cycles
+                            if (finishAge >= 2000L) {
+                                finishEmittedAtMsByApp.remove(surfaceApp)
+                            }
+                        }
                     }
                     
                     else -> {
@@ -1254,8 +1360,11 @@ class ForegroundDetectionService : AccessibilityService() {
                 serviceInstance?.activeSurfaceApp ?: ""
             }
             
+            // Track FINISH timestamp for cleanup guard
+            finishEmittedAtMsByApp[app] = System.currentTimeMillis()
+            
             finishRequestedAt = System.currentTimeMillis()
-            emitQuickTaskCommand("FINISH_SYSTEM_SURFACE", app, context)
+            emitQuickTaskCommand(CMD_FINISH_SYSTEM_SURFACE, app, context)
             SystemSurfaceManager.finish(SystemSurfaceManager.REASON_NATIVE_DECISION)
         }
 
@@ -1458,24 +1567,7 @@ class ForegroundDetectionService : AccessibilityService() {
                  }
              }
              
-             val snapshot = DecisionGate.GateSnapshot(
-                 isMonitored = true,
-                 qtRemaining = cachedQuotaState.remaining.toInt(),
-                 isSystemSurfaceActive = isSystemSurfaceActive,
-                 hasActiveSession = synchronized(qtLock) { 
-                     val entry = quickTaskMap[app]
-                     entry?.state == QuickTaskState.ACTIVE && activeQuickTaskSessionIdByApp[app] != null
-                 },
-                 quickTaskState = quickTaskMap[app]?.state ?: QuickTaskState.IDLE,
-                 intentionRemainingMs = getIntentionRemainingMs(app),
-                 isInterventionPreserved = isInterventionPreserved(app),
-                 lastInterventionEmittedAt = showInterventionLastEmittedAt[app] ?: 0L,
-                 isQuitSuppressed = quitSuppressionUntil[app]?.let { it > now } == true,
-                 quitSuppressionRemainingMs = kotlin.math.max(0L, (quitSuppressionUntil[app] ?: 0L) - now),
-                 isWakeSuppressed = isWakeSuppressed(app),
-                 wakeSuppressionRemainingMs = kotlin.math.max(0L, (suppressWakeUntil[app] ?: 0L) - now),
-                 isForceEntry = force
-             )
+             val snapshot = buildGateSnapshot(app, now, force)
              
              val disallowQT = (source == "QT_EXPIRY_QUOTA_ZERO")
              val result = DecisionGate.evaluate(app, now, snapshot, disallowQT)
@@ -1485,6 +1577,75 @@ class ForegroundDetectionService : AccessibilityService() {
              Log.e(LogTags.DECISION_GATE, "pkg=$app result=${decision.javaClass.simpleName} reason=${result.second} qt=${snapshot.qtRemaining} int=${snapshot.intentionRemainingMs}")
              
              executeDecision(decision, app, context, force, source)
+        }
+        
+        /**
+         * Build GateSnapshot for DecisionGate evaluation.
+         * Extracted from normal entry path for reuse in reevaluation triggers.
+         * Reads qt-related fields atomically under qtLock for thread safety.
+         */
+        private fun buildGateSnapshot(app: String, now: Long, isForce: Boolean = false): DecisionGate.GateSnapshot {
+            // Read qt-related fields atomically under qtLock
+            val (qtRem, hasActive, qtState) = synchronized(qtLock) {
+                val entry = quickTaskMap[app]
+                Triple(
+                    qtRemainingInMemory.toInt(),  // authoritative in-memory field
+                    entry?.state == QuickTaskState.ACTIVE && activeQuickTaskSessionIdByApp[app] != null,
+                    entry?.state ?: QuickTaskState.IDLE
+                )
+            }
+            
+            return DecisionGate.GateSnapshot(
+                isMonitored = cachedMonitoredApps.contains(app),  // dynamic, NOT MONITORED_APPS
+                qtRemaining = qtRem,
+                isSystemSurfaceActive = isSystemSurfaceActive,
+                hasActiveSession = hasActive,
+                quickTaskState = qtState,
+                intentionRemainingMs = getIntentionRemainingMs(app),
+                isInterventionPreserved = isInterventionPreserved(app),
+                lastInterventionEmittedAt = showInterventionLastEmittedAt[app] ?: 0L,
+                isQuitSuppressed = quitSuppressionUntil[app]?.let { it > now } == true,
+                quitSuppressionRemainingMs = kotlin.math.max(0L, (quitSuppressionUntil[app] ?: 0L) - now),
+                isWakeSuppressed = isWakeSuppressed(app),
+                wakeSuppressionRemainingMs = kotlin.math.max(0L, (suppressWakeUntil[app] ?: 0L) - now),
+                isForceEntry = isForce
+            )
+        }
+        
+        /**
+         * Run DecisionGate and execute the result. Reusable for any reevaluation trigger.
+         * Does NOT do refill (relies on qtRemainingInMemory being fresh from normal entry).
+         * Does NOT do pre-gating (caller does foreground check).
+         * MUST be called on mainHandler thread. If caller is off-main, post first.
+         */
+        private fun runDecisionAndExecute(app: String, source: String) {
+            val context = cachedAppContext ?: run {
+                Log.w("REEVAL", "[REEVAL_SKIP] app=$app source=$source - no cached context")
+                return
+            }
+            val now = System.currentTimeMillis()
+            
+            // In-flight debounce (same guard as requestQuickTaskDecision)
+            val inflightUntil = decisionInFlightUntilMsByApp[app]
+            if (inflightUntil != null && now < inflightUntil) {
+                Log.i("DECISION_INFLIGHT",
+                    "[DECISION_INFLIGHT] app=$app source=$source action=SKIP remainingMs=${inflightUntil - now}")
+                return
+            }
+            
+            // SET in-flight to prevent duplicate reevaluations from concurrent triggers
+            // (e.g. surface close event + postDelayed timer both fire within 800ms)
+            decisionInFlightUntilMsByApp[app] = now + 800L
+            
+            val snapshot = buildGateSnapshot(app, now)
+            val result = DecisionGate.evaluate(app, now, snapshot)
+            val decision = result.first
+            
+            Log.e(LogTags.DECISION_GATE,
+                "pkg=$app result=${decision.javaClass.simpleName} reason=${result.second} " +
+                "qt=${snapshot.qtRemaining} int=${snapshot.intentionRemainingMs} source=$source")
+            
+            executeDecision(decision, app, context, force = false, source = source)
         }
         
         private fun executeDecision(decision: DecisionGate.GateAction, app: String, context: android.content.Context, force: Boolean, source: String) {
@@ -1951,7 +2112,7 @@ class ForegroundDetectionService : AccessibilityService() {
                 "START_QUICK_TASK_ACTIVE" -> SystemSurfaceActivity.WAKE_REASON_SHOW_QUICK_TASK
                 "START_INTERVENTION" -> SystemSurfaceActivity.WAKE_REASON_SHOW_INTERVENTION
                 "SHOW_POST_QUICK_TASK_CHOICE" -> SystemSurfaceActivity.WAKE_REASON_SHOW_POST_QUICK_TASK_CHOICE
-                "FINISH_SYSTEM_SURFACE" -> "FINISH_SYSTEM_SURFACE"
+                CMD_FINISH_SYSTEM_SURFACE -> CMD_FINISH_SYSTEM_SURFACE
                 else -> {
                     Log.w(LogTags.QT_STATE, "[WAKE_EMIT] Unknown command: $cmd, using as-is")
                     cmd
@@ -2164,7 +2325,7 @@ class ForegroundDetectionService : AccessibilityService() {
      * A1: POST_CONTINUE deterministic reevaluation
      * Called after CONTINUE button press to immediately decide next overlay
      */
-    private fun handlePostContinueReevaluation(app: String, qtRemainingSnapshot: Long) {
+    private fun handlePostContinueReevaluation(app: String) {
         val now = System.currentTimeMillis()
         
         // Guard: Check if app is still in foreground using proven 3-tier fallback
@@ -2212,60 +2373,59 @@ class ForegroundDetectionService : AccessibilityService() {
             return
         }
         
-        Log.i("QT_POST_CONTINUE_REEVAL_RUN", 
-            "[QT_POST_CONTINUE_REEVAL_RUN] app=$app fgEffective=$fgEffective fgSource=$fgSource qtRemaining=$qtRemainingSnapshot")
-        
-        // Decision logic: qtRemaining determines next action
-        val decision: String
-        val reason: String
-        
-        when {
-            qtRemainingSnapshot > 0 -> {
-                decision = "StartQuickTask"
-                reason = "qtRemaining=$qtRemainingSnapshot"
-                
-                // Generate new session ID for new QT offer
-                val newSessionId = java.util.UUID.randomUUID().toString()
-                
-                // Set OFFERING state (State Separation Invariant)
-                synchronized(qtLock) {
-                    val entry = quickTaskMap.getOrPut(app) {
-                        QuickTaskEntry(app, QuickTaskState.IDLE)
-                    }
-                    entry.state = QuickTaskState.OFFERING
-                    promptSessionIdByApp[app] = newSessionId
-                    offerStartedAtMsByApp[app] = now
-                    // activeQuickTaskSessionIdByApp remains empty during OFFERING
-                }
-                
-                // Emit offer using canonical helper
-                // NOTE: Command name is confusing (says ACTIVE but maps to SHOW_QUICK_TASK at line 1899)
-                // This shows the offer dialog, does NOT start timer or decrement quota
-                // Timer/decrement only happen in handleQuickTaskConfirmed after user presses "Start"
-                emitQuickTaskCommand("START_QUICK_TASK_ACTIVE", app, applicationContext, newSessionId)
-                
-                Log.i("QT_POST_CONTINUE_DECISION", 
-                    "[QT_POST_CONTINUE_DECISION] app=$app decision=$decision reason=$reason newSid=$newSessionId")
-            }
-            
-            qtRemainingSnapshot == 0L -> {
-                decision = "StartIntervention"
-                reason = "qtRemaining=0"
-                
-                // Emit using canonical helper
-                emitQuickTaskCommand("START_INTERVENTION", app, applicationContext)
-                
-                Log.i("QT_POST_CONTINUE_DECISION", 
-                    "[QT_POST_CONTINUE_DECISION] app=$app decision=$decision reason=$reason")
-            }
-            
-            else -> {
-                decision = "NoAction"
-                reason = "qtRemaining=$qtRemainingSnapshot (invalid)"
-                Log.w("QT_POST_CONTINUE_DECISION", 
-                    "[QT_POST_CONTINUE_DECISION] app=$app decision=$decision reason=$reason - UNEXPECTED")
-            }
+        Log.i("QT_POST_CONTINUE_REEVAL_RUN",
+            "[QT_POST_CONTINUE_REEVAL_RUN] app=$app fgEffective=$fgEffective fgSource=$fgSource routing=DECISION_GATE")
+
+        // ✅ Route through DecisionGate (single source of truth)
+        runDecisionAndExecute(app, source = "POST_CONTINUE_REEVAL")
+    }
+
+    /**
+     * Intervention Completion deterministic reevaluation
+     * Called after intervention completes to decide next overlay (QT offer or new intervention)
+     */
+    private fun handleInterventionCompletionReevaluation(app: String) {
+        val now = System.currentTimeMillis()
+
+        // Guard: Check if app is still in foreground using proven 3-tier fallback
+        // (Identical to POST_CONTINUE - reuse for consistency)
+        val fgNow = lastWindowStateChangedPkg  // WSC is most recent signal from accessibility
+        val fgCached = currentForegroundApp
+        val lastReal = lastRealForegroundPkg
+        val lastRealAge = now - lastRealForegroundAtMs
+        val selfPkg = applicationContext.packageName
+
+        // Helper: is package usable (not null, not self, not system/launcher)?
+        fun fgUsable(pkg: String?): Boolean {
+            return pkg != null && pkg != selfPkg && !isLauncherOrSystemUI(pkg)
         }
+
+        // 3-tier fallback with 30s age threshold
+        val ageThreshold = 30_000L
+        val fgEffective: String? = when {
+            fgUsable(fgNow) -> fgNow
+            fgUsable(fgCached) -> fgCached
+            fgUsable(lastReal) && lastRealAge < ageThreshold -> lastReal
+            else -> null
+        }
+
+        val fgSource = when (fgEffective) {
+            fgNow -> "FG_NOW_PRIMARY"
+            fgCached -> "FG_CACHED_SECONDARY"
+            lastReal -> "LAST_REAL_TERTIARY"
+            else -> "NONE_FALLBACK_FAILED"
+        }
+
+        if (fgEffective != app) {
+            Log.i("INT_COMPLETED", "[INT_REEVAL_RUN] app=$app fgEffective=$fgEffective fgSource=$fgSource - USER LEFT, SKIP")
+            return
+        }
+
+        Log.i("INT_COMPLETED",
+            "[INT_REEVAL_RUN] app=$app fgEffective=$fgEffective fgSource=$fgSource routing=DECISION_GATE")
+
+        // ✅ Route through DecisionGate (single source of truth)
+        runDecisionAndExecute(app, source = "INT_COMPLETED_REEVAL")
     }
 
     /**
@@ -2470,80 +2630,72 @@ class ForegroundDetectionService : AccessibilityService() {
             return
         }
         
-        // ✅ FOREGROUND GATING: Check if user is still on this app
-        val fg = currentForegroundApp ?: lastWindowStateChangedPkg
         
-        if (fg == null || fg != app) {
+        // ✅ FOREGROUND GATING: 3-tier fallback with systemUI/launcher filtering
+        val fgNow = lastWindowStateChangedPkg
+        val fgCached = currentForegroundApp
+        val lastReal = lastRealForegroundPkg
+        val lastRealAge = now - lastRealForegroundAtMs
+        val selfPkg = applicationContext.packageName
+        
+        // Exact same filter as reevaluation functions: rejects systemUI, launcher, self
+        fun fgUsable(pkg: String?): Boolean {
+            return pkg != null && pkg != selfPkg && !isLauncherOrSystemUI(pkg)
+        }
+        
+        // ⚠️ Extended threshold: intention expiry is timer-driven and must tolerate
+        // idle reading periods where no accessibility events arrive for >30s.
+        // The reevaluation functions use 30s because they fire shortly after
+        // user interaction (button press). Intention timers fire after 60-300s
+        // of potentially passive use.
+        val ageThreshold = 120_000L
+        
+        val fgEffective: String?
+        val fgSource: String
+        when {
+            fgUsable(fgNow) -> {
+                fgEffective = fgNow
+                fgSource = "FG_NOW_PRIMARY"
+            }
+            fgUsable(fgCached) -> {
+                fgEffective = fgCached
+                fgSource = "FG_CACHED_SECONDARY"
+            }
+            fgUsable(lastReal) && lastRealAge < ageThreshold -> {
+                fgEffective = lastReal
+                fgSource = "LAST_REAL_TERTIARY"
+            }
+            else -> {
+                fgEffective = null
+                fgSource = "NONE"
+            }
+        }
+        
+        Log.i("INTENTION_TIMER_FG",
+            "[INTENTION_TIMER_FG] app=$app fgEffective=$fgEffective fgSource=$fgSource " +
+            "fgNow=$fgNow fgCached=$fgCached lastReal=$lastReal lastRealAge=${lastRealAge}ms")
+        
+        if (fgEffective != app) {
             // User left the app before timer expired
-            Log.i("INTENTION_TIMER_EXPIRED_AWAY", 
-                "[INTENTION_TIMER_EXPIRED_AWAY] app=$app fg=$fg - user not on app, clearing intention silently")
+            Log.i("INTENTION_TIMER_EXPIRED_AWAY",
+                "[INTENTION_TIMER_EXPIRED_AWAY] app=$app fgEffective=$fgEffective fgSource=$fgSource " +
+                "fgNow=$fgNow fgCached=$fgCached lastReal=$lastReal lastRealAge=${lastRealAge}ms " +
+                "- clearing intention silently")
             
             // Use canonical clearing path (no extra post, already on mainHandler)
             clearIntentionInternal(app, "TIMER_EXPIRED_AWAY")
             return
         }
         
-        // User is STILL on the app - FORCE intervention!
-        Log.e("INTENTION_TIMER_EXPIRED", 
-            "[INTENTION_TIMER_EXPIRED] app=$app fg=$fg - user still on app, forcing intervention")
+        // User is STILL on the app → clear intention + reevaluate
+        Log.e("INTENTION_TIMER_EXPIRED",
+            "[INTENTION_TIMER_EXPIRED] app=$app fgEffective=$fgEffective fgSource=$fgSource - routing through DECISION_GATE")
         
         // Use canonical clearing path (no extra post, already on mainHandler)
         clearIntentionInternal(app, "TIMER_EXPIRED_ON_APP")
         
-        // ✅ FORCE INTERVENTION with full debounce guardrails
-        forceInterventionOnIntentionExpiry(app, context)
-    }
-    
-    /**
-     * Helper: Force intervention with all existing debounce guardrails.
-     * Centralizes intervention triggering to prevent duplicates.
-     * MUST be called on mainHandler thread.
-     */
-    private fun forceInterventionOnIntentionExpiry(app: String, context: android.content.Context) {
-        // Guard 1: SystemSurface already active
-        if (isSystemSurfaceActive) {
-            Log.w("INTENTION_TIMER_EXPIRED", "[FORCE_INTERVENTION] app=$app - SystemSurface already active, debouncing")
-            return
-        }
-        
-        // Guard 2: Entry in flight (verified exists at line 65)
-        val inFlightMs = inFlightEntry[app] ?: 0L
-        if (System.currentTimeMillis() - inFlightMs < 1000) {
-            Log.w("INTENTION_TIMER_EXPIRED", "[FORCE_INTERVENTION] app=$app - entry in flight, debouncing")
-            return
-        }
-        
-        // Guard 3: Wake suppression (verified exists at line 93)
-        val suppressUntil = suppressWakeUntil[app] ?: 0L
-        if (System.currentTimeMillis() < suppressUntil) {
-            Log.w("INTENTION_TIMER_EXPIRED", "[FORCE_INTERVENTION] app=$app - wake suppressed until $suppressUntil, debouncing")
-            return
-        }
-        
-        // Guard 4: Recent forced intervention (prevent double triggers)
-        val lastForced = lastForcedInterventionAt[app] ?: 0L
-        if (System.currentTimeMillis() - lastForced < 800) {
-            Log.w("INTENTION_TIMER_EXPIRED", "[FORCE_INTERVENTION] app=$app - forced recently, debouncing")
-            return
-        }
-        
-        // ✅ FINAL FOREGROUND RE-CHECK: User could have switched apps between earlier check and now
-        val fg2 = currentForegroundApp ?: lastWindowStateChangedPkg
-        if (fg2 != app) {
-            Log.w("INTENTION_TIMER_EXPIRED", "[FORCE_INTERVENTION] app=$app fg=$fg2 - user switched apps before wake emit, aborting")
-            return
-        }
-        
-        // Generate new session ID
-        val sessionId = java.util.UUID.randomUUID().toString()
-        
-        // Mark forced intervention timestamp
-        lastForcedInterventionAt[app] = System.currentTimeMillis()
-        
-        Log.e("INTENTION_TIMER_EXPIRED", "[FORCE_INTERVENTION] app=$app sessionId=$sessionId - emitting SHOW_INTERVENTION")
-        
-        // Emit intervention command (using centralized helper for Layer C cleanup)
-        emitInterventionForApp(app, "INTENTION_EXPIRED", context)
+        // ✅ Route through DecisionGate (respects QT quota priority)
+        runDecisionAndExecute(app, source = "INTENTION_EXPIRED_REEVAL")
     }
     
     // ============================================================================
