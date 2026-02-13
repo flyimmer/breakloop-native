@@ -93,8 +93,12 @@ class ForegroundDetectionService : AccessibilityService() {
         private val postChoiceLastVisibilityChangeAtMsByApp = java.util.concurrent.ConcurrentHashMap<String, Long>()
         private val postChoiceReemitInFlightUntilMsByApp = java.util.concurrent.ConcurrentHashMap<String, Long>()
         
+        
         // PR9: Watchdog scheduling (prevent double-scheduling storms)
         private val postChoiceWatchdogPendingUntilMsByApp = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        
+        // A1: POST_CONTINUE debounce tracking (prevent rapid repeated triggers)
+        private val postContinueLastTriggerMsByApp = java.util.concurrent.ConcurrentHashMap<String, Long>()
         
         private fun withService(block: (ForegroundDetectionService) -> Unit) {
             val svc = serviceRef?.get()
@@ -132,6 +136,7 @@ class ForegroundDetectionService : AccessibilityService() {
         
         // Caches (Updated via Setters/Stores)
         @Volatile private var cachedQuotaState: QuotaState = QuotaState(1L, 0L, 15 * 60 * 1000L, 15 * 60 * 1000L, 1L)
+        @Volatile private var qtRemainingInMemory: Long = 1L  // A1: Authoritative sync quota source
         @Volatile private var cachedMonitoredApps: Set<String> = emptySet()
         @Volatile private var cachedIntentions: Map<String, Long> = emptyMap()
         
@@ -406,24 +411,37 @@ class ForegroundDetectionService : AccessibilityService() {
         }
         
         /**
-         * PR9: CONTINUE handler - clear POST_CHOICE state and visibility tracking
+         * A1: CONTINUE handler - clear POST_CHOICE state and schedule deterministic reevaluation
          */
         @JvmStatic
         fun onPostChoiceContinue(app: String, sessionId: String, context: android.content.Context) {
+            // Debounce: prevent rapid repeated CONTINUE triggers
+            val now = System.currentTimeMillis()
+            val lastTrigger = postContinueLastTriggerMsByApp[app] ?: 0L
+            if (now - lastTrigger < 500L) {
+                Log.w("QT_POST_CONTINUE_DEBOUNCE", 
+                    "[QT_POST_CONTINUE_DEBOUNCE] app=$app sid=$sessionId deltaMs=${now - lastTrigger} - IGNORED")
+                return
+            }
+            postContinueLastTriggerMsByApp[app] = now
+            
+            var shouldScheduleReeval = false
+            var qtRemainingSnapshot = 0L
+            
             synchronized(qtLock) {
                 val entry = quickTaskMap[app]
                 val postSid = postChoiceSessionIdByApp[app]
                 
                 if (entry?.state != QuickTaskState.POST_CHOICE) {
                     Log.w("QT_POST_CONTINUE", 
-                        "[QT_POST_CONTINUE] app=$app sid=$postSid state=${entry?.state} - INVALID STATE")
+                        "[QT_POST_CONTINUE_NATIVE] app=$app sid=$postSid state=${entry?.state} - INVALID STATE")
                     return
                 }
                 
                 // Verify session match
                 if (postSid != sessionId) {
                     Log.w("QT_POST_CONTINUE", 
-                        "[QT_POST_CONTINUE] app=$app sid=$sessionId postSid=$postSid - SESSION MISMATCH")
+                        "[QT_POST_CONTINUE_NATIVE] app=$app sid=$sessionId postSid=$postSid - SESSION MISMATCH")
                     return
                 }
                 
@@ -437,16 +455,29 @@ class ForegroundDetectionService : AccessibilityService() {
                 postChoiceReemitInFlightUntilMsByApp.remove(app)
                 postChoiceWatchdogPendingUntilMsByApp.remove(app)
                 
-                Log.i("QT_POST_CONTINUE", 
-                    "[QT_POST_CONTINUE] app=$app sid=$postSid action=CONTINUE")
+                // Snapshot quota from authoritative synchronous source (already inside qtLock)
+                qtRemainingSnapshot = qtRemainingInMemory
+                shouldScheduleReeval = true
                 
-                // Follow existing spec path for CONTINUE
-                // (e.g., allow user to continue using app)
-                // Do NOT apply suppression unless spec explicitly says so
+                Log.i("QT_POST_CONTINUE", 
+                    "[QT_POST_CONTINUE_NATIVE] app=$app sid=$postSid qtRemaining=$qtRemainingSnapshot")
             }
             
             // Close SystemSurface
             emitFinishSystemSurface(app, context)
+            
+            // Schedule reevaluation OUTSIDE lock (150ms delay to allow surface cleanup)
+            if (shouldScheduleReeval) {
+                val delayMs = 150L
+                Log.i("QT_POST_CONTINUE_REEVAL_SCHEDULED", 
+                    "[QT_POST_CONTINUE_REEVAL_SCHEDULED] app=$app delayMs=$delayMs qtRemaining=$qtRemainingSnapshot")
+                
+                mainHandler.postDelayed({
+                    withService { svc ->
+                        svc.handlePostContinueReevaluation(app, qtRemainingSnapshot)
+                    }
+                }, delayMs)
+            }
         }
 
         @JvmStatic
@@ -641,8 +672,15 @@ class ForegroundDetectionService : AccessibilityService() {
                 it.serviceScope.launch {
                     try {
                         val newState = it.quotaStore.setMaxQuota(max.toLong())
-                        cachedQuotaState = newState
+                        
+                        // CRITICAL: Sync in-memory quota (atomic via qtLock)
+                        synchronized(qtLock) {
+                            qtRemainingInMemory = newState.remaining
+                            cachedQuotaState = newState
+                        }
+                        
                         Log.e(LogTags.QT_STATE, "[CONFIG] Updated Max Quota: max=${newState.maxPerWindow} remaining=${newState.remaining}")
+                        Log.i("QT_QUOTA_SYNC", "[QT_QUOTA_SYNC] source=setMaxQuota remaining=${newState.remaining}")
                     } catch (e: Exception) {
                         Log.e("AppMonitorModule", "[ERROR] Failed to update quota", e)
                     }
@@ -659,8 +697,15 @@ class ForegroundDetectionService : AccessibilityService() {
                 it.serviceScope.launch {
                     try {
                         val newState = it.quotaStore.updateWindowDuration(durationMs)
-                        cachedQuotaState = newState
+                        
+                        // CRITICAL: Sync in-memory quota (atomic via qtLock)
+                        synchronized(qtLock) {
+                            qtRemainingInMemory = newState.remaining
+                            cachedQuotaState = newState
+                        }
+                        
                         Log.i("QT_WINDOW", "[CONFIG] Updated Window Duration: duration=${newState.windowDurationMs}ms remaining=${newState.remaining}")
+                        Log.i("QT_QUOTA_SYNC", "[QT_QUOTA_SYNC] source=setWindowDuration remaining=${newState.remaining}")
                     } catch (e: Exception) {
                         Log.e("QT_WINDOW", "[ERROR] Failed to update window duration", e)
                     }
@@ -1398,8 +1443,15 @@ class ForegroundDetectionService : AccessibilityService() {
                      try {
                          val timezone = java.util.TimeZone.getDefault()
                          val refreshedState = service.quotaStore.checkAndRefillQuota(now, timezone)
-                         cachedQuotaState = refreshedState
+                         
+                         // CRITICAL: Sync in-memory quota (atomic via qtLock)
+                         synchronized(qtLock) {
+                             qtRemainingInMemory = refreshedState.remaining
+                             cachedQuotaState = refreshedState
+                         }
+                         
                          Log.d("QT_WINDOW", "[QT_REFILL_CHECK] app=$app remaining=${refreshedState.remaining}")
+                         Log.i("QT_QUOTA_SYNC", "[QT_QUOTA_SYNC] source=REFILL app=$app remaining=$qtRemainingInMemory")
                      } catch (e: Exception) {
                          Log.e("QT_WINDOW", "[QT_REFILL_CHECK_ERROR] app=$app error=${e.message}", e)
                      }
@@ -2066,21 +2118,17 @@ class ForegroundDetectionService : AccessibilityService() {
             // Defensive: cancel any old runnable for this app
             cancelNativeTimerLocked(app, "REPLACE_TIMER_ON_CONFIRM")
 
-            // ✅ Quota decrement: idempotent check
+            // ✅ Quota decrement: idempotent check + atomic in-memory update
             val alreadyConfirmed = confirmedSessionIdByApp[app]
             if (alreadyConfirmed != sessionId) {
                 confirmedSessionIdByApp[app] = sessionId
                 
-                // ✅ FIX: Persist to DataStore AND update cache
-                serviceScope.launch {
-                    val before = cachedQuotaState.remaining
-                    val newState = quotaStore.decrementQuota()
-                    cachedQuotaState = newState
-                    
-                    Log.e("QT_QUOTA", "[QT_QUOTA] app=$app sid=$sessionId before=$before after=${newState.remaining} (persisted)")
-                }
+                // CRITICAL: Decrement in-memory IMMEDIATELY (synchronous, atomic via qtLock)
+                val before = qtRemainingInMemory
+                qtRemainingInMemory = maxOf(0L, qtRemainingInMemory - 1)
+                Log.e("QT_QUOTA", "[QT_QUOTA] app=$app sid=$sessionId before=$before after=$qtRemainingInMemory (sync)")
             } else {
-                Log.w("QT_QUOTA", "[QT_QUOTA] app=$app sid=$sessionId DUPLICATE_CONFIRM - skipping decrement")
+                Log.w("QT_QUOTA", "[QT_QUOTA] app=$app sid=$sessionId DUPLICATE_CONFIRM - skip")
             }
 
             durationMs // Return duration for use outside lock
@@ -2088,6 +2136,13 @@ class ForegroundDetectionService : AccessibilityService() {
 
         if (result == null) return
         val durationMs = result
+
+        // ✅ Persist to DataStore (outside lock, async)
+        serviceScope.launch {
+            val newState = quotaStore.decrementQuota()
+            synchronized(qtLock) { cachedQuotaState = newState }
+            Log.e("QT_QUOTA", "[QT_QUOTA] app=$app sid=$sessionId persisted=${newState.remaining}")
+        }
 
         // 3) Create runnable OUTSIDE lock
         val runnable = Runnable {
@@ -2103,6 +2158,114 @@ class ForegroundDetectionService : AccessibilityService() {
         // 5) Schedule OUTSIDE lock
         Log.e("QT_TIMER_START", "[QT_TIMER_START] app=$app sid=$sessionId durationMs=$durationMs")
         mainHandler.postDelayed(runnable, durationMs)
+    }
+
+    /**
+     * A1: POST_CONTINUE deterministic reevaluation
+     * Called after CONTINUE button press to immediately decide next overlay
+     */
+    private fun handlePostContinueReevaluation(app: String, qtRemainingSnapshot: Long) {
+        val now = System.currentTimeMillis()
+        
+        // Guard: Check if app is still in foreground using proven 3-tier fallback
+        // (Same logic as QT timer expiry - reuse for consistency)
+        val fgNow = lastWindowStateChangedPkg  // WSC is most recent signal from accessibility
+        val fgCached = currentForegroundApp
+        val lastReal = lastRealForegroundPkg
+        val lastRealAge = now - lastRealForegroundAtMs
+        val selfPkg = applicationContext.packageName
+        
+        // Helper: is package usable (not null, not self, not system/launcher)?
+        fun fgUsable(pkg: String?): Boolean {
+            return pkg != null && pkg != selfPkg && !isLauncherOrSystemUI(pkg)
+        }
+        
+        // 3-tier fallback with 30s age threshold
+        val ageThreshold = 30_000L
+        val fgEffective: String? = when {
+            fgUsable(fgNow) -> fgNow
+            fgUsable(fgCached) -> fgCached
+            fgUsable(lastReal) && lastRealAge < ageThreshold -> lastReal
+            else -> null
+        }
+        
+        val fgSource = when (fgEffective) {
+            fgNow -> "FG_NOW_PRIMARY"
+            fgCached -> "FG_CACHED_SECONDARY"
+            lastReal -> "LAST_REAL_TERTIARY"
+            else -> "NONE_FALLBACK_FAILED"
+        }
+        
+        if (fgEffective != app) {
+            Log.i("QT_POST_CONTINUE_REEVAL_RUN", 
+                "[QT_POST_CONTINUE_REEVAL_RUN] app=$app fgEffective=$fgEffective fgSource=$fgSource - USER LEFT APP, CANCEL")
+            return
+        }
+        
+        // Guard: Ensure POST_CHOICE state is actually cleared (defensive)
+        val currentState = synchronized(qtLock) {
+            quickTaskMap[app]?.state
+        }
+        if (currentState == QuickTaskState.POST_CHOICE) {
+            Log.w("QT_POST_CONTINUE_REEVAL_RUN", 
+                "[QT_POST_CONTINUE_REEVAL_RUN] app=$app state=$currentState - STILL IN POST_CHOICE, CANCEL")
+            return
+        }
+        
+        Log.i("QT_POST_CONTINUE_REEVAL_RUN", 
+            "[QT_POST_CONTINUE_REEVAL_RUN] app=$app fgEffective=$fgEffective fgSource=$fgSource qtRemaining=$qtRemainingSnapshot")
+        
+        // Decision logic: qtRemaining determines next action
+        val decision: String
+        val reason: String
+        
+        when {
+            qtRemainingSnapshot > 0 -> {
+                decision = "StartQuickTask"
+                reason = "qtRemaining=$qtRemainingSnapshot"
+                
+                // Generate new session ID for new QT offer
+                val newSessionId = java.util.UUID.randomUUID().toString()
+                
+                // Set OFFERING state (State Separation Invariant)
+                synchronized(qtLock) {
+                    val entry = quickTaskMap.getOrPut(app) {
+                        QuickTaskEntry(app, QuickTaskState.IDLE)
+                    }
+                    entry.state = QuickTaskState.OFFERING
+                    promptSessionIdByApp[app] = newSessionId
+                    offerStartedAtMsByApp[app] = now
+                    // activeQuickTaskSessionIdByApp remains empty during OFFERING
+                }
+                
+                // Emit offer using canonical helper
+                // NOTE: Command name is confusing (says ACTIVE but maps to SHOW_QUICK_TASK at line 1899)
+                // This shows the offer dialog, does NOT start timer or decrement quota
+                // Timer/decrement only happen in handleQuickTaskConfirmed after user presses "Start"
+                emitQuickTaskCommand("START_QUICK_TASK_ACTIVE", app, applicationContext, newSessionId)
+                
+                Log.i("QT_POST_CONTINUE_DECISION", 
+                    "[QT_POST_CONTINUE_DECISION] app=$app decision=$decision reason=$reason newSid=$newSessionId")
+            }
+            
+            qtRemainingSnapshot == 0L -> {
+                decision = "StartIntervention"
+                reason = "qtRemaining=0"
+                
+                // Emit using canonical helper
+                emitQuickTaskCommand("START_INTERVENTION", app, applicationContext)
+                
+                Log.i("QT_POST_CONTINUE_DECISION", 
+                    "[QT_POST_CONTINUE_DECISION] app=$app decision=$decision reason=$reason")
+            }
+            
+            else -> {
+                decision = "NoAction"
+                reason = "qtRemaining=$qtRemainingSnapshot (invalid)"
+                Log.w("QT_POST_CONTINUE_DECISION", 
+                    "[QT_POST_CONTINUE_DECISION] app=$app decision=$decision reason=$reason - UNEXPECTED")
+            }
+        }
     }
 
     /**
