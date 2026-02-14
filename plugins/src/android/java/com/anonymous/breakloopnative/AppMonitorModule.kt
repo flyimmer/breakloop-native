@@ -535,6 +535,20 @@ class AppMonitorModule(reactContext: ReactApplicationContext) : ReactContextBase
     }
     
     /**
+     * B1 Slice 1: Report user event from native intervention flow
+     * Called from RN screens (NativeBreathingView, NativeRootCauseView)
+     */
+    @ReactMethod
+    fun onInterventionUserEvent(app: String, sessionId: String, event: String, payloadJson: String?) {
+        try {
+            android.util.Log.i("INT_FLOW_EVENT", "[INT_FLOW_EVENT_BRIDGE] app=$app sid=$sessionId event=$event payload=$payloadJson")
+            ForegroundDetectionService.advanceInterventionFlow(app, sessionId, event, payloadJson)
+        } catch (e: Exception) {
+            android.util.Log.e("AppMonitorModule", "Failed: onInterventionUserEvent", e)
+        }
+    }
+    
+    /**
      * Launch SystemSurfaceActivity from System Brain JS.
      * 
      * This allows the event-driven headless runtime to trigger UI when needed.

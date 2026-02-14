@@ -269,6 +269,17 @@ interface IAppMonitorModule {
    * Log a canary message to native Logcat (Level E) for debugging.
    */
   canaryLog(message: string): void;
+
+  /**
+   * B1 Slice 1: Report user event from native intervention flow
+   * Called from RN screens (NativeBreathingView, NativeRootCauseView)
+   * 
+   * @param app - Package name of the app
+   * @param sessionId - Session ID from SystemSurface wake extras
+   * @param event - Event type (e.g., "BREATHING_DONE", "ROOT_CAUSE_SELECTED")
+   * @param payloadJson - Optional JSON payload (e.g., selected root cause)
+   */
+  onInterventionUserEvent(app: string, sessionId: string, event: string, payloadJson?: string | null): void;
 }
 
 /**

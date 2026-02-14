@@ -180,6 +180,10 @@ class ForegroundDetectionService : AccessibilityService() {
         private const val WAKE_REASON_SHOW_QUICK_TASK = "SHOW_QUICK_TASK"
         private const val WAKE_REASON_SHOW_INTERVENTION = "SHOW_INTERVENTION"
         private const val WAKE_REASON_SHOW_POST_QUICK_TASK_CHOICE = "SHOW_POST_QUICK_TASK_CHOICE"
+        
+        // B1 Slice 1: Native-authoritative intervention flow (per-screen wakeReasons)
+        private const val WAKE_REASON_SHOW_INTERVENTION_BREATHING = "SHOW_INTERVENTION_BREATHING"
+        private const val WAKE_REASON_SHOW_INTERVENTION_ROOT_CAUSE = "SHOW_INTERVENTION_ROOT_CAUSE"
 
         enum class QuickTaskState {
             IDLE, DECISION, OFFERING, ACTIVE, POST_CHOICE, INTERVENTION_ACTIVE
@@ -194,6 +198,19 @@ class ForegroundDetectionService : AccessibilityService() {
             var suppressRecoveryUntilMs: Long = 0,
             var decisionStartedAtMs: Long = 0L
         )
+        
+        // ── Intervention Flow Controller (B1 Slice 1) ──
+        enum class InterventionScreen { BREATHING, ROOT_CAUSE }
+        
+        data class InterventionFlowState(
+            val sessionId: String,
+            val screen: InterventionScreen,
+            val startedAtMs: Long
+        )
+        
+        private val interventionFlowByApp = mutableMapOf<String, InterventionFlowState>()
+        private val interventionSessionIdByApp = mutableMapOf<String, String>()      // authoritative SID
+        private val completedInterventionSidByApp = mutableMapOf<String, String>()   // idempotency guard
 
         // =========================================================================
         // PUBLIC STATIC BRIDGE METHODS (Accessed by Modules)
@@ -484,6 +501,148 @@ class ForegroundDetectionService : AccessibilityService() {
             }
         }
 
+        /**
+         * B1 Slice 1: Start native-authoritative intervention flow
+         * Called from executeDecision when StartIntervention is the action
+         */
+        private fun startInterventionFlow(app: String, context: android.content.Context) {
+            val sid = java.util.UUID.randomUUID().toString()
+            val now = System.currentTimeMillis()
+            
+            // ── State commit (under lock) ──
+            synchronized(qtLock) {
+                interventionFlowByApp[app] = InterventionFlowState(sid, InterventionScreen.BREATHING, now)
+                interventionSessionIdByApp[app] = sid          // authoritative SID
+                completedInterventionSidByApp.remove(app)      // reset completion guard
+                
+                val entry = quickTaskMap.getOrPut(app) { QuickTaskEntry(app, QuickTaskState.IDLE) }
+                entry.state = QuickTaskState.INTERVENTION_ACTIVE  // existing state
+            }
+            
+            // ── Emit (after lock released) ──
+            emitQuickTaskCommand("START_INTERVENTION_BREATHING", app, context, sid)
+            Log.i("INT_FLOW_STATE", "[INT_FLOW_STATE] app=$app sid=$sid screen=→BREATHING")
+        }
+        
+        /**
+         * B1 Slice 1: Advance intervention flow based on RN user event
+         * Called from AppMonitorModule.onInterventionUserEvent
+         */
+        @JvmStatic
+        fun advanceInterventionFlow(app: String, sessionId: String, event: String, payloadJson: String?) {
+            // ── Resolve stable context ──
+            val ctx = cachedAppContext ?: serviceRef?.get()?.applicationContext ?: run {
+                Log.e("INT_FLOW_EVENT", "[INT_FLOW_EVENT] NO_CONTEXT app=$app event=$event")
+                return
+            }
+            
+            // ── Validation (under lock) ──
+            // Capture emit action as a sealed decision; execute AFTER lock release
+            // CRITICAL: Capture the exact sessionId validated under lock to prevent race conditions
+            data class Advance(val cmd: String, val sid: String)
+            var emitAction: Advance? = null
+            var completionAction = false
+            
+            synchronized(qtLock) {
+                val flow = interventionFlowByApp[app]
+                // 1. SID match
+                if (flow == null || flow.sessionId != sessionId) {
+                    Log.w("INT_FLOW_EVENT", "[INT_FLOW_EVENT] SID_MISMATCH app=$app expected=${flow?.sessionId} got=$sessionId")
+                    return
+                }
+                // 2. Completion idempotency
+                if (completedInterventionSidByApp[app] == sessionId) {
+                    Log.w("INT_FLOW_EVENT", "[INT_FLOW_EVENT] ALREADY_COMPLETED app=$app sid=$sessionId")
+                    return
+                }
+                // 3. Event-screen match + state mutation
+                when (event) {
+                    "BREATHING_DONE" -> {
+                        if (flow.screen != InterventionScreen.BREATHING) {
+                            Log.w("INT_FLOW_EVENT", "[INT_FLOW_EVENT] SCREEN_MISMATCH app=$app event=$event screen=${flow.screen}")
+                            return
+                        }
+                        interventionFlowByApp[app] = flow.copy(screen = InterventionScreen.ROOT_CAUSE)
+                        // Capture validated sessionId (not flow.sessionId which could be mutated after unlock)
+                        emitAction = Advance("START_INTERVENTION_ROOT_CAUSE", sessionId)
+                    }
+                    "ROOT_CAUSE_SELECTED" -> {
+                        if (flow.screen != InterventionScreen.ROOT_CAUSE) {
+                            Log.w("INT_FLOW_EVENT", "[INT_FLOW_EVENT] SCREEN_MISMATCH app=$app event=$event screen=${flow.screen}")
+                            return
+                        }
+                        completedInterventionSidByApp[app] = sessionId
+                        interventionFlowByApp.remove(app)
+                        completionAction = true
+                    }
+                    else -> {
+                        Log.w("INT_FLOW_EVENT", "[INT_FLOW_EVENT] UNKNOWN_EVENT app=$app event=$event")
+                        return
+                    }
+                }
+            }
+            // ── Lock released ──
+            
+            // ── Foreground validation (after lock, before emit) ──
+            // Same 3-tier fgEffective check (excludes self, launcher, systemUI)
+            val fg = currentForegroundApp
+            val fgEffective = when {
+                fg == null -> null
+                isLauncherOrSystemUI(fg) -> null
+                fg == "com.anonymous.breakloopnative" -> null  // self
+                else -> fg
+            }
+            
+            if (fgEffective != app) {
+                Log.w("INT_FLOW_EVENT", "[INT_FLOW_EVENT] FG_MISMATCH app=$app fgEffective=$fgEffective event=$event")
+                return  // do not advance; existing surface-exit logic handles cleanup
+            }
+            
+            // ── Execute deferred action ──
+            if (emitAction != null) {
+                emitQuickTaskCommand(emitAction!!.cmd, app, ctx, emitAction!!.sid)
+                Log.i("INT_FLOW_STATE", "[INT_FLOW_STATE] app=$app sid=$sessionId screen=BREATHING→ROOT_CAUSE")
+            }
+            if (completionAction) {
+                Log.i("INT_FLOW_STATE", "[INT_FLOW_STATE] app=$app sid=$sessionId screen=ROOT_CAUSE→DONE")
+                onInterventionCompleted(app, sessionId, ctx)  // canonical handler
+            }
+        }
+        
+        /**
+         * B1 Slice 1: Modified to call startInterventionFlow for native-authoritative flow
+         * Preserves existing foreground validation logic
+         */
+        private fun emitInterventionForApp(app: String, reason: String, context: android.content.Context) {
+            // Clear OFFERING state BEFORE any validation (existing logic)
+            synchronized(qtLock) {
+                if (promptSessionIdByApp[app] != null || quickTaskMap[app]?.state == QuickTaskState.OFFERING) {
+                    clearPromptForAppLocked(app, "SWITCH_TO_INTERVENTION")
+                }
+            }
+            
+            // Foreground validation (defensive - existing logic)
+            val fg = currentForegroundApp
+            
+            if (fg != null && isLauncherOrSystemUI(fg)) {
+                Log.d("LAUNCHER_IGNORE", "[LAUNCHER_IGNORE] pkg=$fg - not offering Intervention")
+                return
+            }
+            
+            if (fg != null && fg != app) {
+                Log.w("FOREGROUND_MISMATCH", "[FOREGROUND_MISMATCH] want=$app have=$fg at=emit - not offering Intervention")
+                return
+            }
+            
+            if (fg == null) {
+                Log.i("FOREGROUND_UNKNOWN", "[FOREGROUND_UNKNOWN] fg=null at=emit - allowing intervention for app=$app (reason=$reason)")
+            }
+            
+            // B1 Slice 1: Route to native flow controller instead of emitting START_INTERVENTION
+            Log.i("INT_START", "[INT_START] app=$app reason=$reason routing=NATIVE_FLOW")
+            startInterventionFlow(app, context)
+        }
+        
         /**
          * Intervention Completion Handler - atomic cleanup + deterministic reevaluation
          * Called from RN when intervention flow completes (breathing → idle)
@@ -2112,6 +2271,9 @@ class ForegroundDetectionService : AccessibilityService() {
                 "START_QUICK_TASK_ACTIVE" -> SystemSurfaceActivity.WAKE_REASON_SHOW_QUICK_TASK
                 "START_INTERVENTION" -> SystemSurfaceActivity.WAKE_REASON_SHOW_INTERVENTION
                 "SHOW_POST_QUICK_TASK_CHOICE" -> SystemSurfaceActivity.WAKE_REASON_SHOW_POST_QUICK_TASK_CHOICE
+                // B1 Slice 1: Native-authoritative intervention flow
+                "START_INTERVENTION_BREATHING" -> SystemSurfaceActivity.WAKE_REASON_SHOW_INTERVENTION_BREATHING
+                "START_INTERVENTION_ROOT_CAUSE" -> SystemSurfaceActivity.WAKE_REASON_SHOW_INTERVENTION_ROOT_CAUSE
                 CMD_FINISH_SYSTEM_SURFACE -> CMD_FINISH_SYSTEM_SURFACE
                 else -> {
                     Log.w(LogTags.QT_STATE, "[WAKE_EMIT] Unknown command: $cmd, using as-is")

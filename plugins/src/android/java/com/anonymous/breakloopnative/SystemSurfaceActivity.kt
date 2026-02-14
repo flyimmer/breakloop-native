@@ -129,6 +129,10 @@ class SystemSurfaceActivity : ReactActivity() {
         const val WAKE_REASON_SHOW_INTERVENTION = "SHOW_INTERVENTION"
         const val WAKE_REASON_SHOW_POST_QUICK_TASK_CHOICE = "SHOW_POST_QUICK_TASK_CHOICE"
         
+        // B1 Slice 1: Native-authoritative intervention flow (per-screen wakeReasons)
+        const val WAKE_REASON_SHOW_INTERVENTION_BREATHING = "SHOW_INTERVENTION_BREATHING"
+        const val WAKE_REASON_SHOW_INTERVENTION_ROOT_CAUSE = "SHOW_INTERVENTION_ROOT_CAUSE"
+        
         // Legacy wake reasons (backward compatibility)
         const val WAKE_REASON_MONITORED_APP = "MONITORED_APP_FOREGROUND"
         const val WAKE_REASON_INTENTION_EXPIRED = "INTENTION_EXPIRED"
