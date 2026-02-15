@@ -42,7 +42,22 @@ const { withAndroidManifest, withStringsXml, withDangerousMod, withAppBuildGradl
 const PLUGIN_NAME = 'withForegroundService';
 
 /**
+ * Get the Android package name from app.json config
+ */
+function getPackageName(config) {
+  return config.android?.package || 'com.anonymous.breakloopnative';
+}
+
+/**
+ * Convert package name to path (e.g., 'com.anonymous.breakloopv0' -> 'com/anonymous/breakloopv0')
+ */
+function packageNameToPath(packageName) {
+  return packageName.replace(/\./g, '/');
+}
+
+/**
  * Get the source file paths (from plugins/src/)
+ * Source files are always in breakloopnative directory (canonical location)
  */
 function getSourcePaths(projectRoot) {
   const pluginSrcPath = path.join(projectRoot, 'plugins', 'src', 'android');
@@ -72,10 +87,11 @@ function getSourcePaths(projectRoot) {
 
 /**
  * Get the destination file paths (in android/app/src/main/)
+ * Destination uses the actual package name from config
  */
-function getDestinationPaths(projectRoot) {
+function getDestinationPaths(projectRoot, packageName) {
   const androidMainPath = path.join(projectRoot, 'android', 'app', 'src', 'main');
-  const javaPath = path.join(androidMainPath, 'java', 'com', 'anonymous', 'breakloopnative');
+  const javaPath = path.join(androidMainPath, 'java', packageNameToPath(packageName));
   return {
     foregroundService: path.join(javaPath, 'ForegroundDetectionService.kt'),
     appMonitorModule: path.join(javaPath, 'AppMonitorModule.kt'),
@@ -97,12 +113,13 @@ function getDestinationPaths(projectRoot) {
   };
 }
 
+
 /**
  * Copy Kotlin files to Android directory
  */
-function copyKotlinFiles(projectRoot) {
+function copyKotlinFiles(projectRoot, packageName) {
   const sourcePaths = getSourcePaths(projectRoot);
-  const destPaths = getDestinationPaths(projectRoot);
+  const destPaths = getDestinationPaths(projectRoot, packageName);
 
   // Ensure destination directory exists
   const destDir = path.dirname(destPaths.foregroundService);
@@ -783,6 +800,10 @@ function withDataStoreDependency(config) {
 }
 
 const withForegroundService = (config) => {
+  // Get package name from config
+  const packageName = getPackageName(config);
+  console.log(`[${PLUGIN_NAME}] Using package name: ${packageName}`);
+
   // Step 1: Copy Kotlin files and XML files using withDangerousMod (runs during prebuild)
   config = withDangerousMod(config, [
     'android',
@@ -790,11 +811,8 @@ const withForegroundService = (config) => {
       const projectRoot = config.modRequest.projectRoot;
 
       // Copy files
-      copyKotlinFiles(projectRoot);
+      copyKotlinFiles(projectRoot, packageName);
       copyAccessibilityXml(projectRoot);
-
-      // Register AppMonitorPackage in MainApplication.kt
-      registerAppMonitorPackage(projectRoot);
 
       return config;
     },

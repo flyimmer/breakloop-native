@@ -41,7 +41,7 @@ function getExistingKotlinFiles() {
   if (!fs.existsSync(PLUGIN_SRC_DIR)) {
     return [];
   }
-  
+
   return fs.readdirSync(PLUGIN_SRC_DIR)
     .filter(file => file.endsWith('.kt'))
     .filter(file => !NATIVE_ONLY_FILES.includes(file));
@@ -55,50 +55,50 @@ function checkPluginIncludesFile(pluginContent, fileName) {
   if (!pathPattern.test(pluginContent)) {
     return false;
   }
-  
+
   // Check if file is copied in copyKotlinFiles()
   // Look for copyFileSync with sourcePaths or destPaths variable
   // OR look for the filename in console.log (e.g., "Copied FileName.kt")
   const copyPattern1 = new RegExp(`copyFileSync.*sourcePaths\\..*${fileNameEscaped}`, 'g');
   const copyPattern2 = new RegExp(`copyFileSync.*destPaths\\..*${fileNameEscaped}`, 'g');
   const logPattern = new RegExp(`Copied.*${fileNameEscaped}`, 'g');
-  
+
   if (!copyPattern1.test(pluginContent) && !copyPattern2.test(pluginContent) && !logPattern.test(pluginContent)) {
     return false;
   }
-  
+
   return true;
 }
 
 function main() {
   console.log('🔍 Validating Kotlin plugin configuration...\n');
-  
+
   // Read plugin file
   if (!fs.existsSync(PLUGIN_FILE)) {
     console.error('❌ Plugin file not found:', PLUGIN_FILE);
     process.exit(1);
   }
-  
+
   const pluginContent = fs.readFileSync(PLUGIN_FILE, 'utf-8');
-  
+
   // Get all Kotlin files in plugin source directory
   const existingFiles = getExistingKotlinFiles();
-  
+
   if (existingFiles.length === 0) {
     console.warn('⚠️  No Kotlin files found in plugin source directory');
     console.log('   Directory:', PLUGIN_SRC_DIR);
     process.exit(0);
   }
-  
+
   console.log(`📁 Found ${existingFiles.length} Kotlin file(s) in plugin source:\n`);
-  
+
   let hasErrors = false;
   const missingFiles = [];
-  
+
   // Check each file
   for (const file of existingFiles) {
     const isIncluded = checkPluginIncludesFile(pluginContent, file);
-    
+
     if (isIncluded) {
       console.log(`   ✅ ${file} - Included in plugin`);
     } else {
@@ -107,9 +107,9 @@ function main() {
       hasErrors = true;
     }
   }
-  
+
   console.log('');
-  
+
   if (hasErrors) {
     console.error('❌ VALIDATION FAILED!\n');
     console.error('The following files are in plugins/src/ but NOT in the plugin configuration:');
@@ -124,7 +124,7 @@ function main() {
     console.error('See docs/KOTLIN_FILE_WORKFLOW.md for detailed instructions.');
     process.exit(1);
   }
-  
+
   console.log('✅ All Kotlin files are properly configured in plugin!');
   console.log('');
   console.log('💡 Tip: Run this script before committing to catch missing files early.');
