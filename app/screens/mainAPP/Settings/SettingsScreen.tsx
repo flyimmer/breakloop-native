@@ -1,12 +1,11 @@
-import { useIntervention } from '@/src/contexts/InterventionProvider';
+
 import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/native-modules/AppMonitorModule';
 import { getInterventionDurationSec, getIsPremiumCustomer, getQuickTaskDurationMs, getQuickTaskUsesPerWindow, getQuickTaskWindowDurationMs, setInterventionPreferences, setQuickTaskConfig, setMonitoredApps as updateOsConfigMonitoredApps } from '@/src/os/osConfig';
-import { completeInterventionDEV } from '@/src/os/osTriggerBrain';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
-import { Camera, Eye, LogOut, Shield, Sliders, Smartphone, User, Zap } from 'lucide-react-native';
+import { Camera, LogOut, Shield, Sliders, Smartphone, User, Zap } from 'lucide-react-native';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -16,11 +15,10 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MainAppStackParamList } from '../../../roots/MainAppRoot';
@@ -37,8 +35,6 @@ const SettingsScreen = () => {
   // Navigation
   const navigation = useNavigation<NavigationProp>();
 
-  // Intervention context (for debug button)
-  const { dispatchIntervention } = useIntervention();
 
   // Mock state - replace with actual state management
   // Profile state (independent of authentication)
@@ -74,11 +70,7 @@ const SettingsScreen = () => {
     primaryPhoto: null,
   });
 
-  // Social privacy toggles
-  const [shareCurrentActivity, setShareCurrentActivity] = useState(true);
-  const [shareUpcomingActivities, setShareUpcomingActivities] = useState(false);
-  const [shareRecentMood, setShareRecentMood] = useState(true);
-  const [shareAlternativesList, setShareAlternativesList] = useState(true);
+
 
   // Monitored apps and websites state
   // Note: Stored as package names (e.g., 'com.instagram.android') for monitoring
@@ -485,61 +477,6 @@ const SettingsScreen = () => {
     });
   };
 
-  // DEV-ONLY: Debug button to start intervention flow
-  // Wrapped behind __DEV__ flag for easy removal before production
-  const handleStartInterventionDebug = () => {
-    // Dispatch BEGIN_INTERVENTION action with mock app
-    // This sets interventionState to "breathing" and starts the countdown
-    dispatchIntervention({
-      type: 'BEGIN_INTERVENTION',
-      app: {
-        id: 'debug-instagram',
-        name: 'Instagram',
-      },
-      breathingDuration: 5, // Default 5 seconds
-    });
-    // Navigation will react to state change automatically
-    // (interventionState changes from 'idle' to 'breathing')
-  };
-
-  // DEV-ONLY: Manually complete Instagram intervention for testing Step 5F
-  const handleCompleteInstagramIntervention = () => {
-    completeInterventionDEV('com.instagram.android');
-    Alert.alert(
-      'DEV: Intervention Completed',
-      'Instagram intervention completed. OS Trigger Brain can now trigger new interventions.',
-      [{ text: 'OK' }]
-    );
-  };
-
-  // DEV-ONLY: Stop monitoring service for testing
-  const handleStopMonitoringService = () => {
-    if (Platform.OS !== 'android' || !AppMonitorModule) {
-      Alert.alert('Error', 'Monitoring service not available');
-      return;
-    }
-
-    Alert.alert(
-      'Stop Monitoring Service?',
-      'This will stop the foreground app monitoring service. Normally it should run independently even when the app is closed.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Stop',
-          style: 'destructive',
-          onPress: () => {
-            AppMonitorModule.stopMonitoring()
-              .then(() => {
-                Alert.alert('Success', 'Monitoring service stopped');
-              })
-              .catch((error: any) => {
-                Alert.alert('Error', `Failed to stop: ${error.message}`);
-              });
-          },
-        },
-      ]
-    );
-  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -730,55 +667,6 @@ const SettingsScreen = () => {
           </View>
         </View>
 
-        {/* Social Privacy Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <View style={styles.sectionTitleRow}>
-              <Eye size={16} color="#52525B" style={styles.sectionIcon} />
-              <Text style={styles.sectionTitle}>Social Privacy</Text>
-            </View>
-          </View>
-          <Text style={styles.sectionDescription}>Controls what your friends can see.</Text>
-
-          <View style={styles.card}>
-            <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>Share Current Activity</Text>
-              <Switch
-                value={shareCurrentActivity}
-                onValueChange={setShareCurrentActivity}
-                trackColor={{ false: '#E4E4E7', true: '#9B91E8' }}
-                thumbColor={shareCurrentActivity ? '#7C6FD9' : '#f4f3f4'}
-              />
-            </View>
-            <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>Share Upcoming Activities</Text>
-              <Switch
-                value={shareUpcomingActivities}
-                onValueChange={setShareUpcomingActivities}
-                trackColor={{ false: '#E4E4E7', true: '#9B91E8' }}
-                thumbColor={shareUpcomingActivities ? '#7C6FD9' : '#f4f3f4'}
-              />
-            </View>
-            <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>Share Recent Mood</Text>
-              <Switch
-                value={shareRecentMood}
-                onValueChange={setShareRecentMood}
-                trackColor={{ false: '#E4E4E7', true: '#9B91E8' }}
-                thumbColor={shareRecentMood ? '#7C6FD9' : '#f4f3f4'}
-              />
-            </View>
-            <View style={[styles.settingRow, styles.settingRowLast]}>
-              <Text style={styles.settingLabel}>Share Alternatives List</Text>
-              <Switch
-                value={shareAlternativesList}
-                onValueChange={setShareAlternativesList}
-                trackColor={{ false: '#E4E4E7', true: '#9B91E8' }}
-                thumbColor={shareAlternativesList ? '#7C6FD9' : '#f4f3f4'}
-              />
-            </View>
-          </View>
-        </View>
 
         {/* Monitored Apps Section */}
         <View style={styles.section}>
@@ -1272,53 +1160,6 @@ const SettingsScreen = () => {
           </View>
         </View>
 
-        {/* Advanced / Development Tools */}
-        {__DEV__ && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionTitleRow}>
-                <Text style={styles.sectionTitle}>Demo / Test / Advanced</Text>
-              </View>
-            </View>
-            <Text style={styles.sectionDescription}>
-              Debug tools for testing intervention state machine. Remove before production.
-            </Text>
-
-            <View style={styles.card}>
-              <TouchableOpacity
-                style={styles.debugButton}
-                onPress={handleStartInterventionDebug}
-              >
-                <Text style={styles.debugButtonText}>Start Intervention (DEV)</Text>
-              </TouchableOpacity>
-              <Text style={styles.debugHint}>
-                Development-only trigger
-              </Text>
-
-              <TouchableOpacity
-                style={[styles.debugButton, { marginTop: 16 }]}
-                onPress={handleCompleteInstagramIntervention}
-              >
-                <Text style={styles.debugButtonText}>DEV: Complete Instagram Intervention</Text>
-              </TouchableOpacity>
-              <Text style={styles.debugHint}>
-                Manually complete to allow retesting (Step 5F)
-              </Text>
-
-              <TouchableOpacity
-                style={[styles.debugButton, { marginTop: 16, borderColor: '#EF4444' }]}
-                onPress={handleStopMonitoringService}
-              >
-                <Text style={[styles.debugButtonText, { color: '#EF4444' }]}>
-                  DEV: Stop Monitoring Service
-                </Text>
-              </TouchableOpacity>
-              <Text style={styles.debugHint}>
-                Stop foreground service (normally runs independently)
-              </Text>
-            </View>
-          </View>
-        )}
 
         {/* Version */}
         <View style={styles.versionContainer}>
@@ -1840,29 +1681,6 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     fontWeight: '500',
     color: '#52525B',
-  },
-  debugButton: {
-    height: 44,
-    borderRadius: 8,
-    backgroundColor: '#F4F4F6',
-    borderWidth: 1,
-    borderColor: '#E4E4E7',
-    borderStyle: 'dashed',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  debugButtonText: {
-    fontSize: 16,
-    lineHeight: 24,
-    fontWeight: '500',
-    color: '#52525B',
-  },
-  debugHint: {
-    fontSize: 12,
-    lineHeight: 16,
-    color: '#A1A1AA',
-    fontStyle: 'italic',
   },
   accessibilityStatusRow: {
     flexDirection: 'row',
