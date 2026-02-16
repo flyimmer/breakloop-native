@@ -11,6 +11,9 @@ expo-env.d.ts
 
 # Agent
 .agent/
+.windsurf/
+.claude/
+.cursor/
 
 # Native
 .kotlin/

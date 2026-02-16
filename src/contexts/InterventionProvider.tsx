@@ -30,6 +30,8 @@ interface InterventionContextValue {
     wasCompleted?: boolean;
     wasCancelled?: boolean;
     resetReason?: string | null;
+    breathingCompleted?: boolean;
+    breathingDurationSec?: number;
   };
   dispatchIntervention: (action: any) => void;
 }

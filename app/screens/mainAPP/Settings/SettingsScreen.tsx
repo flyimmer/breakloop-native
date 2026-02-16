@@ -1,11 +1,11 @@
 
 import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/native-modules/AppMonitorModule';
-import { getInterventionDurationSec, getIsPremiumCustomer, getQuickTaskDurationMs, getQuickTaskUsesPerWindow, getQuickTaskWindowDurationMs, setInterventionPreferences, setQuickTaskConfig, setMonitoredApps as updateOsConfigMonitoredApps } from '@/src/os/osConfig';
+import { getIsPremiumCustomer, getQuickTaskDurationMs, getQuickTaskUsesPerWindow, getQuickTaskWindowDurationMs, setQuickTaskConfig, setMonitoredApps as updateOsConfigMonitoredApps } from '@/src/os/osConfig';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
-import { Camera, LogOut, Shield, Sliders, Smartphone, User, Zap } from 'lucide-react-native';
+import { Camera, LogOut, Shield, Smartphone, User, Zap } from 'lucide-react-native';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -90,8 +90,7 @@ const SettingsScreen = () => {
   const [quickTaskWindowDuration, setQuickTaskWindowDuration] = useState<number>(15 * 60 * 1000); // Default: 15 minutes
   const [isPremium, setIsPremium] = useState<boolean>(true); // TEMP: Bypass Premium gate for debugging
 
-  // Intervention preferences state
-  const [interventionDuration, setInterventionDuration] = useState<number>(5); // Default: 5 seconds
+
 
   // Accessibility service status
   const [isAccessibilityEnabled, setIsAccessibilityEnabled] = useState<boolean>(false);
@@ -99,14 +98,13 @@ const SettingsScreen = () => {
 
   // Storage key for Quick Task settings
   const QUICK_TASK_SETTINGS_STORAGE_KEY = 'quick_task_settings_v1';
-  // Storage key for Intervention preferences
-  const INTERVENTION_PREFERENCES_STORAGE_KEY = 'intervention_preferences_v1';
+
 
   // Load monitored apps from storage on mount
   useEffect(() => {
     loadMonitoredApps();
     loadQuickTaskSettings();
-    loadInterventionPreferences();
+
     checkAccessibilityStatus();
   }, []);
 
@@ -303,48 +301,7 @@ const SettingsScreen = () => {
     }
   };
 
-  // Load Intervention preferences from storage
-  const loadInterventionPreferences = async () => {
-    try {
-      const stored = await AsyncStorage.getItem(INTERVENTION_PREFERENCES_STORAGE_KEY);
-      if (stored) {
-        const preferences = JSON.parse(stored);
-        console.log('[SettingsScreen] 📥 Loaded intervention preferences from storage:', preferences);
-        const durationSec = preferences.interventionDurationSec || getInterventionDurationSec();
-        setInterventionDuration(durationSec);
-        // Update osConfig with loaded preferences
-        setInterventionPreferences(durationSec);
-      } else {
-        // Load from osConfig defaults
-        const durationSec = getInterventionDurationSec();
-        setInterventionDuration(durationSec);
-        console.log('[SettingsScreen] ℹ️ No intervention preferences in storage, using osConfig defaults');
-      }
-    } catch (error) {
-      console.error('[SettingsScreen] ❌ Failed to load intervention preferences:', error);
-      // Use osConfig defaults
-      const durationSec = getInterventionDurationSec();
-      setInterventionDuration(durationSec);
-    }
-  };
 
-  // Save Intervention preferences to storage
-  // NOTE: Changes apply immediately - setInterventionPreferences() updates in-memory config
-  const saveInterventionPreferences = async (durationSec: number) => {
-    try {
-      const preferences = {
-        interventionDurationSec: durationSec,
-      };
-      console.log('[SettingsScreen] 💾 Saving intervention preferences:', preferences);
-      await AsyncStorage.setItem(INTERVENTION_PREFERENCES_STORAGE_KEY, JSON.stringify(preferences));
-      // Update osConfig immediately - applies to next intervention
-      setInterventionPreferences(durationSec);
-      console.log('[SettingsScreen] ✅ Successfully saved intervention preferences (applied immediately)');
-    } catch (error) {
-      console.error('[SettingsScreen] ❌ Failed to save intervention preferences:', error);
-      Alert.alert('Error', 'Failed to save intervention preferences. Please try again.');
-    }
-  };
 
   // Handle duration selection
   const handleDurationSelect = (durationMs: number) => {
@@ -386,11 +343,7 @@ const SettingsScreen = () => {
     return `${minutes}m`;
   };
 
-  // Handle intervention duration selection (5-30 seconds)
-  const handleInterventionDurationSelect = (durationSec: number) => {
-    setInterventionDuration(durationSec);
-    saveInterventionPreferences(durationSec);
-  };
+
 
   // Helper function to get app name from package name
   const getAppName = (packageName: string): string => {
@@ -701,105 +654,6 @@ const SettingsScreen = () => {
           </View>
         </View>
 
-        {/* Preferences Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <View style={styles.sectionTitleRow}>
-              <Sliders size={16} color="#52525B" style={styles.sectionIcon} />
-              <Text style={styles.sectionTitle}>Preferences</Text>
-            </View>
-          </View>
-
-          <View style={styles.card}>
-            {/* Intervention Duration (Breathing Duration) */}
-            <Text style={styles.quickTaskLabel}>Intervention Duration (Breathing)</Text>
-            <Text style={styles.preferencesDescription}>
-              How long the breathing countdown lasts before showing root causes.
-            </Text>
-            <View style={styles.quickTaskButtonRow}>
-              <TouchableOpacity
-                style={[
-                  styles.quickTaskButton,
-                  interventionDuration === 5 && styles.quickTaskButtonSelected,
-                ]}
-                onPress={() => handleInterventionDurationSelect(5)}
-              >
-                <Text
-                  style={[
-                    styles.quickTaskButtonText,
-                    interventionDuration === 5 && styles.quickTaskButtonTextSelected,
-                  ]}
-                >
-                  5s
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.quickTaskButton,
-                  interventionDuration === 10 && styles.quickTaskButtonSelected,
-                ]}
-                onPress={() => handleInterventionDurationSelect(10)}
-              >
-                <Text
-                  style={[
-                    styles.quickTaskButtonText,
-                    interventionDuration === 10 && styles.quickTaskButtonTextSelected,
-                  ]}
-                >
-                  10s
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.quickTaskButton,
-                  interventionDuration === 15 && styles.quickTaskButtonSelected,
-                ]}
-                onPress={() => handleInterventionDurationSelect(15)}
-              >
-                <Text
-                  style={[
-                    styles.quickTaskButtonText,
-                    interventionDuration === 15 && styles.quickTaskButtonTextSelected,
-                  ]}
-                >
-                  15s
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.quickTaskButton,
-                  interventionDuration === 20 && styles.quickTaskButtonSelected,
-                ]}
-                onPress={() => handleInterventionDurationSelect(20)}
-              >
-                <Text
-                  style={[
-                    styles.quickTaskButtonText,
-                    interventionDuration === 20 && styles.quickTaskButtonTextSelected,
-                  ]}
-                >
-                  20s
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.quickTaskButton,
-                  interventionDuration === 30 && styles.quickTaskButtonSelected,
-                ]}
-                onPress={() => handleInterventionDurationSelect(30)}
-              >
-                <Text
-                  style={[
-                    styles.quickTaskButtonText,
-                    interventionDuration === 30 && styles.quickTaskButtonTextSelected,
-                  ]}
-                >
-                  30s
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
 
         {/* Quick Task Section */}
         <View style={styles.section}>
@@ -1166,7 +1020,7 @@ const SettingsScreen = () => {
           <Text style={styles.versionText}>v17.6 (BreakLoop Privacy)</Text>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </SafeAreaView >
   );
 };
 

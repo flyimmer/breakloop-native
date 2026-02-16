@@ -92,10 +92,9 @@ export const interventionReducer = (context, action) => {
       return {
         ...context,
         breathingCount: newCount,
-        // Auto-transition to root-cause when breathing completes
-        // Auto-transition to root-cause when breathing completes
-        state: willTransition ? 'root-cause' : context.state,
-        breathingCompleted: willTransition, // Mark as completed to prevent re-entry
+        // Auto-transition DISABLED: Wait for user action
+        state: context.state,
+        breathingCompleted: willTransition, // Mark as completed to show buttons
       };
 
     case 'BREATHING_COMPLETE':

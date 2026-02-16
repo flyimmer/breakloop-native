@@ -22,7 +22,7 @@ let MONITORED_APPS = new Set<string>();
  * Configurable range: 5 seconds to 30 seconds
  * Current value: 5 seconds
  */
-let INTERVENTION_DURATION_SEC = 5; // 5 seconds
+let INTERVENTION_DURATION_SEC = 8; // 8 seconds
 
 /**
  * Default intention timer duration (milliseconds)
