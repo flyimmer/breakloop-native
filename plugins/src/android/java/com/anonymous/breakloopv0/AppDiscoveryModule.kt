@@ -10,7 +10,7 @@
  * This module provides mechanical discovery only - no semantic decisions.
  */
 
-package com.anonymous.breakloopnative
+package com.anonymous.breakloopv0
 
 import android.app.usage.UsageStats
 import android.app.usage.UsageStatsManager

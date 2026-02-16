@@ -1,4 +1,4 @@
-package com.anonymous.breakloopnative
+package com.anonymous.breakloopv0
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo

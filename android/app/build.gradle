@@ -93,9 +93,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.anonymous.breakloopnative'
+    namespace 'com.anonymous.breakloopv0'
     defaultConfig {
-        applicationId 'com.anonymous.breakloopnative'
+        applicationId 'com.anonymous.breakloopv0'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 7

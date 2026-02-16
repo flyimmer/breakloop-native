@@ -4,7 +4,7 @@
  * Registers AppDiscoveryModule with React Native
  */
 
-package com.anonymous.breakloopnative
+package com.anonymous.breakloopv0
 
 import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule

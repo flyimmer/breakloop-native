@@ -1,4 +1,4 @@
-package com.anonymous.breakloopnative
+package com.anonymous.breakloopv0
 
 object LogTags {
     const val SS_BOOT = "SS_BOOT"

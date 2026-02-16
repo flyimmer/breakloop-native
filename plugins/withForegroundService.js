@@ -46,7 +46,7 @@ const PLUGIN_NAME = 'withForegroundService';
  */
 function getSourcePaths(projectRoot) {
   const pluginSrcPath = path.join(projectRoot, 'plugins', 'src', 'android');
-  const javaPath = path.join(pluginSrcPath, 'java', 'com', 'anonymous', 'breakloopnative');
+  const javaPath = path.join(pluginSrcPath, 'java', 'com', 'anonymous', 'breakloopv0');
   return {
     foregroundService: path.join(javaPath, 'ForegroundDetectionService.kt'),
     appMonitorModule: path.join(javaPath, 'AppMonitorModule.kt'),
@@ -75,7 +75,7 @@ function getSourcePaths(projectRoot) {
  */
 function getDestinationPaths(projectRoot) {
   const androidMainPath = path.join(projectRoot, 'android', 'app', 'src', 'main');
-  const javaPath = path.join(androidMainPath, 'java', 'com', 'anonymous', 'breakloopnative');
+  const javaPath = path.join(androidMainPath, 'java', 'com', 'anonymous', 'breakloopv0');
   return {
     foregroundService: path.join(javaPath, 'ForegroundDetectionService.kt'),
     appMonitorModule: path.join(javaPath, 'AppMonitorModule.kt'),
@@ -253,7 +253,7 @@ function registerAppMonitorPackage(projectRoot) {
     'java',
     'com',
     'anonymous',
-    'breakloopnative',
+    'breakloopv0',
     'MainApplication.kt'
   );
 

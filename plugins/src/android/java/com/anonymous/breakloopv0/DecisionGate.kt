@@ -1,6 +1,6 @@
-package com.anonymous.breakloopnative
+package com.anonymous.breakloopv0
 
-import com.anonymous.breakloopnative.ForegroundDetectionService.Companion.QuickTaskState
+import com.anonymous.breakloopv0.ForegroundDetectionService.Companion.QuickTaskState
 
 /**
  * PURE decision logic for M3a refactor.

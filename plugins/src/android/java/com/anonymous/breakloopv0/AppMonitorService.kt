@@ -1,4 +1,4 @@
-package com.anonymous.breakloopnative
+package com.anonymous.breakloopv0
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
