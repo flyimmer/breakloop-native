@@ -1,116 +1,211 @@
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { shouldTickBreathing } from '@/src/core/intervention';
-import React, { useEffect, useRef } from 'react';
-import { Animated, BackHandler, Easing, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, BackHandler, Dimensions, Easing, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+const { width } = Dimensions.get('window');
 
 /**
  * BreathingScreen
  * 
- * Phase D: Static Intervention → Breathing step
- * 
- * Gravity: Regulation Anchor
- * - Single focal element (breathing number)
- * - Centered visual gravity
- * - No CTAs, no instructional text, no close button
- * 
- * Design authority:
- * - design/principles/interaction-gravity.md (Regulation Anchor)
- * - design/ui/tokens.md (colors, typography, spacing, elevation, motion)
- * - design/ui/tone-ambient-hearth.md (calm, soft, depth via elevation)
+ * Updated Feb 2026:
+ * - Instructions: "Breathe in" / "Breathe out" synchronized text.
+ * - Visuals: Subtle Blue Circle, Purple Buttons.
+ * - Duration: 8s timer for buttons, but animation LOOPS indefinitely.
  */
 export default function BreathingScreen() {
-  // Intervention state from context
   const { interventionState, dispatchIntervention } = useIntervention();
-  const { state, breathingCount, targetApp } = interventionState;
+  const { state, breathingCount, targetApp, breathingCompleted } = interventionState;
 
-  // Soft breathing animation (opacity-based, organic feel)
-  const breatheAnim = useRef(new Animated.Value(1)).current;
+  // Animations
+  const breatheAnim = useRef(new Animated.Value(0)).current;
+  const contentOpacity = useRef(new Animated.Value(0)).current;
+  const buttonsOpacity = useRef(new Animated.Value(0)).current;
+  const textOpacity = useRef(new Animated.Value(1)).current; // For text transitions
 
-  // Log breathing screen mount state for debugging
+  // Breathing State
+  const [instruction, setInstruction] = useState('Breathe in');
+
+  // Back Handler
   useEffect(() => {
-    if (__DEV__) {
-      console.log('[BreathingScreen] Mounted with breathingCount:', breathingCount);
-      console.log('[BreathingScreen] Current state:', state);
-      console.log('[BreathingScreen] Target app:', targetApp);
-    }
-  }, []);
-
-  // Disable Android hardware back button during intervention
-  useEffect(() => {
-    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
-      // Return true to prevent default back behavior
-      // User cannot exit breathing screen - must complete countdown
-      return true;
-    });
-
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => true);
     return () => backHandler.remove();
   }, []);
 
-  // PR3: Preserved state logic aligned with Activity Timer (Task 4)
-  // Removed static on-mount effect. Now controlled by timer state below.
-
-  // Continuous breathing rhythm animation
-
-  // Continuous breathing rhythm animation
+  // Entry Animation
   useEffect(() => {
-    // Continuous breathing rhythm using opacity
-    // Mimics natural breath: slow inhale, slow exhale, subtle presence shift
+    Animated.timing(contentOpacity, {
+      toValue: 1,
+      duration: 1000,
+      useNativeDriver: true,
+    }).start();
+  }, []);
+
+  // Breathing Rhythm & Instruction Sync (LOOP CONTINUOUSLY)
+  useEffect(() => {
+    // 1. Start Animation Loop (4s In, 4s Out)
     Animated.loop(
       Animated.sequence([
-        // Inhale - presence softens
-        Animated.timing(breatheAnim, {
-          toValue: 0.85,
-          duration: 3000, // Slow, calm inhale (duration_slower × 5)
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-        // Exhale - presence returns
+        // Inhale (4s)
         Animated.timing(breatheAnim, {
           toValue: 1,
-          duration: 3000, // Slow, calm exhale
+          duration: 4000,
           easing: Easing.inOut(Easing.ease),
           useNativeDriver: true,
         }),
+        // Exhale (4s)
+        Animated.timing(breatheAnim, {
+          toValue: 0,
+          duration: 4000,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        })
       ])
     ).start();
-  }, [breatheAnim]);
 
-  // Breathing is Incomplete -> Cancellable (Default).
-  // No explicit setInterventionCancellable calls needed here.
-  // Logic moved to ActivityTimerScreen (Preserved State).
+    // 2. Start Text Loop (Flip every 4s)
+    // Initial state is 'Breathe in'.
+    // At t=4s: Switch to 'Breathe out'.
+    // At t=8s: Switch to 'Breathe in'.
+    // ... repeat.
 
+    // We use a recursive timeout pattern or interval to stay synced with animation start.
+    // Since animation starts immediately, interval is reasonable.
+
+    let isInhale = true; // Started with Inhale
+
+    const textInterval = setInterval(() => {
+      // Toggle phase
+      isInhale = !isInhale;
+      const nextText = isInhale ? 'Breathe in' : 'Breathe out';
+
+      // Fading transition
+      Animated.sequence([
+        Animated.timing(textOpacity, { toValue: 0, duration: 200, useNativeDriver: true }),
+        Animated.timing(textOpacity, { toValue: 1, duration: 200, useNativeDriver: true })
+      ]).start();
+
+      // Update text halfway through fade (at 200ms)? 
+      // Or just update state. React render might be slightly delayed relative to animation frame.
+      // Let's update state immediately and let opacity hide the swap.
+      // Wait, if we update immediately, user sees old text fading out? No, new text fading out?
+      // We want: Fade Out Old -> Swap Text -> Fade In New.
+
+      // Better:
+      Animated.timing(textOpacity, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+        setInstruction(nextText);
+        Animated.timing(textOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+      });
+
+    }, 4000); // 4 seconds per phase
+
+    return () => {
+      clearInterval(textInterval);
+      breatheAnim.stopAnimation();
+    };
+  }, []);
+
+  // Timer Tick (stops at 0, but animation continues)
   useEffect(() => {
-    // Only tick if we're in breathing state and count > 0
-    if (!shouldTickBreathing(state, breathingCount)) {
-      return;
-    }
+    if (!shouldTickBreathing(state, breathingCount)) return;
 
-    // Set up 1-second interval to decrement countdown
     const timer = setInterval(() => {
       dispatchIntervention({ type: 'BREATHING_TICK' });
     }, 1000);
 
-    // Cleanup interval on unmount or state change
     return () => clearInterval(timer);
-  }, [state, breathingCount, targetApp, dispatchIntervention]);
+  }, [state, breathingCount, dispatchIntervention]);
 
+  // Reveal Buttons logic (unchanged)
+  useEffect(() => {
+    if (breathingCompleted) {
+      Animated.timing(buttonsOpacity, {
+        toValue: 1,
+        duration: 800,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: true,
+        delay: 200,
+      }).start();
+    }
+  }, [breathingCompleted]);
+
+  // Actions
+  const handleClose = () => {
+    dispatchIntervention({ type: 'RESET_INTERVENTION', reason: 'USER_CLOSE' });
+  };
+
+  const handleContinue = () => {
+    dispatchIntervention({ type: 'BREATHING_COMPLETE' });
+  };
+
+  // Interpolations
+  const scale = breatheAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.3],
+  });
+
+  const circleOpacity = breatheAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.6, 0.3],
+  });
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      {/* Central breathing visual */}
-      <View style={styles.centerContainer}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
+      <Animated.View style={[styles.content, { opacity: contentOpacity }]}>
+
+        {/* Breathing Visualization */}
+        <View style={styles.centerContainer}>
+          <Animated.View
+            style={[
+              styles.breathingCircle,
+              {
+                transform: [{ scale }],
+                opacity: circleOpacity,
+              },
+            ]}
+          />
+          {/* Inner solid anchor */}
+          <View style={styles.anchorCircle} />
+
+          {/* Instruction Text */}
+          <Animated.Text style={[styles.instructionText, { opacity: textOpacity }]}>
+            {instruction}
+          </Animated.Text>
+        </View>
+
+        {/* Action Buttons */}
         <Animated.View
           style={[
-            styles.breathingCircle,
+            styles.actionsContainer,
             {
-              opacity: breatheAnim,
-            },
+              opacity: buttonsOpacity,
+              pointerEvents: breathingCompleted ? 'auto' : 'none'
+            }
           ]}
         >
-          <Text style={styles.countdownNumber}>{breathingCount}</Text>
+          {/* Primary: Close App */}
+          <TouchableOpacity
+            style={[styles.button, styles.buttonPrimary]}
+            onPress={handleClose}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.buttonTextPrimary}>Close app</Text>
+          </TouchableOpacity>
+
+          {/* Secondary: Continue */}
+          <TouchableOpacity
+            style={[styles.button, styles.buttonSecondary]}
+            onPress={handleContinue}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.buttonTextSecondary}>
+              Continue to use {targetApp ? 'app' : 'app'}
+            </Text>
+          </TouchableOpacity>
         </Animated.View>
-      </View>
+
+      </Animated.View>
     </SafeAreaView>
   );
 }
@@ -118,7 +213,11 @@ export default function BreathingScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0B', // tokens: background (dark mode)
+    backgroundColor: '#0A0A0B', // Dark background
+  },
+  content: {
+    flex: 1,
+    justifyContent: 'space-between',
   },
   centerContainer: {
     flex: 1,
@@ -126,25 +225,64 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   breathingCircle: {
-    width: 160,
-    height: 160,
-    borderRadius: 9999, // tokens: radius_full
-    backgroundColor: 'rgba(24, 24, 27, 0.7)', // tokens: surfaceGlass
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    backgroundColor: '#3B82F6', // Blue-500
+    position: 'absolute',
+  },
+  anchorCircle: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  instructionText: {
+    color: '#E4E4E7', // Zinc-200
+    fontSize: 24,
+    fontWeight: '500',
+    fontFamily: 'System',
+    letterSpacing: 0.5,
+    marginTop: 0,
+    position: 'absolute',
+  },
+  actionsContainer: {
+    paddingHorizontal: 24,
+    paddingBottom: 48,
+    gap: 16,
+    alignItems: 'center',
+    width: '100%',
+  },
+  button: {
+    width: '100%',
+    height: 56,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    // elevation_2 (dark mode)
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.4,
-    shadowRadius: 4,
-    elevation: 2,
   },
-  countdownNumber: {
-    fontSize: 64, // Scaled from h1 (32) for prominence
-    lineHeight: 72,
-    fontWeight: '600', // tokens: h1.fontWeight
-    letterSpacing: -0.5, // tokens: h1.letterSpacing
-    color: '#FAFAFA', // tokens: textPrimary
+  buttonPrimary: {
+    backgroundColor: '#6366F1', // Indigo-500
+    shadowColor: '#6366F1',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  buttonSecondary: {
+    backgroundColor: 'transparent',
+    borderWidth: 1.5,
+    borderColor: '#3F3F46',
+  },
+  buttonTextPrimary: {
+    color: '#FAFAFA',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  buttonTextSecondary: {
+    color: '#A1A1AA',
+    fontSize: 16,
+    fontWeight: '500',
   },
 });
-
