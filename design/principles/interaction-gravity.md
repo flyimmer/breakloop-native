@@ -10,8 +10,6 @@ This specification applies **only** to:
 
 This specification does **not** apply to:
 - Retrospective insights
-- Planning and scheduling
-- Community and social browsing
 - Account, settings, or configuration screens
 
 Those areas follow standard product interaction patterns and are

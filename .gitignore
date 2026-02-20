@@ -11,6 +11,9 @@ expo-env.d.ts
 
 # Agent
 .agent/
+.cursor/
+.windsurf/
+.claude/
 
 # Native
 .kotlin/
@@ -55,8 +58,11 @@ android/app/.cxx/
 *.log
 android/*.log
 
-# spec
-spec/Old/
+# Archive and Old folders
+*archive/
+*Archive/
+*old/
+*Old/
 
 # Expo Config Plugin files are tracked (version-controlled)
 # The plugin automatically applies native changes during expo prebuild
