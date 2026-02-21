@@ -1,0 +1,2 @@
+--------- beginning of main
+02-21 08:46:16.754  4186  4186 E id.partnersetup: Not starting debugger since process cannot load the jdwp agent.

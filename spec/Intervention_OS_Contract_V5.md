@@ -89,7 +89,10 @@ User sees: “Your quick task is finished. What would you like to do next?”
 | User Selection | “I still need to use AppName” AND `n_quickTask_remaining(A) == 0` | `INTERVENTION_SURFACE` | Start Intervention immediately |
 | App Exit before choice | - | `IDLE` | Assume choice abandoned; **do not defer / re-show** on next entry |
 
-> **Important:** There is **no deferred Post-Quick-Task** surface. If the user leaves, next entry runs the Decision Gate again.
+#### Post-QT visibility persistence (same-app, no exit):
+If app A is still foreground and Post-QT UI disappears due to dismiss/back/home/timeout (no explicit choice), the system must re-emit Post-QT within 2–5 seconds.
+If the user leaves app A (foreground becomes not-A), abandon Post-QT (no re-show on next entry).
+The goal is for the stabilizing, because of the system noise.
 
 ### Phase: INTERVENTION_SURFACE
 The UX details and ladder/checkpoints are defined in `flow_v3.md` + `intervention_ux_contract_v3.md`.  
@@ -191,8 +194,7 @@ This prevents random overlays on unrelated apps or on the lock screen.
    - `t_hardBreak` overrides all.
    - `t_intention` suppresses all triggers for A while active.
    - `t_quickTask` suppresses intervention for A while active.
-5. **No deferred Post-QT:** Post-QT UI is never re-shown on next entry; leaving the app abandons it.
-6. **No free lunch:** `n_quickTask_remaining(A)` decrements immediately when starting a Quick Task.
+5. **No free lunch:** `n_quickTask_remaining(A)` decrements immediately when starting a Quick Task.
 
 ---
 

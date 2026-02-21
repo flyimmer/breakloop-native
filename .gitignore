@@ -70,3 +70,10 @@ android/*.log
 
 # APKs
 apks/
+
+# Documentation
+docs/
+
+# IDE
+.idea/
+*.iml

@@ -1,3 +1,7 @@
+import { useAlternativesLink } from '@/src/contexts/AlternativesLinkContext';
+import type { Trigger } from '@/src/core/alternatives/types';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import { useNavigation } from '@react-navigation/native';
 import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -32,8 +36,16 @@ const userValues = [
 ];
 
 export default function InsightsScreen() {
+  const { setLinkParams } = useAlternativesLink();
+  const navigation = useNavigation<BottomTabNavigationProp<Record<string, undefined>>>();
   const [selectedPeriod, setSelectedPeriod] = useState<TimePeriod>('today');
   const [currentDate] = useState('Today, 24 Oct');
+
+  const simulateDeepLink = (trigger: Trigger) => {
+    setLinkParams({ trigger, source: 'intervention' });
+    // Navigate to Alternatives tab
+    navigation.navigate('Alternatives' as never);
+  };
 
   const handleEditValues = () => {
     console.log('Edit values');
@@ -114,7 +126,7 @@ export default function InsightsScreen() {
         <View style={styles.section}>
           <View style={styles.screenTimeHeader}>
             <Text style={styles.screenTimeTitle}>Screen{'\n'}Time</Text>
-            
+
             {/* Period Selector */}
             <View style={styles.periodSelector}>
               <Pressable
@@ -243,7 +255,7 @@ export default function InsightsScreen() {
                 <Text style={styles.aiAnalysisBadgeText}>✨ AI Analysis</Text>
               </View>
             </View>
-            
+
             {/* Placeholder content */}
             <View style={styles.deepInsightsPlaceholder}>
               <View style={styles.loadingIndicator}>
@@ -270,6 +282,24 @@ export default function InsightsScreen() {
             </Text>
           </View>
         </View>
+
+        {/* ────────────────────────────────────────────────────────── */}
+        {/* DEV ONLY: Simulate Intervention Deep Link */}
+        {__DEV__ && (
+          <View style={styles.devSection}>
+            <Text style={styles.devTitle}>DEV: Simulate Deep Link</Text>
+            {(['BOREDOM', 'STRESS_ANXIETY', 'LONELINESS', 'FATIGUE', 'SELF_DOUBT', 'NO_CLEAR_GOAL'] as Trigger[]).map((t) => (
+              <Pressable
+                key={t}
+                style={({ pressed }) => [styles.devBtn, pressed && { opacity: 0.7 }]}
+                onPress={() => simulateDeepLink(t)}
+              >
+                <Text style={styles.devBtnText}>Open Alternatives → {t}</Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
+        {/* ────────────────────────────────────────────────────────── */}
       </ScrollView>
     </SafeAreaView>
   );
@@ -649,5 +679,33 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontWeight: '400',
     color: '#64748B', // Better contrast
+  },
+  // DEV test section styles
+  devSection: {
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 40,
+    gap: 10,
+  },
+  devTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#F59E0B',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  devBtn: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  devBtnText: {
+    color: '#92400E',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

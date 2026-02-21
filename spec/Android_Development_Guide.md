@@ -1,5 +1,3 @@
-# Cursor AI Rules for BreakLoop-Native Project
-
 # 🚨 STRICT NATIVE BUILD & WORKFLOW RULES FOR AI 🚨
 
 ## 1. The Core Architecture (99% Native, 1% JS)
@@ -12,7 +10,7 @@ We have officially migrated away from the standard Expo Managed workflow. We are
 
 ## 3. The Build Process
 * **DO NOT** run `npm run android`, `npx expo start`, or `npx expo prebuild` to test Kotlin changes. These commands boot up the JS bundler unnecessarily and cause massive delays.
-* **ALWAYS USE:** `.\dev_cycle.bat` in the PowerShell terminal to compile native code and push it to the emulator. 
+* **ALWAYS USE:** `dev_both.bat` in the PowerShell terminal to compile native code and push it to the emulator. 
 * This script bypasses Expo and uses Gradle directly (`gradlew.bat installDebug`), reducing build times from minutes to seconds.
 
 ## 4. Error Handling & Debugging

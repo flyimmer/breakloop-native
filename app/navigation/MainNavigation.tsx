@@ -1,24 +1,23 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { BarChart3, Inbox, Settings, Users } from 'lucide-react-native';
+import { BarChart3, Settings, Zap } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import CommunityStackNavigator from './CommunityStackNavigator';
-import InboxScreen from '../screens/mainAPP/InboxScreen';
 import InsightsScreen from '../screens/mainAPP/InsightsScreen';
 import SettingsScreen from '../screens/mainAPP/Settings/SettingsScreen';
+import AlternativesNavigator from './AlternativesNavigator';
 
 const Tab = createBottomTabNavigator();
 
 const AppNavigation = () => {
   const insets = useSafeAreaInsets();
-  
+
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#8B7AE8', // Brand purple for active
-        tabBarInactiveTintColor: '#D4D4D8', // Very light gray for inactive
+        tabBarActiveTintColor: '#8B7AE8',
+        tabBarInactiveTintColor: '#D4D4D8',
         tabBarLabelStyle: styles.tabBarLabel,
         tabBarIconStyle: styles.tabBarIcon,
         tabBarStyle: {
@@ -32,55 +31,30 @@ const AppNavigation = () => {
         tabBarAllowFontScaling: false,
       }}
     >
-      <Tab.Screen 
-        name="Insights" 
+      <Tab.Screen
+        name="Insights"
         component={InsightsScreen}
         options={{
           tabBarIcon: ({ focused, color }) => (
-            <BarChart3 
-              size={24} 
-              color={color}
-              strokeWidth={focused ? 2.5 : 2}
-            />
+            <BarChart3 size={24} color={color} strokeWidth={focused ? 2.5 : 2} />
           ),
         }}
       />
-      <Tab.Screen 
-        name="Community" 
-        component={CommunityStackNavigator}
+      <Tab.Screen
+        name="Alternatives"
+        component={AlternativesNavigator}
         options={{
           tabBarIcon: ({ focused, color }) => (
-            <Users 
-              size={24} 
-              color={color}
-              strokeWidth={focused ? 2.5 : 2}
-            />
+            <Zap size={24} color={color} strokeWidth={focused ? 2.5 : 2} />
           ),
         }}
       />
-      <Tab.Screen 
-        name="Inbox" 
-        component={InboxScreen}
-        options={{
-          tabBarIcon: ({ focused, color }) => (
-            <Inbox 
-              size={24} 
-              color={color}
-              strokeWidth={focused ? 2.5 : 2}
-            />
-          ),
-        }}
-      />
-      <Tab.Screen 
-        name="Settings" 
+      <Tab.Screen
+        name="Settings"
         component={SettingsScreen}
         options={{
           tabBarIcon: ({ focused, color }) => (
-            <Settings 
-              size={24} 
-              color={color}
-              strokeWidth={focused ? 2.5 : 2}
-            />
+            <Settings size={24} color={color} strokeWidth={focused ? 2.5 : 2} />
           ),
         }}
       />
