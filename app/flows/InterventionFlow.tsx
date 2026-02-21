@@ -15,7 +15,7 @@
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
-import { getInterventionDurationSec } from '@/src/os/osConfig';
+import { getAppCategory, getInterventionDurationSec } from '@/src/os/osConfig';
 import { setLastIntervenedApp } from '@/src/systemBrain/publicApi';
 import { setSystemSurfaceActive } from '@/src/systemBrain/stateManager';
 import { DarkTheme, DefaultTheme, NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
@@ -89,10 +89,13 @@ export default function InterventionFlow({ app, sessionId }: InterventionFlowPro
       console.log('[InterventionFlow] BEGIN_INTERVENTION for app:', app, 'sessionId:', sessionId);
     }
 
+    const triggerAppCategory = getAppCategory(app);
+
     dispatchIntervention({
       type: 'BEGIN_INTERVENTION',
       app,
       breathingDuration: getInterventionDurationSec(),
+      triggerAppCategory,
     });
   }, [app, sessionId]);
 

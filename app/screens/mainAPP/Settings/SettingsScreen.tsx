@@ -2,6 +2,7 @@ import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { AppMonitorModule as AppMonitorModuleType, InstalledApp } from '@/src/native-modules/AppMonitorModule';
 import { getInterventionDurationSec, getIsPremiumCustomer, getQuickTaskDurationMs, getQuickTaskUsesPerWindow, getQuickTaskWindowDurationMs, setInterventionPreferences, setQuickTaskConfig, setMonitoredApps as updateOsConfigMonitoredApps } from '@/src/os/osConfig';
 import { completeInterventionDEV } from '@/src/os/osTriggerBrain';
+import { appDiscoveryService } from '@/src/services/appDiscovery';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -164,12 +165,23 @@ const SettingsScreen = () => {
     try {
       const stored = await AsyncStorage.getItem(MONITORED_APPS_STORAGE_KEY);
       if (stored) {
-        const apps = JSON.parse(stored);
+        const apps: string[] = JSON.parse(stored);
         console.log('[SettingsScreen] 📥 Loaded monitored apps from storage:', apps);
         setMonitoredApps(apps);
-        // Update osConfig with loaded apps
-        updateOsConfigMonitoredApps(apps);
-        console.log('[SettingsScreen] ✅ Updated osConfig with', apps.length, 'apps');
+
+        // Build category map from discovered app data (so osConfig cache is warm)
+        const discoveredApps = await appDiscoveryService.getActiveApps();
+        const categoryMap: Record<string, any> = {};
+        for (const pkg of apps) {
+          const found = discoveredApps.find(a => a.packageName === pkg);
+          if (found?.appCategory) {
+            categoryMap[pkg] = found.appCategory;
+          }
+        }
+
+        // Update osConfig with loaded apps + category map
+        updateOsConfigMonitoredApps(apps, categoryMap);
+        console.log('[SettingsScreen] ✅ Updated osConfig with', apps.length, 'apps and categories');
       } else {
         console.log('[SettingsScreen] ℹ️ No monitored apps in storage yet');
       }
@@ -182,9 +194,20 @@ const SettingsScreen = () => {
     try {
       console.log('[SettingsScreen] 💾 Saving monitored apps:', apps);
       await AsyncStorage.setItem(MONITORED_APPS_STORAGE_KEY, JSON.stringify(apps));
+
+      // Build category map from discovered app data (freshly resolved)
+      const discoveredApps = await appDiscoveryService.getActiveApps();
+      const categoryMap: Record<string, any> = {};
+      for (const pkg of apps) {
+        const found = discoveredApps.find(a => a.packageName === pkg);
+        if (found?.appCategory) {
+          categoryMap[pkg] = found.appCategory;
+        }
+      }
+
       // Update osConfig immediately
-      updateOsConfigMonitoredApps(apps);
-      console.log('[SettingsScreen] ✅ Successfully saved and updated osConfig with', apps.length, 'apps');
+      updateOsConfigMonitoredApps(apps, categoryMap);
+      console.log('[SettingsScreen] ✅ Successfully saved and updated osConfig with', apps.length, 'apps and categories');
     } catch (error) {
       console.error('[SettingsScreen] ❌ Failed to save monitored apps:', error);
       Alert.alert('Error', 'Failed to save monitored apps. Please try again.');

@@ -1,3 +1,7 @@
+import { getMatchScore, matchesAppSearch } from '@/constants/appAliases';
+import { getDisplayCategory } from '@/constants/appCategories';
+import { appDiscoveryService } from '@/src/services/appDiscovery';
+import { DiscoveredApp } from '@/src/storage/appDiscovery';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Check } from 'lucide-react-native';
@@ -16,10 +20,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { appDiscoveryService } from '@/src/services/appDiscovery';
-import { DiscoveredApp } from '@/src/storage/appDiscovery';
 import { MainAppStackParamList } from '../../../roots/MainAppRoot';
-import { matchesAppSearch, getMatchScore } from '@/constants/appAliases';
 
 type NavigationProp = NativeStackNavigationProp<MainAppStackParamList>;
 
@@ -42,7 +43,7 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
   const [selectedApps, setSelectedApps] = useState<string[]>(initialApps); // Store package names
   const [websites, setWebsites] = useState<string[]>(initialWebsites);
   const [websiteInput, setWebsiteInput] = useState('');
-  
+
   // Discovered apps from multi-source discovery
   const [discoveredApps, setDiscoveredApps] = useState<DiscoveredApp[]>([]);
   const [isLoadingApps, setIsLoadingApps] = useState(true);
@@ -65,10 +66,10 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
     async function initializeDiscovery() {
       try {
         setIsLoadingApps(true);
-        
+
         // Initialize discovery service (starts launcher discovery immediately)
         await appDiscoveryService.initialize();
-        
+
         // Subscribe to progressive updates
         unsubscribe = appDiscoveryService.subscribe((apps) => {
           setDiscoveredApps(apps);
@@ -101,7 +102,7 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
     appName: app.label || app.packageName,
     iconPath: app.iconPath
   }));
-  
+
   // Note: Icons are now stored as file URIs in iconPath
   // No need to load them separately - React Native <Image /> can load file URIs directly
   // The iconCache is kept for compatibility but we'll use iconPath directly
@@ -139,7 +140,7 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
       const app = installedApps.find((a) => a.packageName === packageName);
       return app ? app.appName : packageName;
     });
-    
+
     // Call the callback if it exists (set by SettingsScreen)
     // Pass both package names (for monitoring) and app names (for display)
     const settingsModule = require('./SettingsScreen');
@@ -147,7 +148,7 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
       // Pass package names as the first param (SettingsScreen will need to be updated to handle this)
       settingsModule.editAppsCallback(selectedApps, websites);
     }
-    
+
     // Go back
     navigation.goBack();
   };
@@ -179,22 +180,73 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
     .sort((a, b) => {
       const aIsSelected = selectedApps.includes(a.packageName);
       const bIsSelected = selectedApps.includes(b.packageName);
-      
+
       // 1. Monitored apps first (selected apps appear before unselected)
       if (aIsSelected && !bIsSelected) return -1;
       if (!aIsSelected && bIsSelected) return 1;
-      
+
       // 2. Then sort by match relevance (exact matches first, then word-start, then partial)
       const aMatch = getMatchScore(a.appName, a.packageName, searchQuery);
       const bMatch = getMatchScore(b.appName, b.packageName, searchQuery);
-      
+
       if (aMatch.score !== bMatch.score) {
         return bMatch.score - aMatch.score; // Higher score first
       }
-      
+
       // 3. Within same match type, sort alphabetically by app name
       return a.appName.localeCompare(b.appName);
     });
+
+  // Render a single app row
+  const renderAppRow = (app: { packageName: string; appName: string; iconPath: string | null }) => {
+    const isSelected = selectedApps.includes(app.packageName);
+    const iconUri = app.iconPath || null;
+    return (
+      <Pressable
+        key={app.packageName}
+        style={[styles.appItem, isSelected && styles.appItemSelected]}
+        onPress={() => handleToggleApp(app.packageName)}
+      >
+        {iconUri ? (
+          <Image
+            source={{ uri: iconUri }}
+            style={styles.appIcon}
+            resizeMode="contain"
+          />
+        ) : (
+          <View style={styles.appIconPlaceholder}>
+            <Text style={styles.appIconPlaceholderText}>
+              {app.appName.charAt(0).toUpperCase()}
+            </Text>
+          </View>
+        )}
+        <View style={styles.appInfo}>
+          <Text style={styles.appName}>{app.appName}</Text>
+          <Text style={styles.packageName} numberOfLines={1}>
+            {app.packageName}
+          </Text>
+        </View>
+        {isSelected && (
+          <View style={styles.checkmarkContainer}>
+            <Check size={20} color="#007AFF" strokeWidth={3} />
+          </View>
+        )}
+      </Pressable>
+    );
+  };
+
+  // Group filtered apps into Social / Others sections
+  const sortAppsInSection = (apps: typeof filteredApps) =>
+    apps.sort((a, b) => {
+      const aSelected = selectedApps.includes(a.packageName);
+      const bSelected = selectedApps.includes(b.packageName);
+      if (aSelected && !bSelected) return -1;
+      if (!aSelected && bSelected) return 1;
+      return a.appName.localeCompare(b.appName);
+    });
+
+  const socialApps = sortAppsInSection(filteredApps.filter(a => getDisplayCategory(a.packageName) === 'Social'));
+  const othersApps = sortAppsInSection(filteredApps.filter(a => getDisplayCategory(a.packageName) === 'Others'));
 
   // Render Apps tab content
   const renderAppsTab = () => {
@@ -230,50 +282,34 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
           />
         </View>
 
-        {/* Apps list */}
+        {/* Apps list — grouped by Social / Others */}
         <ScrollView style={styles.contentScroll} contentContainerStyle={styles.contentContainer}>
           {filteredApps.length === 0 ? (
             <View style={styles.emptyState}>
               <Text style={styles.emptyStateText}>No apps match your search</Text>
             </View>
           ) : (
-            filteredApps.map((app) => {
-              const isSelected = selectedApps.includes(app.packageName);
-              // Use iconPath directly (file URI) - React Native <Image /> supports file URIs
-              const iconUri = app.iconPath || null;
-              return (
-                <Pressable
-                  key={app.packageName}
-                  style={[styles.appItem, isSelected && styles.appItemSelected]}
-                  onPress={() => handleToggleApp(app.packageName)}
-                >
-                  {iconUri ? (
-                    <Image
-                      source={{ uri: iconUri }}
-                      style={styles.appIcon}
-                      resizeMode="contain"
-                    />
-                  ) : (
-                    <View style={styles.appIconPlaceholder}>
-                      <Text style={styles.appIconPlaceholderText}>
-                        {app.appName.charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
-                  )}
-                  <View style={styles.appInfo}>
-                    <Text style={styles.appName}>{app.appName}</Text>
-                    <Text style={styles.packageName} numberOfLines={1}>
-                      {app.packageName}
-                    </Text>
+            <>
+              {/* ── Social section ──────────────────────────── */}
+              {socialApps.length > 0 && (
+                <>
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionLabel}>Social</Text>
                   </View>
-                  {isSelected && (
-                    <View style={styles.checkmarkContainer}>
-                      <Check size={20} color="#007AFF" strokeWidth={3} />
-                    </View>
-                  )}
-                </Pressable>
-              );
-            })
+                  {socialApps.map(renderAppRow)}
+                </>
+              )}
+
+              {/* ── Others section ──────────────────────────── */}
+              {othersApps.length > 0 && (
+                <>
+                  <View style={[styles.sectionHeader, socialApps.length > 0 && styles.sectionHeaderSpaced]}>
+                    <Text style={styles.sectionLabel}>Others</Text>
+                  </View>
+                  {othersApps.map(renderAppRow)}
+                </>
+              )}
+            </>
           )}
         </ScrollView>
       </View>
@@ -300,7 +336,7 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
             style={[
               styles.addButton,
               (!websiteInput.trim() || websites.includes(websiteInput.trim())) &&
-                styles.addButtonDisabled,
+              styles.addButtonDisabled,
             ]}
             onPress={handleAddWebsite}
             disabled={!websiteInput.trim() || websites.includes(websiteInput.trim())}
@@ -309,7 +345,7 @@ export default function EditMonitoredAppsScreen({ route }: EditMonitoredAppsScre
               style={[
                 styles.addButtonText,
                 (!websiteInput.trim() || websites.includes(websiteInput.trim())) &&
-                  styles.addButtonTextDisabled,
+                styles.addButtonTextDisabled,
               ]}
             >
               Add
@@ -473,6 +509,23 @@ const styles = StyleSheet.create({
   },
   appsTabContainer: {
     flex: 1,
+  },
+  // Section headers
+  sectionHeader: {
+    paddingHorizontal: 4,
+    paddingBottom: 8,
+    paddingTop: 4,
+  },
+  sectionHeaderSpaced: {
+    marginTop: 16,
+  },
+  sectionLabel: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    color: '#7C6FD9',
+    textTransform: 'uppercase',
   },
   searchContainer: {
     paddingHorizontal: 16,

@@ -1,2 +1,20 @@
 --------- beginning of main
-02-21 08:46:16.754  4186  4186 E id.partnersetup: Not starting debugger since process cannot load the jdwp agent.
+02-21 12:33:55.477 10684 10707 E A       : (REDACTED) Trace %s timed out after %d ms. Complete trace: %s
+02-21 12:33:55.477 10684 10707 E A       : com.google.apps.tiktok.tracing.gc: 
+02-21 12:33:55.477 10684 10707 E A       : 	at tk_trace.Read PersonalResponseProtoStore(Started After:0)
+02-21 12:33:55.477 10684 10707 E A       : 	at tk_trace.Update PersonalResponseProtoStore(Started After:0)
+02-21 12:33:55.477 10684 10707 E A       : 	at tk_trace.Synclet: internalCoreCorporaSync(Started After:0)
+02-21 12:33:55.477 10684 10707 E A       : 	at tk_trace.NoAccountWorkerFactory startWork()(Started After:0)
+02-21 12:33:55.477 10684 10707 E A       : 	at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncWorker startWork()(Started After:0)
+02-21 12:33:55.477 10684 10707 E A       : 	at tk_trace.com.google.apps.tiktok.sync.impl.workmanager.SyncWorker startWork()(Started After:0)
+02-21 12:33:55.477 10684 10707 E A       : 	at tk_trace.WorkManager:TikTokListenableWorker startWork(Started After:0)
+02-21 12:33:55.481 10684 10719 E A       : (REDACTED) Trace %s timed out after %d ms. Complete trace: %s
+02-21 12:33:55.481 10684 10719 E A       : com.google.apps.tiktok.tracing.gc: 
+02-21 12:33:55.481 10684 10719 E A       : 	at tk_trace.LocationUpdateRequester#isEnabled(Started After:10)
+02-21 12:33:55.481 10684 10719 E A       : 	at tk_trace.LocationUpdateRequester#requestOrRemoveLocationUpdates(Started After:10)
+02-21 12:33:55.481 10684 10719 E A       : 	at tk_trace.LocationUpdateRequestScheduler#scheduleLocationUpdateRequest(Started After:10)
+02-21 12:33:55.481 10684 10719 E A       : 	at tk_trace.LocationUpdateApplicationStartupListener#onApplicationStartup(Started After:0)
+02-21 12:33:55.481 10684 10719 E A       : 	at tk_trace.LocationUpdateApplicationStartupListener(Started After:0)
+02-21 12:33:55.481 10684 10719 E A       : 	at tk_trace.Startup Listeners(Started After:0)
+02-21 12:33:55.481 10684 10719 E A       : 	at tk_trace.Application.onCreate(Started After:0)
+02-21 12:33:55.481 10684 10719 E A       : 	at tk_trace.Application creation(Started After:0)

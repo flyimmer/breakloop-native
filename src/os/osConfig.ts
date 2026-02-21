@@ -1,10 +1,12 @@
 /**
  * OS Configuration Adapter
- * 
+ *
  * Single source of truth for OS-related configuration.
  * Monitored apps are loaded from user settings (AsyncStorage) on app start
  * and can be updated when user changes settings.
  */
+
+import { AppCategory, resolveAppCategory } from '../../constants/appCategories';
 
 // ============================================================================
 // CONFIGURATION VALUES
@@ -16,6 +18,13 @@
  * Updated when user changes monitored apps in Settings
  */
 let MONITORED_APPS = new Set<string>();
+
+/**
+ * Per-app category cache.
+ * Populated by setMonitoredApps() (with optional DiscoveredApp data)
+ * and lazily by getAppCategory() via the static lookup table.
+ */
+const MONITORED_APP_CATEGORIES = new Map<string, AppCategory>();
 
 /**
  * Duration of breathing countdown in intervention flow (seconds)
@@ -75,7 +84,7 @@ export function getIntentionTimerDurationMs(): number {
 
 /**
  * Get the list of all monitored app package names (for debugging/testing).
- * 
+ *
  * @returns Array of package names
  */
 export function getMonitoredAppsList(): string[] {
@@ -83,14 +92,42 @@ export function getMonitoredAppsList(): string[] {
 }
 
 /**
+ * Get the resolved category for a given package name.
+ *
+ * Uses the in-memory cache populated by setMonitoredApps().
+ * Falls back to the static lookup + 'other' default if no cached value.
+ *
+ * @param packageName - Android package name
+ * @returns AppCategory ('social' | 'video' | 'other')
+ */
+export function getAppCategory(packageName: string): AppCategory {
+  const cached = MONITORED_APP_CATEGORIES.get(packageName);
+  if (cached) return cached;
+  // Fallback: static lookup (no native category available at this point)
+  return resolveAppCategory(packageName, null);
+}
+
+/**
  * Update the monitored apps list.
  * Called when user saves monitored apps in Settings or on app start.
  * Also updates the native ForegroundDetectionService on Android.
- * 
+ *
  * @param packageNames - Array of package names to monitor
+ * @param categoryMap  - Optional map of packageName → AppCategory (from DiscoveredApp data)
  */
-export function setMonitoredApps(packageNames: string[]): void {
+export function setMonitoredApps(
+  packageNames: string[],
+  categoryMap?: Record<string, AppCategory>
+): void {
   MONITORED_APPS = new Set(packageNames);
+
+  // Populate category cache from supplied map (wins over static table)
+  if (categoryMap) {
+    for (const [pkg, cat] of Object.entries(categoryMap)) {
+      MONITORED_APP_CATEGORIES.set(pkg, cat);
+    }
+  }
+
   if (__DEV__) {
     console.log('[osConfig] Updated monitored apps:', Array.from(MONITORED_APPS));
   }

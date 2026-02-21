@@ -22,6 +22,8 @@ interface InterventionContextValue {
   interventionState: {
     state: 'idle' | 'breathing' | 'root-cause' | 'alternatives' | 'action' | 'action_timer' | 'timer' | 'reflection';
     targetApp: any | null;
+    /** Category of the app that triggered the current intervention. Null when idle. */
+    triggerAppCategory: 'social' | 'video' | 'other' | null;
     breathingCount: number;
     selectedCauses: string[];
     selectedAlternative: any | null;

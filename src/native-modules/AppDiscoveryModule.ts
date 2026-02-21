@@ -9,7 +9,7 @@
  * Discovery and metadata resolution are SEPARATE steps.
  */
 
-import { NativeModules, NativeEventEmitter } from 'react-native';
+import { NativeEventEmitter, NativeModules } from 'react-native';
 
 export type DiscoverySource = 'launcher' | 'usage' | 'accessibility';
 
@@ -31,6 +31,13 @@ export interface AppMetadata {
   resolved: boolean;
   uninstalled?: boolean;
   error?: string;
+  /**
+   * Raw Android ApplicationInfo.category key (API 26+ only).
+   * Examples: "social", "video", "game", "audio", "productivity", …
+   * null / undefined when the app didn't declare a category, or on API < 26.
+   * The JS layer maps this to `AppCategory` via `resolveAppCategory()`.
+   */
+  nativeCategory?: string | null;
 }
 
 /**

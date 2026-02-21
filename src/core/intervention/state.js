@@ -24,6 +24,7 @@
 export const createInitialInterventionContext = () => ({
   state: 'idle',
   targetApp: null,
+  triggerAppCategory: null,  // 'social' | 'video' | 'other' | null
   breathingCount: 3,
   selectedCauses: [],
   selectedAlternative: null,

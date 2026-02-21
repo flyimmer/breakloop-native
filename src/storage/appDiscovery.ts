@@ -17,6 +17,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Directory, File, Paths } from 'expo-file-system';
 import * as FileSystemLegacy from 'expo-file-system/legacy';
+import { AppCategory } from '../../constants/appCategories';
 
 const STORAGE_KEY = 'discovered_apps_v1';
 const MIGRATION_KEY = 'icon_migration_v1_complete';
@@ -47,6 +48,12 @@ export interface DiscoveredApp {
   metadataResolved: boolean;
   uninstalled: boolean;
   uninstalledAt?: number; // Timestamp when marked as uninstalled
+  /**
+   * Resolved BreakLoop category.
+   * Set once during metadata resolution (native category + static fallback).
+   * Undefined for apps that haven't been through metadata resolution yet.
+   */
+  appCategory?: AppCategory;
 }
 
 /**
@@ -66,7 +73,7 @@ function iconFileExists(iconPath: string | null): boolean {
     // Extract filename from path
     const filename = iconPath.split('/').pop();
     if (!filename) return false;
-    
+
     const file = new File(ICON_DIR, filename);
     return file.exists;
   } catch {
@@ -105,7 +112,7 @@ export async function saveAppIcon(packageName: string, iconBase64: string): Prom
   try {
     // Ensure directory exists
     await ensureIconDirectory();
-    
+
     const file = new File(ICON_DIR, `${packageName}.png`);
 
     // Write base64 data directly with explicit encoding
@@ -145,14 +152,14 @@ export async function saveAppIcon(packageName: string, iconBase64: string): Prom
 export async function loadAppIcon(packageName: string): Promise<string | null> {
   try {
     await ensureIconDirectory(); // REFINEMENT 1: Always ensure directory
-    
+
     const file = new File(ICON_DIR, `${packageName}.png`);
-    
+
     // Check if file exists (property, not async)
     if (!file.exists) {
       return null;
     }
-    
+
     // REFINEMENT 2: Return file URI directly for React Native <Image />
     // This is faster and uses less memory than base64 conversion
     // Normalize to ensure file:// prefix for Android compatibility
@@ -171,9 +178,9 @@ export async function loadAppIcon(packageName: string): Promise<string | null> {
 export async function removeAppIcon(packageName: string): Promise<void> {
   try {
     await ensureIconDirectory(); // REFINEMENT 1: Always ensure directory
-    
+
     const file = new File(ICON_DIR, `${packageName}.png`);
-    
+
     // Check if file exists before deleting (property, not async)
     if (file.exists) {
       file.delete();
@@ -213,7 +220,7 @@ export async function saveDiscoveredApp(app: DiscoveredApp): Promise<void> {
   try {
     const apps = await loadDiscoveredApps();
     const existingIndex = apps.findIndex(a => a.packageName === app.packageName);
-    
+
     if (existingIndex >= 0) {
       // Merge with existing app
       const existing = apps[existingIndex];
@@ -235,7 +242,7 @@ export async function saveDiscoveredApp(app: DiscoveredApp): Promise<void> {
         lastSeenAt: app.lastSeenAt || Date.now()
       });
     }
-    
+
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(apps));
   } catch (error) {
     console.error('[AppDiscovery] Failed to save app:', error);
@@ -253,10 +260,10 @@ export async function mergeApps(
   try {
     const apps = await loadDiscoveredApps();
     const now = Date.now();
-    
+
     for (const packageName of packageNames) {
       const existingIndex = apps.findIndex(a => a.packageName === packageName);
-      
+
       if (existingIndex >= 0) {
         // Update existing app
         const existing = apps[existingIndex];
@@ -282,7 +289,7 @@ export async function mergeApps(
         });
       }
     }
-    
+
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(apps));
   } catch (error) {
     console.error('[AppDiscovery] Failed to merge apps:', error);
@@ -298,7 +305,7 @@ export async function markUninstalled(packageName: string): Promise<void> {
   try {
     const apps = await loadDiscoveredApps();
     const appIndex = apps.findIndex(a => a.packageName === packageName);
-    
+
     if (appIndex >= 0) {
       apps[appIndex] = {
         ...apps[appIndex],
@@ -306,7 +313,7 @@ export async function markUninstalled(packageName: string): Promise<void> {
         uninstalledAt: Date.now()
       };
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(apps));
-      
+
       // Remove icon file
       await removeAppIcon(packageName);
     }
@@ -325,25 +332,25 @@ export async function cleanupUninstalled(): Promise<void> {
     const apps = await loadDiscoveredApps();
     const now = Date.now();
     const removedApps: string[] = [];
-    
+
     const activeApps = apps.filter(app => {
       if (!app.uninstalled) {
         return true; // Keep active apps
       }
-      
+
       // Remove if uninstalled beyond grace period
       if (app.uninstalledAt && (now - app.uninstalledAt) > UNINSTALLED_GRACE_PERIOD_MS) {
         removedApps.push(app.packageName);
         return false; // Remove
       }
-      
+
       return true; // Keep (still in grace period)
     });
-    
+
     if (activeApps.length !== apps.length) {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(activeApps));
       console.log(`[AppDiscovery] Cleaned up ${apps.length - activeApps.length} uninstalled apps`);
-      
+
       // Remove icon files for removed apps
       for (const packageName of removedApps) {
         await removeAppIcon(packageName);
@@ -387,9 +394,9 @@ export async function migrateIconStorage(): Promise<void> {
       console.log('[AppDiscovery] Icon migration already completed');
       return;
     }
-    
+
     console.log('[AppDiscovery] Starting icon migration...');
-    
+
     // Load old format data
     const oldData = await AsyncStorage.getItem(STORAGE_KEY);
     if (!oldData) {
@@ -398,10 +405,10 @@ export async function migrateIconStorage(): Promise<void> {
       console.log('[AppDiscovery] No data to migrate');
       return;
     }
-    
+
     const oldApps = JSON.parse(oldData);
     let migratedCount = 0;
-    
+
     // Migrate each app
     for (const app of oldApps) {
       // Check if app has old format icon field
@@ -416,11 +423,11 @@ export async function migrateIconStorage(): Promise<void> {
         delete app.icon;
       }
     }
-    
+
     // Save migrated data
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(oldApps));
     await AsyncStorage.setItem(MIGRATION_KEY, 'true');
-    
+
     console.log(`[AppDiscovery] Icon migration complete: ${migratedCount} icons migrated`);
   } catch (error) {
     console.error('[AppDiscovery] Icon migration failed:', error);
@@ -441,25 +448,25 @@ export async function forceReresolution(): Promise<void> {
     if (alreadyForced === 'true') {
       return;
     }
-    
+
     const apps = await loadDiscoveredApps();
-    
+
     // Only mark apps as unresolved if they have legacy state
     // (metadataResolved=true but no valid iconPath)
     const updatedApps = apps.map(app => {
       const needsReresolution =
         app.metadataResolved &&
         (!app.iconPath || !iconFileExists(app.iconPath));
-      
+
       if (!needsReresolution) return app;
-      
+
       return {
         ...app,
         metadataResolved: false,
         iconPath: null,
       };
     });
-    
+
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedApps));
   } catch (error) {
     console.error('[AppDiscovery] Forced re-resolution failed:', error);

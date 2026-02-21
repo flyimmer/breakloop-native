@@ -10,27 +10,26 @@
  * Every discovered app MUST have metadata resolved (icon + label).
  */
 
+import { resolveAppCategory } from '../../constants/appCategories';
 import {
-  loadDiscoveredApps,
-  mergeApps,
-  saveDiscoveredApp,
-  markUninstalled,
+  appDiscoveryEmitter,
+  AppDiscoveryModule,
+  DiscoveredAppInfo
+} from '../native-modules/AppDiscoveryModule';
+import {
+  cleanupUninstalled,
+  DiscoveredApp,
+  forceReresolution,
   getActiveApps,
   getUnresolvedApps,
-  cleanupUninstalled,
-  saveAppIcon,
-  migrateIconStorage,
-  forceReresolution,
+  loadDiscoveredApps,
   markForceReresolutionComplete,
-  DiscoveredApp,
-  DiscoverySource
+  markUninstalled,
+  mergeApps,
+  migrateIconStorage,
+  saveAppIcon,
+  saveDiscoveredApp
 } from '../storage/appDiscovery';
-import {
-  AppDiscoveryModule,
-  appDiscoveryEmitter,
-  DiscoveredAppInfo,
-  AppMetadata
-} from '../native-modules/AppDiscoveryModule';
 
 type AppDiscoveryListener = (apps: DiscoveredApp[]) => void;
 
@@ -56,10 +55,10 @@ class AppDiscoveryService {
     try {
       // 0. Run one-time migration (if needed)
       await migrateIconStorage();
-      
+
       // 0.5. Force re-resolution for legacy apps (BEFORE resolution)
       await forceReresolution();
-      
+
       // 1. Load persisted apps
       const cached = await loadDiscoveredApps();
 
@@ -79,7 +78,7 @@ class AppDiscoveryService {
 
       // 5. Resolve missing metadata
       await this.resolveAllMetadata();
-      
+
       // 6. Mark forced re-resolution complete (AFTER successful resolution)
       await markForceReresolutionComplete();
 
@@ -153,9 +152,11 @@ class AppDiscoveryService {
 
   /**
    * Resolve metadata for a single app
-   * 
-   * MANDATORY step - every app must have icon + label.
+   *
+   * MANDATORY step - every app must have icon + label + category.
    * Icons are saved to file system, only iconPath stored in metadata.
+   * Category is resolved via native Android category (primary) → static
+   * lookup table (fallback) → 'other' (default).
    */
   async resolveMetadata(packageName: string): Promise<void> {
     try {
@@ -170,19 +171,23 @@ class AppDiscoveryService {
       if (metadata.resolved) {
         const apps = await loadDiscoveredApps();
         const app = apps.find(a => a.packageName === packageName);
-        
+
         if (app) {
           // Save icon to file system (NEVER embed in metadata)
           let iconPath: string | null = null;
           if (metadata.icon) {
             iconPath = await saveAppIcon(packageName, metadata.icon);
           }
-          
-          // Save metadata with iconPath only
+
+          // Resolve app category — native first, static fallback, then 'other'
+          const appCategory = resolveAppCategory(packageName, metadata.nativeCategory);
+
+          // Save metadata with iconPath + category
           await saveDiscoveredApp({
             ...app,
             label: metadata.label,
-            iconPath: iconPath, // File path, NOT icon data
+            iconPath: iconPath,   // File path, NOT icon data
+            appCategory,
             metadataResolved: true,
             lastSeenAt: Date.now()
           });
@@ -218,7 +223,7 @@ class AppDiscoveryService {
    */
   subscribe(listener: AppDiscoveryListener): () => void {
     this.listeners.add(listener);
-    
+
     // Immediately notify with current state
     this.getActiveApps().then(apps => listener(apps));
 

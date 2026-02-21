@@ -39,6 +39,7 @@ export const interventionReducer = (context, action) => {
         ...context,
         state: 'breathing',
         targetApp: action.app,
+        triggerAppCategory: action.triggerAppCategory || null,
         breathingCount: action.breathingDuration,
         selectedCauses: [],
         selectedAlternative: null,
@@ -58,6 +59,7 @@ export const interventionReducer = (context, action) => {
           newState: newState.state,
           newBreathingCount: newState.breathingCount,
           targetApp: newState.targetApp,
+          triggerAppCategory: newState.triggerAppCategory,
         });
       }
 
@@ -254,6 +256,7 @@ export const interventionReducer = (context, action) => {
         ...context,
         state: 'breathing',
         targetApp: action.targetApp, // Ensure targetApp is updated
+        triggerAppCategory: action.triggerAppCategory || null,
         breathingCount: 0,
         selectedCauses: [],
         selectedAlternative: null,
