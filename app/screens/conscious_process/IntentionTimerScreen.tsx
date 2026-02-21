@@ -1,9 +1,9 @@
-import React, { useEffect } from 'react';
-import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIntervention } from '@/src/contexts/InterventionProvider';
 import { useSystemSession } from '@/src/contexts/SystemSessionProvider';
 import { setIntentionTimer } from '@/src/os/osTriggerBrain';
+import React, { useEffect } from 'react';
+import { BackHandler, NativeModules, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorModule : null;
 
@@ -35,11 +35,12 @@ const AppMonitorModule = Platform.OS === 'android' ? NativeModules.AppMonitorMod
 
 // Duration options in minutes (matching web reference)
 const DURATION_OPTIONS = [
+  { value: 1 / 6, label: '10s' },   // DEV/TEST: 10-second timer for checkpoint testing
+  { value: 1, label: '1m' },
   { value: 5, label: '5m' },
   { value: 15, label: '15m' },
   { value: 30, label: '30m' },
   { value: 45, label: '45m' },
-  { value: 60, label: '60m' },
 ] as const;
 
 export default function IntentionTimerScreen() {
@@ -72,9 +73,9 @@ export default function IntentionTimerScreen() {
     // Set intention timer in OS Trigger Brain for the target app
     if (interventionState.targetApp) {
       const expiresAt = currentTimestamp + durationMs;
-      
+
       setIntentionTimer(interventionState.targetApp, durationMs, currentTimestamp);
-      
+
       // Set wake suppression flag (mechanical instruction to native)
       // This tells native: "Don't launch SystemSurface before this time"
       // Native doesn't know WHY (intention timer) - just that wake is suppressed
@@ -82,15 +83,23 @@ export default function IntentionTimerScreen() {
         AppMonitorModule.setSuppressSystemSurfaceUntil(interventionState.targetApp, expiresAt);
         console.log('[IntentionTimer] Wake suppression flag set until:', new Date(expiresAt).toISOString());
       }
-      
-      // Store timer in native SharedPreferences (for backward compatibility)
+
+      // Store timer in native SharedPreferences (backward compatibility)
       if (AppMonitorModule) {
         AppMonitorModule.storeIntentionTimer(interventionState.targetApp, expiresAt);
         console.log('[IntentionTimer] Stored intention timer in native SharedPreferences');
       }
-      
+
+      // P4: Schedule native intention timer via SystemBrainBridge (authoritative)
+      // This persists to IntentionStore + schedules Handler.postDelayed → TimerExpired event
+      if (AppMonitorModule) {
+        AppMonitorModule.scheduleIntentionTimer(interventionState.targetApp, durationMs)
+          .then(() => console.log('[IntentionTimer] Native scheduleIntentionTimer OK', { durationMs }))
+          .catch((e: any) => console.warn('[IntentionTimer] scheduleIntentionTimer failed:', e));
+      }
+
       console.log('[IntentionTimer] Timer set successfully');
-      
+
       // Set transient targetApp for finish-time navigation
       // This ensures SystemSurface launches the target app after finishing
       setTransientTargetApp(interventionState.targetApp);
@@ -105,11 +114,11 @@ export default function IntentionTimerScreen() {
       state: interventionState.state,
       targetApp: interventionState.targetApp,
     });
-    
+
     dispatchIntervention({
       type: 'SET_INTENTION_TIMER',
     });
-    
+
     console.log('[IntentionTimer] SET_INTENTION_TIMER dispatched');
   };
 

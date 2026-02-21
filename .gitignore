@@ -49,9 +49,8 @@ app-example
 # /ios - Commented out: tracking native iOS code
 # /android - Commented out: tracking native Android code (Phase F3.5)
 
-# Auto-generated Android files (source of truth is in plugins/)
-# These files are auto-synced from plugins/src/android/java/ by npm run android
-android/app/src/main/java/
+# Auto-generated Android build artifacts (NOT source files)
+# android/app/src/main/java/ is now tracked directly (native migration complete)
 android/app/build/
 android/app/.cxx/
 
