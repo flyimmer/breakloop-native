@@ -6,7 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as ImagePicker from 'expo-image-picker';
-import { Camera, Eye, LogOut, Shield, Sliders, Smartphone, User, Zap } from 'lucide-react-native';
+import { Camera, LogOut, Shield, Sliders, Smartphone, User, Zap } from 'lucide-react-native';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -16,11 +16,10 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MainAppStackParamList } from '../../../roots/MainAppRoot';
@@ -74,11 +73,7 @@ const SettingsScreen = () => {
     primaryPhoto: null,
   });
 
-  // Social privacy toggles
-  const [shareCurrentActivity, setShareCurrentActivity] = useState(true);
-  const [shareUpcomingActivities, setShareUpcomingActivities] = useState(false);
-  const [shareRecentMood, setShareRecentMood] = useState(true);
-  const [shareAlternativesList, setShareAlternativesList] = useState(true);
+
 
   // Monitored apps and websites state
   // Note: Stored as package names (e.g., 'com.instagram.android') for monitoring
@@ -730,55 +725,7 @@ const SettingsScreen = () => {
           </View>
         </View>
 
-        {/* Social Privacy Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <View style={styles.sectionTitleRow}>
-              <Eye size={16} color="#52525B" style={styles.sectionIcon} />
-              <Text style={styles.sectionTitle}>Social Privacy</Text>
-            </View>
-          </View>
-          <Text style={styles.sectionDescription}>Controls what your friends can see.</Text>
 
-          <View style={styles.card}>
-            <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>Share Current Activity</Text>
-              <Switch
-                value={shareCurrentActivity}
-                onValueChange={setShareCurrentActivity}
-                trackColor={{ false: '#E4E4E7', true: '#9B91E8' }}
-                thumbColor={shareCurrentActivity ? '#7C6FD9' : '#f4f3f4'}
-              />
-            </View>
-            <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>Share Upcoming Activities</Text>
-              <Switch
-                value={shareUpcomingActivities}
-                onValueChange={setShareUpcomingActivities}
-                trackColor={{ false: '#E4E4E7', true: '#9B91E8' }}
-                thumbColor={shareUpcomingActivities ? '#7C6FD9' : '#f4f3f4'}
-              />
-            </View>
-            <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>Share Recent Mood</Text>
-              <Switch
-                value={shareRecentMood}
-                onValueChange={setShareRecentMood}
-                trackColor={{ false: '#E4E4E7', true: '#9B91E8' }}
-                thumbColor={shareRecentMood ? '#7C6FD9' : '#f4f3f4'}
-              />
-            </View>
-            <View style={[styles.settingRow, styles.settingRowLast]}>
-              <Text style={styles.settingLabel}>Share Alternatives List</Text>
-              <Switch
-                value={shareAlternativesList}
-                onValueChange={setShareAlternativesList}
-                trackColor={{ false: '#E4E4E7', true: '#9B91E8' }}
-                thumbColor={shareAlternativesList ? '#7C6FD9' : '#f4f3f4'}
-              />
-            </View>
-          </View>
-        </View>
 
         {/* Monitored Apps Section */}
         <View style={styles.section}>
