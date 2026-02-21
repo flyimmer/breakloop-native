@@ -312,7 +312,9 @@ When user taps **Open alternatives**:
 
 Return behavior:
 - Provide an in-app “Back to checkpoint” top bar only when launched from intervention (optional; recommended for clarity).
-
+- use returnContextId to decide whether the bar exists. Two use case need to be differentiated:
+  - launched from intervention: show the bar
+  - User launches it from main app: do not show the bar
 ---
 
 ## 7) Hard Break (Reset Break)

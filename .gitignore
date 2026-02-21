@@ -14,6 +14,7 @@ expo-env.d.ts
 .cursor/
 .windsurf/
 .claude/
+.gemini/artifacts/
 
 # Native
 .kotlin/
